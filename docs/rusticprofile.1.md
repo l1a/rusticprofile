@@ -1,0 +1,139 @@
+# NAME
+
+rusticprofile - a local, per-machine scheduler and orchestrator for rustic backups
+
+# SYNOPSIS
+
+**rusticprofile** [*OPTIONS*]
+
+**rusticprofile config** **--check** [**--as-host** *HOST*] [**--config** *PATH*]
+
+**rusticprofile config** **--show** **-n** *JOB* [**--as-host** *HOST*] [**--config** *PATH*]
+
+**rusticprofile run** **-n** *JOB* [**--dry-run**] [**--rustic-binary** *PATH*] [**--as-host** *HOST*] [**--config** *PATH*]
+
+**rusticprofile plan** **-n** *JOB* [**--format** *FORMAT*] [**--show-env** [**--show-secrets**]] [**--as-host** *HOST*] [**--config** *PATH*]
+
+# DESCRIPTION
+
+**rusticprofile** decides *when* backups run, *which* jobs exist, and *on which hosts*. It installs and manages the systemd units (or launchd agents) that trigger them, sequences the operations within a job, classifies what **rustic**(1) reports back, and coordinates locks against a shared repository.
+
+It does **not** configure backups. The repository, source paths, excludes, retention policy, hooks, environment and metrics all live in rustic's own `rustic.toml`, which covers them natively. rusticprofile constructs no backup flags: a job resolves to `rustic -P <profile> <operation>`, plus one `--name` for each snapshot set enabled on the current host.
+
+This separation is deliberate. rustic already provides profiles, hooks, forget policies and Prometheus metrics; a wrapper that re-specified them would mostly reinvent rustic. The gap this fills is local OS-level scheduling with per-host variation and no central server.
+
+The **config** subcommand inspects and validates `jobs.yaml`, and the **plan** subcommand prints the exact command line a job would run without running it. Neither ever invokes **rustic**(1), contacts a repository, or needs a network, so both are safe to run at any time.
+
+**Job execution is not implemented yet.** Invoking **rusticprofile** with no arguments exits non-zero and says so.
+
+# OPTIONS
+
+**-h, --help**
+:   Show help information.
+
+**-V, --version**
+:   Print version information.
+
+**--completions** *SHELL*
+:   Write a shell completion script to standard output. *SHELL* is one of `bash`, `zsh`, `fish`, `elvish`, `nushell` or `power-shell`.
+
+# CONFIG
+
+**--check**
+:   Validate the configuration. **Every problem is reported at once**, not one per run, and nothing is spawned before validation completes. Exits 0 if the configuration is usable, 2 otherwise. Also prints which jobs this host runs and which are excluded by **enabled-on-hosts** — a gate that cannot be seen is indistinguishable from a job that was never written.
+
+**--show** **-n** *JOB*
+:   Print the resolved form of one job: its operations, the snapshot sets that survive host gating, its schedule and its log path. If *JOB* exists but is gated off on this host, that is reported as such rather than as an unknown job.
+
+**--as-host** *HOST*
+:   Evaluate as though running on *HOST* instead of the real hostname. This is the only way to check another machine's view of a per-host gate without logging into it.
+
+**--config** *PATH*
+:   Read *PATH* instead of the default `jobs.yaml`.
+
+Validation rejects, among other things, any key it does not recognise; a snapshot set that is not defined in the rustic profile it names; a job whose snapshot sets are all gated away on this host; an **enabled-on-hosts** list that is empty; a relative log path; and an unknown or malformed `${...}` reference. Each of these would otherwise cause the tool to quietly do less than the configuration says.
+
+# RUN
+
+**-n** *JOB*
+:   The job to run. Required — there is no "run everything" form.
+
+**--dry-run**
+:   Ask rustic to report what it would do without writing anything. Reports what *would* be saved, never what was saved.
+
+**--rustic-binary** *PATH*
+:   Use this executable instead of the one the configuration names. A bare name is resolved on `PATH`. Applied after the configuration is validated, so it cannot mask a mistake in the file it overrides. Point it at a script that records its arguments and exits, and a job can be exercised end to end without rustic running at all.
+
+Operations run in the order the job lists them. A failed operation stops the job; a **partial** one does not. A backup that saved some of its snapshot sets and failed on others still proceeds to **forget**, because skipping retention after a partly-successful backup is how snapshots accumulate without limit. A backup that saved *nothing* does stop the job, since running retention after it would delete old snapshots with no new ones in place. Operations that did not run are listed explicitly in the summary.
+
+A local lock prevents the same job running twice on this machine, and is not taken by waiting: a second run is refused immediately rather than queued. It says nothing about other machines sharing the repository — that is a later milestone, and until it lands **prune** must not be run against a shared repository.
+
+Exit status is **0** for success or partial, **1** for failure, **130** for interruption.
+
+# PLAN
+
+**-n** *JOB*
+:   The job to plan. Required — there is no "plan everything" form.
+
+**--format** *FORMAT*
+:   `human` (default) prints a readable summary, one operation per line. `lines` prints one argv element per line, with a blank line between operations; this is the exact form, and is what the project's golden tests record.
+
+**--show-env**
+:   Also print the rustic-related environment the run would inherit, with secret values masked. Not valid with `--format lines`, which is an exact machine-readable form that extra output would corrupt. rusticprofile does not modify the environment; this shows what rustic will receive.
+
+**--show-secrets**
+:   Print secret values in full instead of masking them. Requires **--show-env**, and prints a warning to standard error first. Anything capturing the terminal captures the secrets too.
+
+The argv is the whole of what rusticprofile constructs:
+
+    rustic -P RESOLVED-PROFILE-PATH OPERATION [--dry-run] [--json] [--name SET]...
+
+`-P` is given a resolved absolute path rather than a bare profile name, because rustic's own search for a bare name need not include the directory rusticprofile validated against. `--name` appears only for **backup**, once per snapshot set enabled on the current host, as does `--json`. Those three flags plus `-P` are the only ones rusticprofile ever emits; everything else a backup needs comes from rustic's own configuration. `--json` is requested because rustic exits 1 for both a partial and a failed backup, and the count of snapshot objects it writes to standard output is the only reliable way to tell them apart. Progress and diagnostics are unaffected — rustic writes those to standard error.
+
+# SECRETS
+
+rusticprofile stores no secrets and has no secret configuration. The repository password, master key and any cloud credentials belong to **rustic**(1), which offers `--password`, `--password-file` and `--password-command` (and `--key`, `--key-file`, `--key-command`), any of which may be set in its own config file.
+
+Prefer **password-command**. rustic spawns that command itself, so the secret never enters rusticprofile's memory, argument list or environment. rusticprofile never emits a credential-bearing flag into a command line — a process list is world-readable, and rustic's own documentation warns that `--password` can expose the password there.
+
+Anything rusticprofile prints is masked as a backstop. Masking is by variable name and distinguishes a secret from a location: `RUSTIC_PASSWORD` is hidden while `RUSTIC_PASSWORD_FILE` is shown, since a path reveals nothing and is usually the detail worth seeing. A `_COMMAND` variant is hidden, because such a command can embed the secret inline and nothing can distinguish that from a keyring lookup. The replacement marker is fixed, never a run of characters matching the secret's length.
+
+# INTERPOLATION
+
+Strings in the configuration may contain `${...}` references. This is a closed set, not a template language: there are no conditionals, functions, pipelines or loops. An unrecognised name is an error naming the offending key, never an empty string.
+
+`${host}`, `${host_short}`, `${job}`, `${profile}`, `${config_dir}`, `${temp_dir}`, `${os}`, `${arch}`, `${env:NAME}` and `${date:FORMAT}` are recognised. `$${` produces a literal `${`.
+
+`${job}` and `${profile}` have no value outside a job and are errors there. `${env:NAME}` is an error when the variable is unset. `${date:FORMAT}` is validated when the configuration loads but resolved when the job runs, so that a generated unit file carries the reference rather than one day's date.
+
+# EXIT STATUS
+
+The contract the implemented commands follow:
+
+**0**
+:   Success, including a run that completed with warnings.
+
+**1**
+:   A run failed.
+
+**2**
+:   The configuration is invalid. Reported before any process is spawned, with every violation listed at once, so a config error is never confused with a backup failure.
+
+**130**
+:   Interrupted.
+
+# FILES
+
+**$XDG_CONFIG_HOME/rusticprofile/jobs.yaml**
+:   Job definitions: which jobs exist, their operations, host gating and schedule.
+
+**$XDG_CONFIG_HOME/rustic/PROFILE.toml**
+:   rustic's own configuration, which owns all backup detail. rusticprofile reads it read-only, to verify that every snapshot-set name it is about to pass actually exists.
+
+# SEE ALSO
+
+**rustic**(1), **systemd.timer**(5), **launchd.plist**(5)
+
+# BUGS
+
+Report issues at <https://github.com/l1a/rusticprofile/issues>.

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Pre-push hook: runs fmt check and clippy before any push.
+# Mirrors the CI `just check` step so formatting/lint failures are caught locally.
+#
+# To skip for a single push: GIT_NO_CHECK=1 git push ...
+# To disable permanently: remove .git/hooks/pre-push
+
+set -euo pipefail
+
+if [ "${GIT_NO_CHECK:-0}" = "1" ]; then
+    exit 0
+fi
+
+if ! command -v just &>/dev/null; then
+    exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+echo "[check] Running just check..."
+if ! just --justfile "$REPO_ROOT/Justfile" check; then
+    echo ""
+    echo "[check] Failed. Run 'just check' to see details, 'cargo fmt' to fix formatting."
+    exit 1
+fi
+
+echo "[check] All checks passed."

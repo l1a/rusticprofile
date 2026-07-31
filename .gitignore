@@ -1,0 +1,8 @@
+/target
+.antigravitycli
+.claude/settings.local.json
+WIP.md
+TRANSCRIPT.md
+memory/
+__pycache__/
+*.pyc

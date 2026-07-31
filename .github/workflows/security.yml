@@ -1,0 +1,55 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/security.yml'
+  schedule:
+    # Run weekly on Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # A prebuilt binary, not `cargo install cargo-audit`. Compiling it took ~5.5 of the
+      # job's ~6 minutes and made this the slowest thing in CI by four times over — for a
+      # step whose actual work is reading Cargo.lock against an advisory database.
+      #
+      # Published by the RustSec organisation itself, so this adds no new party to trust:
+      # the advisory database this job consumes comes from the same place. Version and
+      # checksum are both pinned, matching how the actions here are pinned by SHA. Neither
+      # is managed by dependabot, so bumping the version means updating the hash too — get
+      # it from the release asset with `sha256sum`.
+      #
+      # There is deliberately no fallback to `cargo install`: a checksum mismatch or a
+      # missing asset should fail loudly, not quietly take a slower path that skips the
+      # verification.
+      - name: Install cargo-audit (prebuilt)
+        run: |
+          set -euo pipefail
+          VERSION=v0.22.2
+          SHA256=ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39
+          TARBALL="cargo-audit-x86_64-unknown-linux-gnu-${VERSION}.tgz"
+          curl -fsSL -o /tmp/cargo-audit.tgz \
+            "https://github.com/rustsec/rustsec/releases/download/cargo-audit/${VERSION}/${TARBALL}"
+          echo "${SHA256}  /tmp/cargo-audit.tgz" | sha256sum -c -
+          tar -xzf /tmp/cargo-audit.tgz -C /tmp
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 \
+            "/tmp/cargo-audit-x86_64-unknown-linux-gnu-${VERSION}/cargo-audit" \
+            "$HOME/.local/bin/cargo-audit"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run cargo audit
+        run: cargo audit

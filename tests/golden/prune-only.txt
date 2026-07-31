@@ -1,0 +1,4 @@
+rustic
+-P
+RUSTIC_DIR/p.toml
+prune

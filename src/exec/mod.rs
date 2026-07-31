@@ -1,0 +1,260 @@
+// SPDX-FileCopyrightText: 2026 Ken Tobias
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Spawning rustic, and everything around not making a mess of it.
+//!
+//! **No shell, ever** (`PLAN.md` §2.3). The argv built by `rustic::invoke` goes straight
+//! to [`Command`] as a `Vec<OsString>`. A value containing spaces, quotes or glob
+//! characters reaches the child literally, which is why nothing in this crate has — or
+//! needs — a single line of quoting or escaping logic.
+//!
+//! **The environment is inherited unmodified.** rusticprofile sets nothing, unsets nothing
+//! and rewrites nothing; repository access and credentials are rustic's business. See
+//! [`env`] for the subset worth showing a human, and [`redact`] for masking it.
+//!
+//! ## stdout is captured, stderr is not
+//!
+//! rustic writes progress and diagnostics to **stderr**, and `--json` snapshot objects to
+//! **stdout** (measured, `PLAN.md` §5.8). Capturing stdout while letting stderr through
+//! therefore gives both things at once: the operator watches progress live, and step 5
+//! still gets the machine-readable output it needs to tell a partial backup from a failed
+//! one. That is why [`Stdout::Capture`] exists rather than capturing everything.
+//!
+//! ## Signals
+//!
+//! An interrupt is forwarded to the child and then *waited on*. Killing rusticprofile and
+//! orphaning a running rustic would leave a lock held on a repository shared by seven
+//! machines, which is the failure this ordering exists to avoid.
+
+pub mod env;
+pub mod outcome;
+pub mod redact;
+
+use std::ffi::OsString;
+use std::io;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::time::Instant;
+
+use nix::sys::signal::{SigHandler, Signal, signal};
+
+pub use outcome::Outcome;
+
+/// What to do with the child's standard output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stdout {
+    /// Straight to the terminal. Nothing is available for parsing afterwards.
+    Inherit,
+    /// Captured for the caller. Stderr still goes to the terminal.
+    Capture,
+}
+
+/// PID of the child currently running, or 0.
+///
+/// A global because a signal handler cannot take arguments. [`run`] is therefore **not
+/// reentrant** — one child at a time. The runner is sequential by design, so this is a
+/// constraint the design already had rather than one introduced here.
+static CHILD_PID: AtomicI32 = AtomicI32::new(0);
+
+/// Set when a forwarded signal has been seen.
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+/// Signal handler: record the interrupt and pass it to the child.
+///
+/// Async-signal-safe by construction — two atomic stores and a `kill(2)`, no allocation,
+/// no locking, no formatting.
+extern "C" fn forward_signal(sig: nix::libc::c_int) {
+    INTERRUPTED.store(true, Ordering::SeqCst);
+    let pid = CHILD_PID.load(Ordering::SeqCst);
+    if pid > 0 {
+        // Errors are unrecoverable here and cannot be reported from a handler; if the
+        // child is already gone, the subsequent wait reports what happened anyway.
+        unsafe { nix::libc::kill(pid, sig) };
+    }
+}
+
+/// Send `sig` to the currently-registered child, if any.
+///
+/// Split out from the handler so the forwarding path is directly testable without needing
+/// to deliver a real signal to the test process.
+fn signal_child(sig: nix::libc::c_int) {
+    let pid = CHILD_PID.load(Ordering::SeqCst);
+    if pid > 0 {
+        unsafe { nix::libc::kill(pid, sig) };
+    }
+}
+
+/// Install handlers for SIGINT and SIGTERM, returning whether it worked.
+fn install_handlers() -> bool {
+    // SAFETY: `forward_signal` is async-signal-safe (see its documentation).
+    unsafe {
+        signal(Signal::SIGINT, SigHandler::Handler(forward_signal)).is_ok()
+            && signal(Signal::SIGTERM, SigHandler::Handler(forward_signal)).is_ok()
+    }
+}
+
+fn restore_handlers() {
+    // SAFETY: restoring the default disposition is always sound.
+    unsafe {
+        let _ = signal(Signal::SIGINT, SigHandler::SigDfl);
+        let _ = signal(Signal::SIGTERM, SigHandler::SigDfl);
+    }
+}
+
+/// Run `argv` to completion.
+///
+/// `argv[0]` is the program; the rest are its arguments, passed as separate argv elements
+/// with no shell involved. Stdin is inherited, so a person running this by hand can still
+/// answer a prompt.
+pub fn run(argv: &[OsString], stdout_mode: Stdout) -> io::Result<Outcome> {
+    let (program, args) = argv
+        .split_first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty argv"))?;
+
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .stdout(match stdout_mode {
+            Stdout::Inherit => Stdio::inherit(),
+            Stdout::Capture => Stdio::piped(),
+        });
+
+    INTERRUPTED.store(false, Ordering::SeqCst);
+    let handlers_installed = install_handlers();
+
+    let started = Instant::now();
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            if handlers_installed {
+                restore_handlers();
+            }
+            return Err(e);
+        }
+    };
+
+    CHILD_PID.store(child.id() as i32, Ordering::SeqCst);
+
+    // Closes the window between spawn and the store above: a signal arriving in it would
+    // have set the flag but had no PID to forward to, so replay it now.
+    if INTERRUPTED.load(Ordering::SeqCst) {
+        signal_child(nix::libc::SIGTERM);
+    }
+
+    let output = child.wait_with_output();
+
+    CHILD_PID.store(0, Ordering::SeqCst);
+    if handlers_installed {
+        restore_handlers();
+    }
+
+    let output = output?;
+    Ok(outcome::from_output(
+        output,
+        stdout_mode == Stdout::Capture,
+        INTERRUPTED.load(Ordering::SeqCst),
+        started.elapsed(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Small, universally present children. `CARGO_BIN_EXE_*` is only defined for
+    /// integration tests, so the crate's own binary is not available here.
+    fn argv(parts: &[&str]) -> Vec<OsString> {
+        parts.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn a_successful_run_reports_exit_zero() {
+        let out = run(&argv(&["true"]), Stdout::Capture).unwrap();
+        assert!(out.exited_zero());
+        assert_eq!(out.code, Some(0));
+        assert!(out.signal.is_none());
+        assert!(!out.interrupted);
+    }
+
+    #[test]
+    fn capture_returns_stdout_and_inherit_does_not() {
+        let captured = run(&argv(&["echo", "hello"]), Stdout::Capture).unwrap();
+        assert_eq!(captured.stdout_lossy().as_deref(), Some("hello\n"));
+
+        // Not `Some(vec![])`: nobody was listening, which is different from "printed
+        // nothing". Step 5 counts snapshot objects here, and conflating the two would
+        // read an empty result from a run that produced several.
+        let inherited = run(&argv(&["true"]), Stdout::Inherit).unwrap();
+        assert!(inherited.stdout.is_none());
+    }
+
+    #[test]
+    fn a_failing_child_reports_its_code_rather_than_erroring() {
+        // A non-zero exit is information, not an I/O failure — rustic exits 1 for
+        // everything that is not a clean success, and step 5 has to interpret it.
+        let out = run(&argv(&["false"]), Stdout::Capture).unwrap();
+        assert_eq!(out.code, Some(1));
+        assert!(!out.exited_zero());
+    }
+
+    #[test]
+    fn a_missing_program_is_an_io_error() {
+        let missing = vec![OsString::from("/nonexistent/definitely-not-here")];
+        let err = run(&missing, Stdout::Inherit).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn an_empty_argv_is_rejected() {
+        let err = run(&[], Stdout::Inherit).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn arguments_reach_the_child_byte_for_byte() {
+        // The structural payoff of never using a shell. Every character here is one a
+        // shell would have mangled: spaces would split the argument, quotes would be
+        // consumed, `**/x` would glob, `$HOME` would expand and `;` would end the command.
+        let hostile = "a b 'c' \"d\" **/x $HOME ; rm -rf /";
+        let out = run(&argv(&["echo", hostile]), Stdout::Capture).unwrap();
+        assert_eq!(
+            out.stdout_lossy().as_deref(),
+            Some(&format!("{hostile}\n")[..])
+        );
+    }
+
+    #[test]
+    fn a_forwarded_signal_reaches_the_child() {
+        // Exercises the exact path the signal handler uses, without needing to deliver a
+        // real signal to the test process (which would race with the test harness).
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("sleep should be available");
+
+        CHILD_PID.store(child.id() as i32, Ordering::SeqCst);
+        signal_child(nix::libc::SIGTERM);
+
+        let status = child.wait().expect("child should be reapable");
+        CHILD_PID.store(0, Ordering::SeqCst);
+
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(
+            status.signal(),
+            Some(nix::libc::SIGTERM),
+            "the child should have been terminated by the forwarded signal"
+        );
+    }
+
+    #[test]
+    fn signalling_with_no_child_registered_is_a_no_op() {
+        // Guards against ever sending a signal to pid 0, which means "every process in my
+        // process group" — including the caller.
+        CHILD_PID.store(0, Ordering::SeqCst);
+        signal_child(nix::libc::SIGTERM);
+    }
+}

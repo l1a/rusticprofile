@@ -1,0 +1,165 @@
+.TH "RUSTICPROFILE" "1" "July 2026" "rusticprofile 0.0.9" "Backup Scheduler"
+
+.SH "NAME"
+.PP
+rusticprofile \- a local, per\-machine scheduler and orchestrator for rustic backups
+
+.SH "SYNOPSIS"
+.PP
+\fBrusticprofile\fP [\fIOPTIONS\fP]
+.PP
+\fBrusticprofile config\fP \fB\-\-check\fP [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
+.PP
+\fBrusticprofile config\fP \fB\-\-show\fP \fB\-n\fP \fIJOB\fP [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
+.PP
+\fBrusticprofile run\fP \fB\-n\fP \fIJOB\fP [\fB\-\-dry\-run\fP] [\fB\-\-rustic\-binary\fP \fIPATH\fP] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
+.PP
+\fBrusticprofile plan\fP \fB\-n\fP \fIJOB\fP [\fB\-\-format\fP \fIFORMAT\fP] [\fB\-\-show\-env\fP [\fB\-\-show\-secrets\fP]] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
+
+.SH "DESCRIPTION"
+.PP
+\fBrusticprofile\fP decides \fIwhen\fP backups run, \fIwhich\fP jobs exist, and \fIon which hosts\fP\. It installs and manages the systemd units (or launchd agents) that trigger them, sequences the operations within a job, classifies what \fBrustic\fP(1) reports back, and coordinates locks against a shared repository\.
+.PP
+It does \fBnot\fP configure backups\. The repository, source paths, excludes, retention policy, hooks, environment and metrics all live in rustic's own `\f[CR]rustic\.toml\fP`, which covers them natively\. rusticprofile constructs no backup flags: a job resolves to `\f[CR]rustic \-P <profile> <operation>\fP`, plus one `\f[CR]\-\-name\fP` for each snapshot set enabled on the current host\.
+.PP
+This separation is deliberate\. rustic already provides profiles, hooks, forget policies and Prometheus metrics; a wrapper that re\-specified them would mostly reinvent rustic\. The gap this fills is local OS\-level scheduling with per\-host variation and no central server\.
+.PP
+The \fBconfig\fP subcommand inspects and validates `\f[CR]jobs\.yaml\fP`, and the \fBplan\fP subcommand prints the exact command line a job would run without running it\. Neither ever invokes \fBrustic\fP(1), contacts a repository, or needs a network, so both are safe to run at any time\.
+.PP
+\fBJob execution is not implemented yet\.\fP Invoking \fBrusticprofile\fP with no arguments exits non\-zero and says so\.
+
+.SH "OPTIONS"
+\fB\-h, \-\-help\fP
+.RS
+Show help information\.
+.RE
+\fB\-V, \-\-version\fP
+.RS
+Print version information\.
+.RE
+\fB\-\-completions\fP \fISHELL\fP
+.RS
+Write a shell completion script to standard output\. \fISHELL\fP is one of `\f[CR]bash\fP`, `\f[CR]zsh\fP`, `\f[CR]fish\fP`, `\f[CR]elvish\fP`, `\f[CR]nushell\fP` or `\f[CR]power\-shell\fP`\.
+.RE
+
+.SH "CONFIG"
+\fB\-\-check\fP
+.RS
+Validate the configuration\. \fBEvery problem is reported at once\fP, not one per run, and nothing is spawned before validation completes\. Exits 0 if the configuration is usable, 2 otherwise\. Also prints which jobs this host runs and which are excluded by \fBenabled\-on\-hosts\fP \-\- a gate that cannot be seen is indistinguishable from a job that was never written\.
+.RE
+\fB\-\-show\fP \fB\-n\fP \fIJOB\fP
+.RS
+Print the resolved form of one job: its operations, the snapshot sets that survive host gating, its schedule and its log path\. If \fIJOB\fP exists but is gated off on this host, that is reported as such rather than as an unknown job\.
+.RE
+\fB\-\-as\-host\fP \fIHOST\fP
+.RS
+Evaluate as though running on \fIHOST\fP instead of the real hostname\. This is the only way to check another machine's view of a per\-host gate without logging into it\.
+.RE
+\fB\-\-config\fP \fIPATH\fP
+.RS
+Read \fIPATH\fP instead of the default `\f[CR]jobs\.yaml\fP`\.
+.RE
+.PP
+Validation rejects, among other things, any key it does not recognise; a snapshot set that is not defined in the rustic profile it names; a job whose snapshot sets are all gated away on this host; an \fBenabled\-on\-hosts\fP list that is empty; a relative log path; and an unknown or malformed `\f[CR]${\.\.\.}\fP` reference\. Each of these would otherwise cause the tool to quietly do less than the configuration says\.
+
+.SH "RUN"
+\fB\-n\fP \fIJOB\fP
+.RS
+The job to run\. Required \-\- there is no "run everything" form\.
+.RE
+\fB\-\-dry\-run\fP
+.RS
+Ask rustic to report what it would do without writing anything\. Reports what \fIwould\fP be saved, never what was saved\.
+.RE
+\fB\-\-rustic\-binary\fP \fIPATH\fP
+.RS
+Use this executable instead of the one the configuration names\. A bare name is resolved on `\f[CR]PATH\fP`\. Applied after the configuration is validated, so it cannot mask a mistake in the file it overrides\. Point it at a script that records its arguments and exits, and a job can be exercised end to end without rustic running at all\.
+.RE
+.PP
+Operations run in the order the job lists them\. A failed operation stops the job; a \fBpartial\fP one does not\. A backup that saved some of its snapshot sets and failed on others still proceeds to \fBforget\fP, because skipping retention after a partly\-successful backup is how snapshots accumulate without limit\. A backup that saved \fInothing\fP does stop the job, since running retention after it would delete old snapshots with no new ones in place\. Operations that did not run are listed explicitly in the summary\.
+.PP
+A local lock prevents the same job running twice on this machine, and is not taken by waiting: a second run is refused immediately rather than queued\. It says nothing about other machines sharing the repository \-\- that is a later milestone, and until it lands \fBprune\fP must not be run against a shared repository\.
+.PP
+Exit status is \fB0\fP for success or partial, \fB1\fP for failure, \fB130\fP for interruption\.
+
+.SH "PLAN"
+\fB\-n\fP \fIJOB\fP
+.RS
+The job to plan\. Required \-\- there is no "plan everything" form\.
+.RE
+\fB\-\-format\fP \fIFORMAT\fP
+.RS
+`\f[CR]human\fP` (default) prints a readable summary, one operation per line\. `\f[CR]lines\fP` prints one argv element per line, with a blank line between operations; this is the exact form, and is what the project's golden tests record\.
+.RE
+\fB\-\-show\-env\fP
+.RS
+Also print the rustic\-related environment the run would inherit, with secret values masked\. Not valid with `\f[CR]\-\-format lines\fP`, which is an exact machine\-readable form that extra output would corrupt\. rusticprofile does not modify the environment; this shows what rustic will receive\.
+.RE
+\fB\-\-show\-secrets\fP
+.RS
+Print secret values in full instead of masking them\. Requires \fB\-\-show\-env\fP, and prints a warning to standard error first\. Anything capturing the terminal captures the secrets too\.
+.RE
+.PP
+The argv is the whole of what rusticprofile constructs:
+.RS
+.PP
+.nf
+rustic \-P RESOLVED\-PROFILE\-PATH OPERATION [\-\-dry\-run] [\-\-json] [\-\-name SET]\.\.\.
+.fi
+.RE
+.PP
+`\f[CR]\-P\fP` is given a resolved absolute path rather than a bare profile name, because rustic's own search for a bare name need not include the directory rusticprofile validated against\. `\f[CR]\-\-name\fP` appears only for \fBbackup\fP, once per snapshot set enabled on the current host, as does `\f[CR]\-\-json\fP`\. Those three flags plus `\f[CR]\-P\fP` are the only ones rusticprofile ever emits; everything else a backup needs comes from rustic's own configuration\. `\f[CR]\-\-json\fP` is requested because rustic exits 1 for both a partial and a failed backup, and the count of snapshot objects it writes to standard output is the only reliable way to tell them apart\. Progress and diagnostics are unaffected \-\- rustic writes those to standard error\.
+
+.SH "SECRETS"
+.PP
+rusticprofile stores no secrets and has no secret configuration\. The repository password, master key and any cloud credentials belong to \fBrustic\fP(1), which offers `\f[CR]\-\-password\fP`, `\f[CR]\-\-password\-file\fP` and `\f[CR]\-\-password\-command\fP` (and `\f[CR]\-\-key\fP`, `\f[CR]\-\-key\-file\fP`, `\f[CR]\-\-key\-command\fP`), any of which may be set in its own config file\.
+.PP
+Prefer \fBpassword\-command\fP\. rustic spawns that command itself, so the secret never enters rusticprofile's memory, argument list or environment\. rusticprofile never emits a credential\-bearing flag into a command line \-\- a process list is world\-readable, and rustic's own documentation warns that `\f[CR]\-\-password\fP` can expose the password there\.
+.PP
+Anything rusticprofile prints is masked as a backstop\. Masking is by variable name and distinguishes a secret from a location: `\f[CR]RUSTIC_PASSWORD\fP` is hidden while `\f[CR]RUSTIC_PASSWORD_FILE\fP` is shown, since a path reveals nothing and is usually the detail worth seeing\. A `\f[CR]_COMMAND\fP` variant is hidden, because such a command can embed the secret inline and nothing can distinguish that from a keyring lookup\. The replacement marker is fixed, never a run of characters matching the secret's length\.
+
+.SH "INTERPOLATION"
+.PP
+Strings in the configuration may contain `\f[CR]${\.\.\.}\fP` references\. This is a closed set, not a template language: there are no conditionals, functions, pipelines or loops\. An unrecognised name is an error naming the offending key, never an empty string\.
+.PP
+`\f[CR]${host}\fP`, `\f[CR]${host_short}\fP`, `\f[CR]${job}\fP`, `\f[CR]${profile}\fP`, `\f[CR]${config_dir}\fP`, `\f[CR]${temp_dir}\fP`, `\f[CR]${os}\fP`, `\f[CR]${arch}\fP`, `\f[CR]${env:NAME}\fP` and `\f[CR]${date:FORMAT}\fP` are recognised\. `\f[CR]$${\fP` produces a literal `\f[CR]${\fP`\.
+.PP
+`\f[CR]${job}\fP` and `\f[CR]${profile}\fP` have no value outside a job and are errors there\. `\f[CR]${env:NAME}\fP` is an error when the variable is unset\. `\f[CR]${date:FORMAT}\fP` is validated when the configuration loads but resolved when the job runs, so that a generated unit file carries the reference rather than one day's date\.
+
+.SH "EXIT STATUS"
+.PP
+The contract the implemented commands follow:
+\fB0\fP
+.RS
+Success, including a run that completed with warnings\.
+.RE
+\fB1\fP
+.RS
+A run failed\.
+.RE
+\fB2\fP
+.RS
+The configuration is invalid\. Reported before any process is spawned, with every violation listed at once, so a config error is never confused with a backup failure\.
+.RE
+\fB130\fP
+.RS
+Interrupted\.
+.RE
+
+.SH "FILES"
+\fB$XDG_CONFIG_HOME/rusticprofile/jobs\.yaml\fP
+.RS
+Job definitions: which jobs exist, their operations, host gating and schedule\.
+.RE
+\fB$XDG_CONFIG_HOME/rustic/PROFILE\.toml\fP
+.RS
+rustic's own configuration, which owns all backup detail\. rusticprofile reads it read\-only, to verify that every snapshot\-set name it is about to pass actually exists\.
+.RE
+
+.SH "SEE ALSO"
+.PP
+\fBrustic\fP(1), \fBsystemd\.timer\fP(5), \fBlaunchd\.plist\fP(5)
+
+.SH "BUGS"
+.PP
+Report issues at https://github\.com/l1a/rusticprofile/issues\.

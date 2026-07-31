@@ -1,0 +1,259 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/rust.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag, or SHA to build'
+        required: false
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # Windows is absent from every matrix here on purpose: it is a declared non-goal for
+  # v1 (PLAN.md "Risks and non-goals"), since the scheduling backends are systemd and
+  # launchd. Adding a Windows runner would only prove the crate compiles somewhere it is
+  # not meant to run.
+  build:
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    # Skip this job on version tags (full-test will run instead)
+    if: github.ref_type != 'tag'
+    strategy:
+      matrix:
+        platform: [ubuntu-x64, ubuntu-arm, fedora-x64, fedora-arm, macos]
+        include:
+          - platform: ubuntu-x64
+            os: ubuntu-latest
+          - platform: ubuntu-arm
+            os: ubuntu-24.04-arm
+          - platform: fedora-x64
+            os: ubuntu-latest
+            container: fedora:latest
+          - platform: fedora-arm
+            os: ubuntu-24.04-arm
+            container: fedora:latest
+          - platform: macos
+            os: macos-latest
+
+    steps:
+    - name: Install dependencies (Fedora)
+      if: startsWith(matrix.platform, 'fedora')
+      run: |
+        dnf install -y git curl gcc make
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install Rust toolchain (Host)
+      if: ${{ !matrix.container }}
+      uses: dtolnay/rust-toolchain@stable
+
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Format check
+      run: cargo fmt -- --check
+    - name: Clippy
+      run: cargo clippy -- -D warnings
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+    - name: Golden argv files are current
+      # `just check` enforces this locally via the pre-push hook, but CI runs the cargo
+      # commands directly and `just` is not installed on every runner — so without this
+      # step a stale golden could reach main by bypassing the hook. Regenerate and require
+      # no change: the argv rusticprofile would run must never drift silently.
+      shell: bash
+      run: |
+        RP_UPDATE_GOLDEN=1 cargo test --test cli_tests golden_ -q
+        if [ -n "$(git status --porcelain -- tests/golden)" ]; then
+          echo "::error::tests/golden is stale — run 'just golden' and commit the result"
+          git --no-pager diff -- tests/golden
+          git status --porcelain -- tests/golden
+          exit 1
+        fi
+    - name: Smoke test the binary
+      # Completion generation is the one code path that produces real output today, so
+      # it is what a smoke test can meaningfully assert on.
+      run: cargo run -- --completions bash > /dev/null
+
+  full-test:
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    # Run on version tags or manual workflow_dispatch
+    if: (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+
+    strategy:
+      matrix:
+        platform: [ubuntu-x64, ubuntu-arm, fedora-x64, fedora-arm, macos]
+        include:
+          - platform: ubuntu-x64
+            os: ubuntu-latest
+            container: ubuntu:latest
+          - platform: ubuntu-arm
+            os: ubuntu-24.04-arm
+            container: ubuntu:latest
+          - platform: fedora-x64
+            os: ubuntu-latest
+            container: fedora:latest
+          - platform: fedora-arm
+            os: ubuntu-24.04-arm
+            container: fedora:latest
+          - platform: macos
+            os: macos-latest
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+    - name: Install Rust toolchain (Ubuntu Container)
+      if: startsWith(matrix.platform, 'ubuntu')
+      run: |
+        apt-get update
+        apt-get install -y curl build-essential
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install Rust toolchain (Fedora Container)
+      if: startsWith(matrix.platform, 'fedora')
+      run: |
+        dnf install -y curl gcc make
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install Rust toolchain (Host)
+      if: ${{ !matrix.container }}
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build (release)
+      run: cargo build --release --verbose
+
+    - name: Run tests (all features)
+      run: cargo test --all-features --verbose
+
+    - name: Clippy
+      run: cargo clippy -- -D warnings
+
+    - name: Format check
+      run: cargo fmt -- --check
+
+  build-release:
+    needs: full-test
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    if: (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+
+    strategy:
+      matrix:
+        platform: [fedora-x64, fedora-arm, macos]
+        include:
+          - platform: fedora-x64
+            os: ubuntu-latest
+            container: fedora:latest
+            artifact_name: release-assets-linux-x86_64
+          - platform: fedora-arm
+            os: ubuntu-24.04-arm
+            container: fedora:latest
+            artifact_name: release-assets-linux-arm64
+          - platform: macos
+            os: macos-latest
+            artifact_name: release-assets-macos-arm64
+
+    steps:
+      - name: Install system dependencies (Fedora)
+        if: startsWith(matrix.platform, 'fedora')
+        run: dnf install -y git curl gcc make
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install Rust toolchain (Fedora)
+        if: startsWith(matrix.platform, 'fedora')
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install Rust toolchain (Host)
+        if: ${{ !matrix.container }}
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --verbose
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          mkdir -p release
+          case "${{ matrix.platform }}" in
+            fedora-x64) cp target/release/rusticprofile release/rusticprofile-linux-x86_64 ;;
+            fedora-arm) cp target/release/rusticprofile release/rusticprofile-linux-arm64 ;;
+            macos)      cp target/release/rusticprofile release/rusticprofile-macos-arm64 ;;
+          esac
+          cp docs/rusticprofile.1 release/ || true
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release/
+
+  release:
+    needs: build-release
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+
+    permissions:
+      contents: write   # Required to create GitHub Releases
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          path: release
+          pattern: release-assets-*
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: rusticprofile ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            release/rusticprofile-linux-x86_64
+            release/rusticprofile-linux-arm64
+            release/rusticprofile-macos-arm64
+            release/rusticprofile.1
+          generate_release_notes: true
+
+      - name: Clean up rc pre-releases and prune old releases (keep 10)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+
+          # Delete all rc pre-releases for this version
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName \
+            --jq ".[] | select(.tagName | startswith(\"${VERSION}-rc.\")) | .tagName" \
+          | xargs -r -I{} gh release delete {} --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+
+          # Keep only the 10 most recent stable releases
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isPrerelease \
+            --jq '[.[] | select(.isPrerelease | not)][10:][].tagName' \
+          | xargs -r -I{} gh release delete {} --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag

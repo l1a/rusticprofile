@@ -1,0 +1,53 @@
+[package]
+name = "rusticprofile"
+version = "0.0.9"
+edition = "2024"
+authors = ["Ken Tobias"]
+description = "A local, per-machine scheduler and orchestrator for rustic backups"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/l1a/rusticprofile"
+readme = "README.md"
+keywords = ["backup", "rustic", "scheduler", "systemd", "cli"]
+categories = ["command-line-utilities"]
+exclude = [
+    ".clauderc",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "NOTES.md",
+    "PLAN.md",
+    "Justfile",
+    "scripts/",
+    "packaging/",
+    ".github/",
+]
+
+[[bin]]
+name = "rusticprofile"
+path = "src/main.rs"
+
+# Dependencies are added as the milestone that needs them lands, not up front.
+# The full planned set is recorded in NOTES.md "Current State" — serde/serde_yaml_ng and toml
+# arrive with `config/` (M1 step 2), serde_json and jiff with the runner, nix and
+# semver with exec and version checks.
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+clap_complete = "4.6"
+clap_complete_nushell = "4.6"
+anyhow = "1.0"
+owo-colors = "4.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_yaml_ng = "0.10.0"
+toml = "1.1.4"
+dirs = "6.0.0"
+jiff = "0.2.35"
+nix = { version = "0.31.3", features = ["fs", "hostname", "process", "signal"] }
+serde_json = "1.0.151"
+
+# Optimised like release but with full debug symbols, so samply / cargo-flamegraph
+# produce useful annotated stacks.
+[profile.profiling]
+inherits = "release"
+debug = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

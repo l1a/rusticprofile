@@ -1,0 +1,9 @@
+# Line-ending normalization.
+#
+# This repo is developed across Linux and macOS machines that share the working
+# tree via Syncthing (see NOTES.md / WIP.md). Because the *same bytes* are synced
+# to every machine, we force LF on checkout everywhere — otherwise a CRLF checkout
+# would propagate to the other clones and git there would report the entire tree as
+# "modified" (a phantom whole-tree diff with zero content changes). Pinning
+# `eol=lf` keeps every machine byte-identical.
+* text=auto eol=lf
