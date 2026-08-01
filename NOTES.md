@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.9)
+## Current State (v0.0.10)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -305,6 +305,22 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.10 — Claude review workflows (unreleased)
+
+- `claude-code-review.yml` reviews every pull request; `claude.yml` responds to an
+  `@claude` mention. Both authenticate with `CLAUDE_CODE_OAUTH_TOKEN`.
+- **Safe on a public repository:** the action itself only runs for users with write access,
+  so a passer-by cannot trigger it by commenting. Verified against the action's security
+  documentation rather than assumed.
+- The review job is **read-only**. Anything that needs to change the repository goes
+  through `claude.yml`, which is triggered deliberately and carries the write permissions.
+- `allowed_bots: 'dependabot[bot]'` — the action refuses non-human actors unless named, so
+  without it the PRs least likely to get a human read would also get no review.
+- Actions are pinned by SHA, matching the other workflows here. `anthropics/claude-code-action@v1`
+  is an *annotated* tag, so the pin is the dereferenced commit, not the tag object.
+- `--allowedTools` includes `just golden` and `just test`, which retch has no equivalent of:
+  a changed argv must be regenerated and committed deliberately, never left stale.
 
 ### v0.0.9 — redacted infrastructure identifiers (unreleased)
 
