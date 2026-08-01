@@ -276,17 +276,12 @@ Milestone 1, remaining steps (`PLAN.md` §4):
 
 Smaller items:
 
-- [ ] **The `forget` scoping invariant is not implemented yet, and must land before step 6
-      (the runner) can execute a `forget`.** `PLAN.md` "Risks and non-goals" requires that a
-      `forget` resolving to no host/path/tag filter be refused at load time — "forget across
-      every host in a shared repository" has to be spelled out, never defaulted. It is not in
-      v0.0.2 because the rustic `[forget]` **config key names** were not verified, and
-      guessing them for a safety-critical rule is worse than not having the rule yet. Verify
-      them empirically (the CLI flags are `--filter-host`, `--filter-paths`, `--filter-tags`
-      per `PLAN.md` §5.5; the config spellings need confirming), then add the check alongside
-      the existing `rustic.toml` read. Same applies to `--group-by`, which defaults to
-      `host,label,paths` and should be required explicitly rather than inherited.
-      Nothing can run a `forget` today, so deferring is safe — but only until step 6.
+- [x] **The `forget` scoping invariant — implemented in v0.0.6.** The key names were verified
+      against rustic 0.11.3 rather than guessed, and the guess would have been wrong: the
+      filters live in `[snapshot-filter]`, not `[forget]`, where rustic accepts and then
+      ignores them. `[forget]` does not reject unknown keys either, so a config can look
+      scoped and filter nothing. All three checks — a scoping filter present, no misplaced
+      filters, `group-by` explicit — are refusals at load time.
 - [ ] First benchmark + `benches/`, `criterion`, `[[bench]]` (see deviation 2 above)
 - [ ] **Publishing decision — not yet taken.** `rusticprofile` and `rustic-profile` are both
       still free on crates.io, and AUR has no `rusticprofile` package (rechecked 2026-08-01).
