@@ -45,11 +45,74 @@ jobs:
           # unless they are named. Without this, exactly the PRs least likely to get a
           # human read would also get no review. Scoped to dependabot alone.
           allowed_bots: 'dependabot[bot]'
-          # Always leave a visible summary, even when the review finds nothing.
+          # One comment per PR, updated in place, rather than a new one each push.
           #
-          # Without this the action posts only when it has findings, so "reviewed and found
-          # nothing" and "skipped without running" are indistinguishable: both are a green
-          # check and silence. Measured on PR #2 — a full 11-turn review ran and posted
-          # nothing at all. A sticky comment is updated in place rather than accumulating,
-          # so the cost is one comment per PR.
+          # Note this does NOT make the review post when it has nothing to say — the
+          # action's own description is "use just one comment to deliver issue/PR
+          # comments". An earlier version of this file claimed otherwise; the step below
+          # is what actually makes the outcome visible.
           use_sticky_comment: true
+
+      # Make the outcome visible without giving this job write access to the PR.
+      #
+      # The action posts only when it has findings, and it also skips silently — with a
+      # `success` conclusion — when workflow validation fails. So a green check plus no
+      # comment has two very different meanings and no way to tell them apart. This writes
+      # which one happened into the run summary, where it is one click from the check mark.
+      - name: Report whether the review actually ran
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+          {
+            echo "### Claude Code Review"
+            echo
+            if [ -z "${EXECUTION_FILE:-}" ] || [ ! -f "${EXECUTION_FILE:-}" ]; then
+              echo "**The review did NOT run.** No execution output was produced."
+              echo
+              echo "The usual cause is the action's workflow-validation check, which skips"
+              echo "with a \`success\` conclusion when this workflow file differs from the"
+              echo "copy on the default branch — so any PR editing it gets no review."
+              echo "Search the job log for \`Workflow validation failed\` to confirm."
+            else
+              python3 - "$EXECUTION_FILE" <<'PYEOF'
+          import json, sys
+
+          # The execution output has changed shape before and may again, so pull the fields
+          # out defensively rather than assuming a layout. Reporting "ran, shape
+          # unrecognised" is honest; asserting a turn count that is not there is not.
+          try:
+              data = json.load(open(sys.argv[1]))
+          except Exception as e:
+              print(f"**The review ran**, but its output could not be parsed ({e}).")
+              raise SystemExit(0)
+
+          candidates = data if isinstance(data, list) else [data]
+          result = next(
+              (c for c in reversed(candidates)
+               if isinstance(c, dict) and "num_turns" in c),
+              None,
+          )
+
+          if result is None:
+              print("**The review ran**, but produced no recognisable result record.")
+              raise SystemExit(0)
+
+          turns = result.get("num_turns", "?")
+          cost = result.get("total_cost_usd")
+          errored = result.get("is_error", False)
+
+          status = "completed with an error" if errored else "completed"
+          cost_text = f", ${cost:.2f}" if isinstance(cost, (int, float)) else ""
+          print(f"**The review ran** and {status} — {turns} turns{cost_text}.")
+          print()
+          print("Findings, if any, appear as comments on the pull request.")
+          print("No comment means the review found nothing to raise.")
+          PYEOF
+            fi
+          # `tee`, not `>>`: the summary is only visible in the Actions UI, so writing
+          # solely there means the one thing that reports whether a review happened cannot
+          # itself be checked from the logs or the API. Sending it to both makes it
+          # verifiable without a browser.
+          } | tee -a "$GITHUB_STEP_SUMMARY"
