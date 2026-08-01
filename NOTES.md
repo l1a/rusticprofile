@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.10)
+## Current State (v0.0.11)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -305,6 +305,20 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.11 — record how the review workflow can silently skip (unreleased)
+
+- **A green "Claude Code Review" check does not prove a review happened.** The action
+  validates that the workflow file in a pull request is byte-identical to the copy on the
+  default branch, and **skips with a `success` conclusion** when it is not. Observed on the
+  very PR that added the workflows: the job went green, posted nothing, and logged
+  *"Action skipped due to workflow validation"*.
+- The validation is a security control, not a bug: it stops a pull request that rewrites
+  the workflow from running that rewritten version with the repository's secret. It is
+  working as intended, and it is exactly why adding these workflows could not review itself.
+- **The practical consequence:** any PR touching `.github/workflows/claude*.yml` gets no
+  review, silently. When changing them, read the job log rather than the check mark — look
+  for `Attempt 1 failed: Workflow validation failed`.
 
 ### v0.0.10 — Claude review workflows (unreleased)
 
