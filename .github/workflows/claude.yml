@@ -1,0 +1,85 @@
+name: Claude Code
+
+# Responds to an @claude mention on an issue, a PR comment or a review.
+#
+# The action only runs for users with **write access** to this repository, which it
+# enforces itself — see https://github.com/anthropics/claude-code-action/blob/main/docs/security.md
+# That matters here because this repository is public: without it, anyone could trigger a
+# run by commenting.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+
+    # These apply to the per-run GITHUB_TOKEN, not to any personal access token.
+    permissions:
+      contents: write        # push branches
+      pull-requests: write   # gh pr create / edit
+      issues: read
+      id-token: write
+      actions: read          # read CI results on a PR
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        # `just` drives every gate in this repo. `mandown` is only needed for `just man`,
+        # and compiling it is by far the slowest step here — but a version bump that
+        # cannot regenerate the man page fails the pre-PR gate, so it is worth the wait on
+        # a workflow that only runs when someone asks for it.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends just
+          cargo install mandown
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          additional_permissions: |
+            actions: read
+
+          # Scoped to this project's toolchain. `just golden` and `just test` are here
+          # because the golden argv files are a real gate: an argv change must be
+          # regenerated and committed deliberately, never left stale.
+          claude_args: >-
+            --allowedTools
+            "Bash(cargo fmt *)"
+            "Bash(cargo clippy *)"
+            "Bash(cargo test *)"
+            "Bash(cargo check *)"
+            "Bash(cargo build *)"
+            "Bash(cargo run *)"
+            "Bash(just check)"
+            "Bash(just test)"
+            "Bash(just man)"
+            "Bash(just golden)"
+            "Bash(git add *)"
+            "Bash(git commit *)"
+            "Bash(git diff *)"
+            "Bash(git log *)"
+            "Bash(git status)"
+            "Bash(git show *)"
+            "Bash(gh pr create *)"
+            "Bash(gh pr edit *)"
+            "Bash(gh pr view *)"
