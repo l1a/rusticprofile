@@ -5,6 +5,13 @@ name: Claude Code Review
 # Read-only by design: this job reviews, it does not push. Anything that needs to change
 # the repository goes through `claude.yml`, which is triggered deliberately by an @claude
 # mention and has the write permissions to match.
+#
+# A GREEN CHECK HERE DOES NOT PROVE A REVIEW HAPPENED. The action requires this file to be
+# byte-identical to the copy on the default branch and skips with a `success` conclusion
+# when it is not — so any pull request editing this file gets no review, silently. That is
+# a security control (it stops a PR rewriting the workflow and running it with the
+# repository's secret), not a fault. When changing this file, read the job log for
+# `Workflow validation failed` rather than trusting the check mark.
 
 on:
   pull_request:
@@ -38,3 +45,11 @@ jobs:
           # unless they are named. Without this, exactly the PRs least likely to get a
           # human read would also get no review. Scoped to dependabot alone.
           allowed_bots: 'dependabot[bot]'
+          # Always leave a visible summary, even when the review finds nothing.
+          #
+          # Without this the action posts only when it has findings, so "reviewed and found
+          # nothing" and "skipped without running" are indistinguishable: both are a green
+          # check and silence. Measured on PR #2 — a full 11-turn review ran and posted
+          # nothing at all. A sticky comment is updated in place rather than accumulating,
+          # so the cost is one comment per PR.
+          use_sticky_comment: true
