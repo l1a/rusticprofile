@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.12)
+## Current State (v0.0.13)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -305,6 +305,15 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.13 — correct the control-group definition (unreleased)
+
+- `AGENTS.md` listed **four** idle hosts as the control group, including `host-f`.
+  `PLAN.md`'s fleet table shows `host-f` as active and identifies it as the development
+  machine — the one every throwaway repository and test run this session was created from.
+- A control group containing the machine being experimented on is not a control group, so
+  this is a defect in a safety rule rather than a typo. There are **three** idle hosts.
+- Spotted while redacting the identifiers, where the two documents sat side by side.
 
 ### v0.0.12 — make the review visible when it finds nothing (unreleased)
 
