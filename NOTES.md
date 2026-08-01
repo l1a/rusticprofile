@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.17)
+## Current State (v0.0.19)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -276,17 +276,12 @@ Milestone 1, remaining steps (`PLAN.md` §4):
 
 Smaller items:
 
-- [ ] **The `forget` scoping invariant is not implemented yet, and must land before step 6
-      (the runner) can execute a `forget`.** `PLAN.md` "Risks and non-goals" requires that a
-      `forget` resolving to no host/path/tag filter be refused at load time — "forget across
-      every host in a shared repository" has to be spelled out, never defaulted. It is not in
-      v0.0.2 because the rustic `[forget]` **config key names** were not verified, and
-      guessing them for a safety-critical rule is worse than not having the rule yet. Verify
-      them empirically (the CLI flags are `--filter-host`, `--filter-paths`, `--filter-tags`
-      per `PLAN.md` §5.5; the config spellings need confirming), then add the check alongside
-      the existing `rustic.toml` read. Same applies to `--group-by`, which defaults to
-      `host,label,paths` and should be required explicitly rather than inherited.
-      Nothing can run a `forget` today, so deferring is safe — but only until step 6.
+- [x] **The `forget` scoping invariant — implemented in v0.0.6.** The key names were verified
+      against rustic 0.11.3 rather than guessed, and the guess would have been wrong: the
+      filters live in `[snapshot-filter]`, not `[forget]`, where rustic accepts and then
+      ignores them. `[forget]` does not reject unknown keys either, so a config can look
+      scoped and filter nothing. All three checks — a scoping filter present, no misplaced
+      filters, `group-by` explicit — are refusals at load time.
 - [ ] First benchmark + `benches/`, `criterion`, `[[bench]]` (see deviation 2 above)
 - [ ] **Publishing decision — not yet taken.** `rusticprofile` and `rustic-profile` are both
       still free on crates.io, and AUR has no `rusticprofile` package (rechecked 2026-08-01).
@@ -320,6 +315,53 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.19 — M2 complete: schedule, unschedule, status (unreleased)
+
+**Milestone 2 is done. rusticprofile can now schedule itself.**
+
+- `schedule [-n JOB] [--enable]`, `unschedule -n JOB`, `status`. Verified end to end on this
+  host: units installed into `~/.config/systemd/user`, `systemctl --user list-unit-files`
+  reporting both as `disabled`, and `status` agreeing with systemd's own view.
+- **Writing units is not activating them.** `schedule` installs and reloads; `--enable` is a
+  separate, explicit flag. On a fleet where the Go tool is still taking the backups, quietly
+  adding a second hourly writer to a shared repository is not something a command called
+  `schedule` should do as a side effect.
+- **Idempotent.** Identical content is not rewritten, so re-running reports `unchanged`
+  rather than implying work happened. `unschedule` is safe to repeat and on a host where the
+  job was never scheduled — that is the desired end state either way.
+- **`status` surfaces the host gate**, so "this host has no prune timer" reads as a decision
+  rather than an absence — and distinguishes *not enabled* from *could not tell*, since only
+  one of those means the schedule is off.
+- **Fixed a real bug found by using it:** the tool panicked on a broken pipe, so
+  `rusticprofile status | head` greeted the user with a Rust panic and a backtrace hint. Rust
+  ignores `SIGPIPE`, so print macros panic on a closed pipe. The default disposition is now
+  restored at startup and the process dies quietly like every other Unix tool.
+
+### v0.0.18 — M2 begins: systemd unit generation (unreleased)
+
+- `schedule/calendar.rs` and `schedule/systemd.rs`. **Pure functions — nothing is written,
+  no unit installed, `systemctl` never consulted** — so a unit can be inspected before it
+  exists anywhere, the same discipline as `plan` showing an argv before spawning.
+- **Validated against real systemd**, not just unit-tested: `systemd-analyze verify` parses
+  both generated units with no complaint other than the man page not being installed on this
+  machine. Every directive emitted — `Persistent`, `RandomizedDelaySec`, `OnCalendar`,
+  `Nice`, `IOSchedulingClass`, `Type=oneshot` — confirmed accepted.
+- **No unit ever contains a date.** This is why `${date:…}` is left unresolved at load time:
+  a unit written today must not log to today's file forever. The unit carries no log path at
+  all and the runner resolves it per run, with a test asserting neither a resolved year nor a
+  stray `${date:` can appear.
+- **`Persistent=true`** — laptops are asleep at 03:00, and without it a missed run is simply
+  skipped, which for an intermittently-online fleet means the schedule quietly does nothing.
+  Exactly the class of silent non-event this project exists to prevent.
+- **`RandomizedDelaySec`, scaled per interval** — seven machines share one repository and
+  would otherwise wake on the same instant. Tested to stay inside its own period, so an
+  hourly job never drifts into its successor.
+- **Priority lives in the unit**, so no `nice`/`ionice` code is ever written in Rust.
+  `Standard` emits nothing rather than `Nice=0`, leaving a deliberate system default alone.
+
+Still to come in M2: `schedule` / `unschedule` / `status`, which is the part that touches
+the filesystem and `systemctl`.
 
 ### v0.0.17 — verification ladder rungs 7 and 8, and a design finding (unreleased)
 
