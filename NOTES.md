@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.17)
+## Current State (v0.0.18)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -320,6 +320,31 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.18 — M2 begins: systemd unit generation (unreleased)
+
+- `schedule/calendar.rs` and `schedule/systemd.rs`. **Pure functions — nothing is written,
+  no unit installed, `systemctl` never consulted** — so a unit can be inspected before it
+  exists anywhere, the same discipline as `plan` showing an argv before spawning.
+- **Validated against real systemd**, not just unit-tested: `systemd-analyze verify` parses
+  both generated units with no complaint other than the man page not being installed on this
+  machine. Every directive emitted — `Persistent`, `RandomizedDelaySec`, `OnCalendar`,
+  `Nice`, `IOSchedulingClass`, `Type=oneshot` — confirmed accepted.
+- **No unit ever contains a date.** This is why `${date:…}` is left unresolved at load time:
+  a unit written today must not log to today's file forever. The unit carries no log path at
+  all and the runner resolves it per run, with a test asserting neither a resolved year nor a
+  stray `${date:` can appear.
+- **`Persistent=true`** — laptops are asleep at 03:00, and without it a missed run is simply
+  skipped, which for an intermittently-online fleet means the schedule quietly does nothing.
+  Exactly the class of silent non-event this project exists to prevent.
+- **`RandomizedDelaySec`, scaled per interval** — seven machines share one repository and
+  would otherwise wake on the same instant. Tested to stay inside its own period, so an
+  hourly job never drifts into its successor.
+- **Priority lives in the unit**, so no `nice`/`ionice` code is ever written in Rust.
+  `Standard` emits nothing rather than `Nice=0`, leaving a deliberate system default alone.
+
+Still to come in M2: `schedule` / `unschedule` / `status`, which is the part that touches
+the filesystem and `systemctl`.
 
 ### v0.0.17 — verification ladder rungs 7 and 8, and a design finding (unreleased)
 

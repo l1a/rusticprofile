@@ -51,3 +51,4 @@ pub mod exec;
 pub mod report;
 pub mod run;
 pub mod rustic;
+pub mod schedule;
