@@ -14,19 +14,25 @@ rusticprofile \- a local, per\-machine scheduler and orchestrator for rustic bac
 .PP
 \fBrusticprofile run\fP \fB\-n\fP \fIJOB\fP [\fB\-\-dry\-run\fP] [\fB\-\-rustic\-binary\fP \fIPATH\fP] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
 .PP
+\fBrusticprofile schedule\fP [\fB\-n\fP \fIJOB\fP] [\fB\-\-enable\fP] [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
+.PP
+\fBrusticprofile unschedule\fP \fB\-n\fP \fIJOB\fP [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
+.PP
+\fBrusticprofile status\fP [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
+.PP
 \fBrusticprofile plan\fP \fB\-n\fP \fIJOB\fP [\fB\-\-format\fP \fIFORMAT\fP] [\fB\-\-show\-env\fP [\fB\-\-show\-secrets\fP]] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
 
 .SH "DESCRIPTION"
 .PP
 \fBrusticprofile\fP decides \fIwhen\fP backups run, \fIwhich\fP jobs exist, and \fIon which hosts\fP\. It installs and manages the systemd units (or launchd agents) that trigger them, sequences the operations within a job, classifies what \fBrustic\fP(1) reports back, and coordinates locks against a shared repository\.
 .PP
-It does \fBnot\fP configure backups\. The repository, source paths, excludes, retention policy, hooks, environment and metrics all live in rustic's own `\f[CR]rustic\.toml\fP`, which covers them natively\. rusticprofile constructs no backup flags: a job resolves to `\f[CR]rustic \-P <profile> <operation>\fP`, plus one `\f[CR]\-\-name\fP` for each snapshot set enabled on the current host\.
+It does \fBnot\fP configure backups\. The repository, source paths, excludes, retention policy, hooks, environment and metrics all live in rustic's own `\f[CR]rustic\.toml\fP`, which covers them natively\. rusticprofile constructs no backup flags: a job resolves to `\f[CR]rustic \-P <profile> <operation>\fP`, plus `\f[CR]\-\-json\fP` and one `\f[CR]\-\-name\fP` for each snapshot set enabled on the current host\.
 .PP
 This separation is deliberate\. rustic already provides profiles, hooks, forget policies and Prometheus metrics; a wrapper that re\-specified them would mostly reinvent rustic\. The gap this fills is local OS\-level scheduling with per\-host variation and no central server\.
 .PP
 The \fBconfig\fP subcommand inspects and validates `\f[CR]jobs\.yaml\fP`, and the \fBplan\fP subcommand prints the exact command line a job would run without running it\. Neither ever invokes \fBrustic\fP(1), contacts a repository, or needs a network, so both are safe to run at any time\.
 .PP
-\fBJob execution is not implemented yet\.\fP Invoking \fBrusticprofile\fP with no arguments exits non\-zero and says so\.
+The \fBrun\fP subcommand executes a job, and \fBschedule\fP installs the systemd units that trigger it\. Invoking \fBrusticprofile\fP with no arguments exits non\-zero and says so rather than doing anything by default\.
 
 .SH "OPTIONS"
 \fB\-h, \-\-help\fP
@@ -81,6 +87,30 @@ Operations run in the order the job lists them\. A failed operation stops the jo
 A local lock prevents the same job running twice on this machine, and is not taken by waiting: a second run is refused immediately rather than queued\. It says nothing about other machines sharing the repository \-\- that is a later milestone, and until it lands \fBprune\fP must not be run against a shared repository\.
 .PP
 Exit status is \fB0\fP for success or partial, \fB1\fP for failure, \fB130\fP for interruption\.
+
+.SH "SCHEDULE"
+.PP
+\fBschedule\fP writes a systemd service and timer for a job; \fBunschedule\fP removes them; \fBstatus\fP reports what is installed on this host and what is deliberately not\.
+\fB\-n\fP \fIJOB\fP
+.RS
+The job to act on\. Optional for \fBschedule\fP, where omitting it installs units for every job declaring a `\f[CR]schedule:\fP` block\. Required for \fBunschedule\fP \-\- removal is always named explicitly\.
+.RE
+\fB\-\-enable\fP
+.RS
+Also enable and start the timer\. \fBWriting units and activating them are deliberately separate\.\fP Installing a unit is inert; starting a timer adds another writer to a repository that may be shared with other machines, and that should be something you asked for rather than a side effect\.
+.RE
+\fB\-\-unit\-dir\fP \fIDIR\fP
+.RS
+Write or read units in \fIDIR\fP instead of the systemd user directory\. Intended for inspecting generated units without installing them; `\f[CR]systemctl\fP` is not invoked when this is given\.
+.RE
+.PP
+Units are named `\f[CR]rusticprofile\-\fP`\fIJOB\fP`\f[CR]\.service\fP` and `\f[CR]\.timer\fP`, and both commands are idempotent: identical content is not rewritten, and removing units that are not there is not an error\. Re\-running \fBschedule\fP reports `\f[CR]unchanged\fP` rather than implying work happened\.
+.PP
+The generated timer sets \fBPersistent=true\fP, so a run missed while the machine was asleep is caught up rather than silently skipped, and \fBRandomizedDelaySec\fP, so several machines sharing one repository do not all wake on the same instant\. Scheduling priority is expressed as `\f[CR]Nice=\fP` and `\f[CR]IOSchedulingClass=\fP` in the unit rather than applied in\-process\.
+.PP
+Units deliberately contain \fBno log path and no date\fP\. A unit written today must not log to today's file forever, so `\f[CR]${date:\.\.\.}\fP` is resolved per run rather than at install time\.
+.PP
+\fBstatus\fP distinguishes \fIinstalled but not enabled\fP from \fIstate unknown\fP, since only the former means the schedule is definitely off, and it lists jobs excluded by \fBenabled\-on\-hosts\fP so that a host without a given timer reads as a decision rather than an absence\.
 
 .SH "PLAN"
 \fB\-n\fP \fIJOB\fP

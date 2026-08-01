@@ -12,19 +12,25 @@ rusticprofile - a local, per-machine scheduler and orchestrator for rustic backu
 
 **rusticprofile run** **-n** *JOB* [**--dry-run**] [**--rustic-binary** *PATH*] [**--as-host** *HOST*] [**--config** *PATH*]
 
+**rusticprofile schedule** [**-n** *JOB*] [**--enable**] [**--config** *PATH*] [**--unit-dir** *DIR*]
+
+**rusticprofile unschedule** **-n** *JOB* [**--config** *PATH*] [**--unit-dir** *DIR*]
+
+**rusticprofile status** [**--as-host** *HOST*] [**--config** *PATH*] [**--unit-dir** *DIR*]
+
 **rusticprofile plan** **-n** *JOB* [**--format** *FORMAT*] [**--show-env** [**--show-secrets**]] [**--as-host** *HOST*] [**--config** *PATH*]
 
 # DESCRIPTION
 
 **rusticprofile** decides *when* backups run, *which* jobs exist, and *on which hosts*. It installs and manages the systemd units (or launchd agents) that trigger them, sequences the operations within a job, classifies what **rustic**(1) reports back, and coordinates locks against a shared repository.
 
-It does **not** configure backups. The repository, source paths, excludes, retention policy, hooks, environment and metrics all live in rustic's own `rustic.toml`, which covers them natively. rusticprofile constructs no backup flags: a job resolves to `rustic -P <profile> <operation>`, plus one `--name` for each snapshot set enabled on the current host.
+It does **not** configure backups. The repository, source paths, excludes, retention policy, hooks, environment and metrics all live in rustic's own `rustic.toml`, which covers them natively. rusticprofile constructs no backup flags: a job resolves to `rustic -P <profile> <operation>`, plus `--json` and one `--name` for each snapshot set enabled on the current host.
 
 This separation is deliberate. rustic already provides profiles, hooks, forget policies and Prometheus metrics; a wrapper that re-specified them would mostly reinvent rustic. The gap this fills is local OS-level scheduling with per-host variation and no central server.
 
 The **config** subcommand inspects and validates `jobs.yaml`, and the **plan** subcommand prints the exact command line a job would run without running it. Neither ever invokes **rustic**(1), contacts a repository, or needs a network, so both are safe to run at any time.
 
-**Job execution is not implemented yet.** Invoking **rusticprofile** with no arguments exits non-zero and says so.
+The **run** subcommand executes a job, and **schedule** installs the systemd units that trigger it. Invoking **rusticprofile** with no arguments exits non-zero and says so rather than doing anything by default.
 
 # OPTIONS
 
@@ -69,6 +75,27 @@ Operations run in the order the job lists them. A failed operation stops the job
 A local lock prevents the same job running twice on this machine, and is not taken by waiting: a second run is refused immediately rather than queued. It says nothing about other machines sharing the repository — that is a later milestone, and until it lands **prune** must not be run against a shared repository.
 
 Exit status is **0** for success or partial, **1** for failure, **130** for interruption.
+
+# SCHEDULE
+
+**schedule** writes a systemd service and timer for a job; **unschedule** removes them; **status** reports what is installed on this host and what is deliberately not.
+
+**-n** *JOB*
+:   The job to act on. Optional for **schedule**, where omitting it installs units for every job declaring a `schedule:` block. Required for **unschedule** — removal is always named explicitly.
+
+**--enable**
+:   Also enable and start the timer. **Writing units and activating them are deliberately separate.** Installing a unit is inert; starting a timer adds another writer to a repository that may be shared with other machines, and that should be something you asked for rather than a side effect.
+
+**--unit-dir** *DIR*
+:   Write or read units in *DIR* instead of the systemd user directory. Intended for inspecting generated units without installing them; `systemctl` is not invoked when this is given.
+
+Units are named `rusticprofile-`*JOB*`.service` and `.timer`, and both commands are idempotent: identical content is not rewritten, and removing units that are not there is not an error. Re-running **schedule** reports `unchanged` rather than implying work happened.
+
+The generated timer sets **Persistent=true**, so a run missed while the machine was asleep is caught up rather than silently skipped, and **RandomizedDelaySec**, so several machines sharing one repository do not all wake on the same instant. Scheduling priority is expressed as `Nice=` and `IOSchedulingClass=` in the unit rather than applied in-process.
+
+Units deliberately contain **no log path and no date**. A unit written today must not log to today's file forever, so `${date:...}` is resolved per run rather than at install time.
+
+**status** distinguishes *installed but not enabled* from *state unknown*, since only the former means the schedule is definitely off, and it lists jobs excluded by **enabled-on-hosts** so that a host without a given timer reads as a decision rather than an absence.
 
 # PLAN
 

@@ -8,7 +8,7 @@ A local, per-machine scheduler and orchestrator for [rustic](https://rustic.cli.
 
 ## Status
 
-**Milestone 1 complete.** rusticprofile can validate a configuration, show exactly what it would run, and run it — taking a lock, sequencing the operations, classifying what rustic reports and summarising the result. Scheduling (systemd, then launchd) is next; until then jobs are run by hand or from your own timer.
+**Milestones 1 and 2 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a lock, sequencing operations, classifying what rustic reports and summarising the result — and schedule itself with systemd. macOS launchd support is next.
 
 Today:
 
@@ -21,9 +21,16 @@ rusticprofile plan -n dot-files --format lines       # one argv element per line
 rusticprofile plan -n dot-files --show-env           # ...plus the environment, secrets masked
 rusticprofile run -n dot-files --dry-run            # what a run would do, writing nothing
 rusticprofile run -n dot-files                      # actually run it
+
+rusticprofile schedule -n dot-files                 # install a systemd timer (inert)
+rusticprofile schedule -n dot-files --enable        # ...and actually start it
+rusticprofile status                                # what is scheduled here, and what is not
+rusticprofile unschedule -n dot-files               # remove the units
 ```
 
-`config` and `plan` are hermetic — no rustic binary, no repository, no network — so they are safe to run anywhere. `run` is the one that actually invokes rustic. Running the binary with no arguments exits non-zero and says so. Job execution arrives with the rest of Milestone 1.
+Installing a timer and starting it are separate on purpose: adding a writer to a shared repository should be something you asked for, not a side effect of installing a file.
+
+`config` and `plan` are hermetic — no rustic binary, no repository, no network — so they are safe to run anywhere. `run` is the one that actually invokes rustic, and `schedule` is the one that touches systemd. Running the binary with no arguments exits non-zero and says so rather than doing anything by default.
 
 ## What it does
 
