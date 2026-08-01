@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.11)
+## Current State (v0.0.12)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -305,6 +305,19 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.12 — make the review visible when it finds nothing (unreleased)
+
+- `use_sticky_comment: true` on the review job. Without it the action posts **only** when
+  it has findings, which makes "reviewed and found nothing" and "skipped without running"
+  produce identical evidence: a green check and silence.
+- That is not hypothetical. On PR #2 a full review ran — 11 turns, `is_error: false`,
+  $0.36 — and posted nothing, because a docs change had nothing to flag. Correct behaviour,
+  invisible outcome.
+- A sticky comment is updated in place rather than accumulating, so this costs one comment
+  per pull request and turns silence back into evidence.
+- The two ways a review can produce nothing are now both documented in the workflow file
+  itself, where someone changing it will actually read them.
 
 ### v0.0.11 — record how the review workflow can silently skip (unreleased)
 
