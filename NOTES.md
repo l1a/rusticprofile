@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.16)
+## Current State (v0.0.17)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -320,6 +320,32 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.17 — verification ladder rungs 7 and 8, and a design finding (unreleased)
+
+**The tool has now backed up to, and forgotten from, the real shared repository.** Ladder
+rungs 7 and 8 are done; only rung 9 (fleet rollout) remains, and that is gated on
+scheduling rather than on more verification. Full detail in `PLAN.md` §7.3–7.4.
+
+- **Rung 7** — three sets saved, counts +3 on both this host and the repository total, so
+  the write was additive and no other host was affected. Exclusions verified against the
+  *stored* snapshot, with positive controls so the check could fail.
+- **Rung 8** — real `forget`, prune disabled: removed exactly the three snapshots predicted,
+  **pack count unchanged**, every other host untouched. `[snapshot-filter]` held under a
+  real irreversible operation.
+- **Design finding: option B needs label-based retention grouping.** With `group-by = "host"`
+  the named snapshot sets compete for one retention slot, so only the last one written each
+  period survives. A dry run kept a **0-byte** `nushell` snapshot and deleted the
+  **6,256-file** `core` one, and reported success. Fixed with a stable `label` per set and
+  `group-by = "host,label"` — label rather than paths, because paths fragment on rename.
+- **A near-miss, kept because it validated a guard.** A scripted edit matched `[forget]`
+  inside a comment and deleted the `[snapshot-filter]` section. Reconstructing the damage so
+  it parses and running `config --check` produces a refusal naming the missing filter — the
+  M1 invariant catches exactly this.
+
+**The configuration is not portable and is not chezmoi-managed.** It exists on one machine,
+with the hostname and eight absolute paths hard-coded. Templating it is a prerequisite for
+rung 9, not an afterthought.
 
 ### v0.0.16 — CI timing, and the review workflow verified end to end (unreleased)
 

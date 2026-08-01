@@ -807,6 +807,66 @@ question. The design intent is to classify it as a **warning** — loud in the r
 runs — consistent with Part 4's "a warning must not abort the job." Settle the exact exit code when
 `rustic/exit.rs` is written.
 
+## 7.3 Option B needs label-based retention grouping — found 2026-08-01
+
+Named snapshot sets have a consequence Part 7 did not anticipate, and it is not optional.
+
+**With `group-by = "host"`, the sets compete.** Retention keeps the newest snapshot per
+period *per group*, so three sets written in the same hour land in one group and only the
+last one written survives. Measured against the live repository, on a `forget --dry-run`:
+
+| snapshot | written | verdict |
+|---|---|---|
+| `nushell` — **0 bytes** | 13:16:24 | **keep** |
+| `gnupg` | 13:16:23 | remove |
+| `core` — **6,256 files** | 13:16:22 | remove |
+
+The empty set won because it finished last. The run reported success. This is the
+project's own failure class — a backup quietly doing less than it says — reached through
+a configuration choice rather than a bug.
+
+**The fix is a stable `label` per set plus `group-by = "host,label"`**, verified in a
+throwaway repository and then against the live one: each set is then retained
+independently.
+
+**Label, not paths.** rustic's default is `host,label,paths`, and grouping on paths is
+what let 2810 snapshots survive a policy capping ~49 per host — every change to a source
+list minted a new group with its own full quota. A set's label is stable by construction;
+its path list is not.
+
+So the rule is: **a job using named snapshot sets must group retention by label.** A
+profile that names sets and groups by host alone is misconfigured, and the symptom is
+silent.
+
+## 7.4 Ladder rungs 7 and 8 — results (2026-08-01)
+
+Both taken against the live repository from this host.
+
+- **Rung 7, real backup.** Three sets saved. Counts moved 27 → 30 for this host and
+  542 → 545 overall: exactly +3 on both, so the write was additive and no other host was
+  affected. Exclusions verified against the *stored* snapshot rather than the dry run —
+  password files, cloud credentials, caches and `node_modules` all absent, with positive
+  controls (`.ssh` 48 files, `chezmoi` 425) so the check could actually fail.
+- **Rung 8, real `forget`, prune disabled.** Removed exactly the three snapshots the dry
+  run predicted. Counts 33 → 30 and 548 → 545; **pack count unchanged at 630**, confirming
+  no data was rewritten and no exclusive lock taken. Every other host's count was
+  untouched, so `[snapshot-filter]` held under a real irreversible operation.
+
+### A near-miss worth keeping
+
+While fixing §7.3, a scripted edit matched the string `[forget]` inside a *comment* and
+deleted everything up to the real section — including `[snapshot-filter]`. Had the result
+still parsed, a `forget` would have run unscoped across all seven hosts.
+
+It did not parse, which was luck. But the invariant from M1 step 6 was not luck:
+reconstructing the damaged profile so that it *does* parse and running `config --check`
+against it produces a refusal naming the missing filter. The guard built for exactly this
+case caught exactly this case.
+
+Two lessons, both cheap: do not perform structural edits on safety-critical config by
+string matching, and run `rusticprofile config --check` after *any* edit to a rustic
+profile, not just after editing `jobs.yaml`.
+
 # Part 8 — Related state elsewhere
 
 - **`~/Sync/git/resticprofile/UPSTREAMING.md`** — the companion document for the Go fork: PR
