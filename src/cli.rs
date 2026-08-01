@@ -48,6 +48,68 @@ pub enum Command {
 
     /// Run a job's operations in order
     Run(RunArgs),
+
+    /// Install systemd units for a job
+    Schedule(ScheduleArgs),
+
+    /// Remove a job's systemd units
+    Unschedule(UnscheduleArgs),
+
+    /// Show what is scheduled on this host, and what is deliberately not
+    Status(StatusArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ScheduleArgs {
+    /// Job to schedule. Omit to schedule every job that declares a `schedule:` block.
+    #[arg(short = 'n', long, value_name = "JOB")]
+    pub name: Option<String>,
+
+    /// Also enable and start the timer.
+    ///
+    /// Writing units and activating them are deliberately separate: on a fleet where
+    /// another tool is still taking the backups, adding a second writer to a shared
+    /// repository should be something you asked for, not a side effect of installing a file.
+    #[arg(long)]
+    pub enable: bool,
+
+    /// Path to jobs.yaml (defaults to $XDG_CONFIG_HOME/rusticprofile/jobs.yaml)
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Write units into this directory instead of the systemd user directory
+    #[arg(long, value_name = "DIR")]
+    pub unit_dir: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct UnscheduleArgs {
+    /// Job to unschedule. Required — removal is always named explicitly.
+    #[arg(short = 'n', long, value_name = "JOB")]
+    pub name: String,
+
+    /// Path to jobs.yaml (defaults to $XDG_CONFIG_HOME/rusticprofile/jobs.yaml)
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Look for units in this directory instead of the systemd user directory
+    #[arg(long, value_name = "DIR")]
+    pub unit_dir: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct StatusArgs {
+    /// Path to jobs.yaml (defaults to $XDG_CONFIG_HOME/rusticprofile/jobs.yaml)
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Evaluate as though running on this host, instead of the real hostname
+    #[arg(long, value_name = "HOST")]
+    pub as_host: Option<String>,
+
+    /// Look for units in this directory instead of the systemd user directory
+    #[arg(long, value_name = "DIR")]
+    pub unit_dir: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -245,6 +307,31 @@ mod tests {
             panic!("expected the run subcommand");
         };
         assert!(!args.dry_run);
+    }
+
+    #[test]
+    fn scheduling_does_not_activate_unless_asked() {
+        // The default must be inert. A `schedule` that silently started an hourly writer
+        // against a shared repository would be the worst kind of convenience.
+        let cli = Cli::try_parse_from(["rusticprofile", "schedule", "-n", "j"]).unwrap();
+        let Some(Command::Schedule(args)) = cli.command else {
+            panic!("expected the schedule subcommand");
+        };
+        assert!(!args.enable);
+    }
+
+    #[test]
+    fn scheduling_without_a_name_is_allowed_but_removal_is_not() {
+        // Writing units for everything is harmless; removing without naming the job is the
+        // kind of thing that should never be a typo away.
+        assert!(Cli::try_parse_from(["rusticprofile", "schedule"]).is_ok());
+        assert!(Cli::try_parse_from(["rusticprofile", "unschedule"]).is_err());
+        assert!(Cli::try_parse_from(["rusticprofile", "unschedule", "-n", "j"]).is_ok());
+    }
+
+    #[test]
+    fn status_takes_no_job_and_needs_no_name() {
+        assert!(Cli::try_parse_from(["rusticprofile", "status"]).is_ok());
     }
 
     #[test]

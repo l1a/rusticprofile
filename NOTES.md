@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.18)
+## Current State (v0.0.19)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -320,6 +320,28 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.19 — M2 complete: schedule, unschedule, status (unreleased)
+
+**Milestone 2 is done. rusticprofile can now schedule itself.**
+
+- `schedule [-n JOB] [--enable]`, `unschedule -n JOB`, `status`. Verified end to end on this
+  host: units installed into `~/.config/systemd/user`, `systemctl --user list-unit-files`
+  reporting both as `disabled`, and `status` agreeing with systemd's own view.
+- **Writing units is not activating them.** `schedule` installs and reloads; `--enable` is a
+  separate, explicit flag. On a fleet where the Go tool is still taking the backups, quietly
+  adding a second hourly writer to a shared repository is not something a command called
+  `schedule` should do as a side effect.
+- **Idempotent.** Identical content is not rewritten, so re-running reports `unchanged`
+  rather than implying work happened. `unschedule` is safe to repeat and on a host where the
+  job was never scheduled — that is the desired end state either way.
+- **`status` surfaces the host gate**, so "this host has no prune timer" reads as a decision
+  rather than an absence — and distinguishes *not enabled* from *could not tell*, since only
+  one of those means the schedule is off.
+- **Fixed a real bug found by using it:** the tool panicked on a broken pipe, so
+  `rusticprofile status | head` greeted the user with a Rust panic and a backtrace hint. Rust
+  ignores `SIGPIPE`, so print macros panic on a closed pipe. The default disposition is now
+  restored at startup and the process dies quietly like every other Unix tool.
 
 ### v0.0.18 — M2 begins: systemd unit generation (unreleased)
 

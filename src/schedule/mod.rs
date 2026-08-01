@@ -15,4 +15,5 @@
 //! that milestone is a second backend rather than a second design.
 
 pub mod calendar;
+pub mod install;
 pub mod systemd;

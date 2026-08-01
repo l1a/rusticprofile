@@ -12,10 +12,13 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use owo_colors::OwoColorize;
 use rusticprofile::cli::{
-    Cli, Command, CompletionShell, ConfigArgs, PlanArgs, PlanFormat, RunArgs,
+    Cli, Command, CompletionShell, ConfigArgs, PlanArgs, PlanFormat, RunArgs, ScheduleArgs,
+    StatusArgs, UnscheduleArgs,
 };
+use rusticprofile::config::schedule::Permission;
 use rusticprofile::config::{self, Config, LoadOptions};
 use rusticprofile::rustic::invoke::{self, Options};
+use rusticprofile::schedule::{install, systemd};
 
 /// Configuration is invalid. Distinct from a failed run (1) so that a monitoring system,
 /// or a person reading a unit's status, can tell "I wrote the config wrong" apart from
@@ -23,6 +26,7 @@ use rusticprofile::rustic::invoke::{self, Options};
 const EXIT_CONFIG_ERROR: u8 = 2;
 
 fn main() -> ExitCode {
+    restore_default_sigpipe();
     let cli = Cli::parse();
 
     if let Some(shell) = cli.completions {
@@ -34,6 +38,9 @@ fn main() -> ExitCode {
         Some(Command::Config(args)) => run_config(&args),
         Some(Command::Plan(args)) => run_plan(&args),
         Some(Command::Run(args)) => run_job(&args),
+        Some(Command::Schedule(args)) => schedule_jobs(&args),
+        Some(Command::Unschedule(args)) => unschedule_job(&args),
+        Some(Command::Status(args)) => show_status(&args),
         None => {
             eprintln!(
                 "{} nothing to do — rusticprofile cannot run jobs yet.",
@@ -42,6 +49,23 @@ fn main() -> ExitCode {
             eprintln!("       Try `run -n <job>`, or `--help` for everything available.");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Restore the default `SIGPIPE` disposition.
+///
+/// Rust ignores `SIGPIPE`, so a closed pipe surfaces as a write error and the standard
+/// print macros *panic*: `rusticprofile status | head` greets the user with a panic message
+/// and a backtrace hint. Every other Unix tool simply dies quietly at that point, and a
+/// backup tool that appears to crash when you pipe it into `head` is exactly the kind of
+/// alarming-but-meaningless output this project tries not to produce.
+fn restore_default_sigpipe() {
+    // SAFETY: setting a signal disposition to the default before any threads are spawned.
+    unsafe {
+        let _ = nix::sys::signal::signal(
+            nix::sys::signal::Signal::SIGPIPE,
+            nix::sys::signal::SigHandler::SigDfl,
+        );
     }
 }
 
@@ -194,13 +218,274 @@ fn run_plan(args: &PlanArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Print the rustic-related environment the run would inherit.
-///
-/// rusticprofile does not manage the environment — the child inherits this process's,
-/// unmodified. This exists so a person can see what rustic will actually receive, which is
-/// where repository access and credentials come from.
 /// A run failed. Distinct from a configuration error (2).
 const EXIT_RUN_FAILED: u8 = 1;
+
+/// Where units go, unless overridden.
+fn resolve_unit_dir(
+    explicit: Option<std::path::PathBuf>,
+    permission: Permission,
+) -> std::path::PathBuf {
+    explicit.unwrap_or_else(|| {
+        let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        systemd::unit_dir(permission, &home)
+    })
+}
+
+/// The absolute path to this executable, for `ExecStart=`.
+///
+/// systemd does not resolve a bare name against `PATH`, and a unit pointing at a binary
+/// that has since moved fails at the least convenient moment.
+fn own_binary() -> Result<std::path::PathBuf, ExitCode> {
+    std::env::current_exe().map_err(|e| {
+        eprintln!(
+            "{} could not determine this executable's path, which a unit needs: {e}",
+            "error:".red().bold()
+        );
+        ExitCode::from(EXIT_RUN_FAILED)
+    })
+}
+
+fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
+    let (config, path) = match load_config(args.config.clone(), None, None) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let binary = match own_binary() {
+        Ok(b) => b,
+        Err(code) => return code,
+    };
+
+    // Only jobs that actually declare a schedule. A job without one is run by hand, and
+    // silently inventing an interval for it would be exactly the sort of guess this project
+    // refuses to make elsewhere.
+    let selected: Vec<_> = match &args.name {
+        Some(name) => match config.job(name) {
+            Some(job) => vec![job],
+            None => return report_missing_job(&config, name),
+        },
+        None => config
+            .jobs
+            .iter()
+            .filter(|j| j.schedule.is_some())
+            .collect(),
+    };
+
+    if selected.is_empty() {
+        eprintln!(
+            "{} no job on `{}` declares a `schedule:` block, so there is nothing to install.",
+            "error:".red().bold(),
+            config.host
+        );
+        return ExitCode::from(EXIT_CONFIG_ERROR);
+    }
+
+    let mut any_written = false;
+    for job in &selected {
+        let Some(schedule) = job.schedule else {
+            eprintln!(
+                "{} job `{}` has no `schedule:` block; add one or run it by hand.",
+                "error:".red().bold(),
+                job.name
+            );
+            return ExitCode::from(EXIT_CONFIG_ERROR);
+        };
+
+        let dir = resolve_unit_dir(args.unit_dir.clone(), schedule.permission);
+        let ctx = systemd::UnitContext {
+            binary: &binary,
+            config: &path,
+        };
+
+        match install::write_units(job, &schedule, &ctx, &dir) {
+            Ok(done) => {
+                any_written |= done.changed;
+                println!(
+                    "{} {}  {}",
+                    if done.changed {
+                        "installed:".green().bold().to_string()
+                    } else {
+                        "unchanged:".dimmed().to_string()
+                    },
+                    job.name.bold(),
+                    dir.display().to_string().dimmed()
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "{} could not write units for `{}`: {e}",
+                    "error:".red().bold(),
+                    job.name
+                );
+                return ExitCode::from(EXIT_RUN_FAILED);
+            }
+        }
+    }
+
+    // Reload regardless of `changed`: a previous run may have written units and failed
+    // before reloading, and a reload is cheap and idempotent.
+    let permission = selected[0]
+        .schedule
+        .map(|s| s.permission)
+        .unwrap_or(Permission::User);
+    if args.unit_dir.is_none()
+        && let Err(e) = install::daemon_reload(permission)
+    {
+        eprintln!(
+            "{} units written but `systemctl daemon-reload` failed: {e}",
+            "warning:".yellow().bold()
+        );
+    }
+
+    if args.enable {
+        for job in &selected {
+            let permission = job
+                .schedule
+                .map(|s| s.permission)
+                .unwrap_or(Permission::User);
+            match install::enable_timer(&job.name, permission) {
+                Ok((true, _)) => println!("  {} {}", "enabled:".green().bold(), job.name),
+                Ok((false, out)) => {
+                    eprintln!(
+                        "{} could not enable `{}`: {out}",
+                        "error:".red().bold(),
+                        job.name
+                    );
+                    return ExitCode::from(EXIT_RUN_FAILED);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{} could not enable `{}`: {e}",
+                        "error:".red().bold(),
+                        job.name
+                    );
+                    return ExitCode::from(EXIT_RUN_FAILED);
+                }
+            }
+        }
+    } else {
+        println!(
+            "  {} units are installed but not enabled. Run `rusticprofile status` to confirm,",
+            "note:".dimmed()
+        );
+        println!("        then `schedule --enable` to start the timer when you want it running.");
+    }
+
+    let _ = any_written;
+    ExitCode::SUCCESS
+}
+
+fn unschedule_job(args: &UnscheduleArgs) -> ExitCode {
+    let (config, _path) = match load_config(args.config.clone(), None, None) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+
+    // Fall back to user scope when the job is unknown or has no schedule: the units may
+    // still exist from an earlier config, and refusing to clean them up because the config
+    // has moved on would leave a timer running with nothing to describe it.
+    let permission = config
+        .job(&args.name)
+        .and_then(|j| j.schedule)
+        .map(|s| s.permission)
+        .unwrap_or(Permission::User);
+    let dir = resolve_unit_dir(args.unit_dir.clone(), permission);
+
+    if args.unit_dir.is_none() {
+        let _ = install::disable_timer(&args.name, permission);
+    }
+
+    match install::remove_units(&args.name, &dir) {
+        Ok(removed) if removed.is_empty() => {
+            println!(
+                "{} nothing to remove for `{}`",
+                "ok:".green().bold(),
+                args.name
+            );
+        }
+        Ok(removed) => {
+            println!("{} {}", "removed:".green().bold(), args.name.bold());
+            for p in removed {
+                println!("  {}", p.display().to_string().dimmed());
+            }
+            if args.unit_dir.is_none()
+                && let Err(e) = install::daemon_reload(permission)
+            {
+                eprintln!(
+                    "{} units removed but reload failed: {e}",
+                    "warning:".yellow().bold()
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "{} could not remove units for `{}`: {e}",
+                "error:".red().bold(),
+                args.name
+            );
+            return ExitCode::from(EXIT_RUN_FAILED);
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn show_status(args: &StatusArgs) -> ExitCode {
+    let (config, _path) = match load_config(args.config.clone(), args.as_host.clone(), None) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+
+    println!("{} {}", "host:".bold(), config.host);
+
+    for job in &config.jobs {
+        let permission = job
+            .schedule
+            .map(|s| s.permission)
+            .unwrap_or(Permission::User);
+        let dir = resolve_unit_dir(args.unit_dir.clone(), permission);
+        let st = install::timer_status(job, permission, &dir);
+
+        let state = match (
+            job.schedule.is_some(),
+            st.units_present,
+            st.enabled,
+            st.active,
+        ) {
+            (false, _, _, _) => "run by hand (no schedule declared)".dimmed().to_string(),
+            (true, false, _, _) => "not installed".yellow().to_string(),
+            (true, true, Some(true), Some(true)) => "active".green().bold().to_string(),
+            (true, true, Some(true), _) => "enabled".green().to_string(),
+            (true, true, Some(false), _) => "installed, not enabled".yellow().to_string(),
+            (true, true, None, _) => "installed; state unknown".yellow().to_string(),
+        };
+
+        println!("  {:<22} {}", job.name, state);
+        if let Some(s) = job.schedule {
+            println!(
+                "    {:<20} {} ({}, {})",
+                "declared", s.at, s.permission, s.priority
+            );
+        }
+        if let Some(next) = &st.next_elapse {
+            println!("    {:<20} {next}", "next run");
+        }
+    }
+
+    // The gate is the whole point of per-host scheduling, so it has to be visible. "This
+    // host has no prune timer" must be readable as a decision, not inferred from an absence.
+    if !config.gated_out.is_empty() {
+        println!("  {}", "not on this host (by config):".dimmed());
+        for g in &config.gated_out {
+            println!(
+                "    {:<20} enabled-on-hosts: {}",
+                g.name,
+                g.enabled_on_hosts.join(", ")
+            );
+        }
+    }
+
+    ExitCode::SUCCESS
+}
 
 fn run_job(args: &RunArgs) -> ExitCode {
     let (config, _path) = match load_config(
@@ -238,6 +523,11 @@ fn run_job(args: &RunArgs) -> ExitCode {
     ExitCode::from(report.exit_code())
 }
 
+/// Print the rustic-related environment the run would inherit.
+///
+/// rusticprofile does not manage the environment — the child inherits this process's,
+/// unmodified. This exists so a person can see what rustic will actually receive, which is
+/// where repository access and credentials come from.
 fn print_env(show_secrets: bool) {
     if show_secrets {
         // Warn before printing, not after: on a shared terminal or a session being
