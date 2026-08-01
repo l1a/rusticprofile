@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.13)
+## Current State (v0.0.14)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -306,6 +306,24 @@ and were renumbered in place. No tags existed, so nothing had to be unwound — 
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
 
+### v0.0.14 — make the review outcome visible, properly (unreleased)
+
+- The v0.0.12 fix did not work. `use_sticky_comment` controls *how many* comments are used,
+  not *whether* one is posted — confirmed by reading the action's `action.yml`, which is
+  what should have happened before configuring it. PR #4 proved it: the review ran with
+  sticky enabled (6 turns, `is_error: false`, $0.18) and still posted nothing.
+- The actual fix is a step that writes the outcome to `$GITHUB_STEP_SUMMARY`, one click
+  from the check mark, distinguishing the three cases that previously all looked identical:
+  the review ran and found nothing; the review ran and errored; the review never ran
+  because workflow validation skipped it.
+- It needs **no extra permissions**, so the review job stays read-only.
+- The summary is `tee`d to the job log as well as `$GITHUB_STEP_SUMMARY`. Written only to
+  the summary it is visible in the Actions UI and nowhere else — meaning the one thing that
+  reports whether a review happened could not itself be checked from the logs or the API.
+- The parser is defensive by design — the execution output has changed shape before. It
+  reports "ran, shape unrecognised" rather than asserting a turn count that is not there.
+  All four shapes and both shell branches were exercised locally before committing.
+
 ### v0.0.13 — correct the control-group definition (unreleased)
 
 - `AGENTS.md` listed **four** idle hosts as the control group, including `host-f`.
@@ -317,6 +335,10 @@ renumbering and means the versions below.*
 
 ### v0.0.12 — make the review visible when it finds nothing (unreleased)
 
+- **This entry was wrong; see v0.0.14.** `use_sticky_comment` means "use just one comment
+  to deliver PR comments" — it does not make the action post when it has nothing to say, so
+  it did not fix the problem described below. Left here rather than rewritten, because the
+  mistake is the useful part: the option was configured without reading `action.yml`.
 - `use_sticky_comment: true` on the review job. Without it the action posts **only** when
   it has findings, which makes "reviewed and found nothing" and "skipped without running"
   produce identical evidence: a green check and silence.
