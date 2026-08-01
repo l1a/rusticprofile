@@ -27,7 +27,7 @@ Relevant parts of your `jobs.yaml` and the `rustic.toml` profile it refers to, w
 **Environment (please complete the following information):**
  - OS: [e.g. Fedora 44, macOS 15]
  - Scheduler: [systemd / launchd / run by hand]
- - `rusticprofile` version: [e.g. 0.0.14]
+ - `rusticprofile` version: [e.g. 0.0.15]
  - `rustic` version: [e.g. 0.11.3]
 
 **Additional context**

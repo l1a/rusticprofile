@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.14)
+## Current State (v0.0.15)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -305,6 +305,19 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.15 — drop fedora-arm from pull-request CI (unreleased)
+
+- `build (fedora-arm)` took **19 minutes** on one merge, essentially all of it `dnf install`
+  plus a from-scratch rustup inside a Fedora container on an ARM runner. It set the wall
+  clock for every pull request.
+- Removed from the PR-time `build` job **only**. It still runs on every tag and manual
+  dispatch via `full-test`, and `build-release` still produces the linux-arm64 artifact from
+  it — so nothing ships untested.
+- What it uniquely covered was the *combination* Fedora + aarch64. `fedora-x64` covers the
+  Fedora toolchain, `ubuntu-arm` covers aarch64, and the only platform-specific code here is
+  a handful of `nix` syscalls, so an independent failure of just that intersection is
+  unlikely enough to be worth catching at tag time rather than on every PR.
 
 ### v0.0.14 — make the review outcome visible, properly (unreleased)
 
