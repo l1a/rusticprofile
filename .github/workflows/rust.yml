@@ -35,9 +35,22 @@ jobs:
     container: ${{ matrix.container }}
     # Skip this job on version tags (full-test will run instead)
     if: github.ref_type != 'tag'
+    # `fedora-arm` is deliberately absent here, and only here.
+    #
+    # It was the slowest thing in CI by a wide margin — 19 minutes on one merge, essentially
+    # all of it `dnf install` plus a from-scratch rustup inside a Fedora container on an ARM
+    # runner. It sets the wall clock for every pull request.
+    #
+    # What it uniquely covers is the *combination* of Fedora and aarch64. `fedora-x64`
+    # already covers Fedora's toolchain and `ubuntu-arm` already covers aarch64, and the
+    # only platform-specific code here is a handful of `nix` syscalls — so an
+    # independent failure of just that intersection is unlikely.
+    #
+    # It still runs on every tag and manual dispatch via `full-test`, and `build-release`
+    # still produces the linux-arm64 artifact from it, so nothing ships untested.
     strategy:
       matrix:
-        platform: [ubuntu-x64, ubuntu-arm, fedora-x64, fedora-arm, macos]
+        platform: [ubuntu-x64, ubuntu-arm, fedora-x64, macos]
         include:
           - platform: ubuntu-x64
             os: ubuntu-latest
@@ -45,9 +58,6 @@ jobs:
             os: ubuntu-24.04-arm
           - platform: fedora-x64
             os: ubuntu-latest
-            container: fedora:latest
-          - platform: fedora-arm
-            os: ubuntu-24.04-arm
             container: fedora:latest
           - platform: macos
             os: macos-latest
