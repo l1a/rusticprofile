@@ -197,8 +197,13 @@ shared by 7 machines, and currently holds the only copy of several years of data
 * **Never delete snapshots** on any host without explicit per-step authorisation. Follow the
   verification ladder in `PLAN.md` §4 in order; it is designed so each rung is provably safe
   and the first irreversible step has the smallest possible blast radius.
-* The four idle hosts (`host-c`, `host-e.local`, `host-f`, `host-g.local`) are the control
-  group. Leave them alone.
+* The **three** idle hosts (`host-c`, `host-e.local`, `host-g.local`) are the control group.
+  Leave them alone. They are the only hosts whose snapshot counts still mean anything as a
+  baseline, because nothing has run against them since 52, 140 and 269 days ago respectively.
+* `host-f` is **not** in the control group, despite an earlier version of this list saying
+  so. It is the development machine — the one this work is done on, and the one every
+  throwaway repository and test run has been created from. A control group containing the
+  machine being experimented on is not a control group.
 
 ## 4. Conventions
 
