@@ -91,7 +91,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.15)
+## Current State (v0.0.16)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -288,6 +288,21 @@ Smaller items:
       `host,label,paths` and should be required explicitly rather than inherited.
       Nothing can run a `forget` today, so deferring is safe — but only until step 6.
 - [ ] First benchmark + `benches/`, `criterion`, `[[bench]]` (see deviation 2 above)
+- [ ] **Publishing decision — not yet taken.** `rusticprofile` and `rustic-profile` are both
+      still free on crates.io, and AUR has no `rusticprofile` package (rechecked 2026-08-01).
+      Nothing forces the choice now that the repository is public and carries no
+      infrastructure identifiers, so the trade is:
+
+      - **Publishing early** claims the name with real code rather than a placeholder, which
+        is not squatting. But a crates.io version can be yanked and never deleted, and the
+        README describes a *scheduler* — shipping one that cannot yet schedule (M2/M3) invites
+        confusion about what the crate does.
+      - **Waiting** costs only the small risk of someone independently choosing a compound
+        name whose sole appeal is as a lineage marker for a Go tool with 19 GitHub repos.
+
+      Recommendation: publish at **M2**, when `schedule`/`unschedule`/`status` make the
+      README's first paragraph true. AUR later still — a package wants a tagged release
+      tarball, and there is no tag yet.
 - [ ] Decide what a partial backup should *do* — classify as warning, so `forget` still
       runs, is the design intent; settle the exit code when `rustic/exit.rs` is written
 - [ ] Redact infrastructure identifiers before making the repository public (see `WIP.md`)
@@ -305,6 +320,19 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.16 — CI timing, and the review workflow verified end to end (unreleased)
+
+- **Pull-request CI is now 83 seconds wall clock**, from roughly 19 minutes at its worst.
+  The two contributors were `cargo install cargo-audit` (v0.0.8) and the `fedora-arm` leg
+  (v0.0.15); with both addressed, `Rust` at 77s is the critical path.
+- **The review workflow's reporting is verified in both directions.** PR #5 exercised the
+  skip path ("The review did NOT run"), and PR #6 the working path ("The review ran and
+  completed — 5 turns, $0.18"). Neither was assumed from a green check.
+- **Corrected while doing so:** the validation skip applies when *the Claude workflow's own
+  file* differs from the default branch, not when any workflow file is touched. PR #6 edited
+  `rust.yml` and was reviewed normally. `NOTES.md` and the workflow comment already scoped
+  this correctly to `claude*.yml`; a PR description did not.
 
 ### v0.0.15 — drop fedora-arm from pull-request CI (unreleased)
 
