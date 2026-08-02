@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.23)
+## Current State (v0.0.24)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -334,6 +334,42 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.24 — refuse source paths rustic will not expand (unreleased)
+
+**One `rustic.toml` cannot be shared across hosts, and finding out why turned up a new
+silent-destruction path.** `PLAN.md` §5.9 has the measurements.
+
+rustic 0.11.3 expands neither `~` nor `$VAR` in `sources`, and there is no env-var route to
+the host filter. That much is merely inconvenient. What matters is how it fails: `~/…` and
+`$HOME/…` are *relative* paths to rustic, so they miss the §5.7 hard-fail that an absent
+*absolute* path gets. Instead rustic warns, backs up nothing, **saves the snapshot and
+exits 0** — leaving a real 0-byte snapshot whose recorded path is the literal string
+`$HOME/Sync`. Under the label grouping §7.3 requires, that empty snapshot then wins its
+retention slot against the real one, which is the mechanism that already destroyed a
+395 MiB snapshot. A "portable" config of this shape does not fail to back up; it replaces
+the backups with nothing and reports success.
+
+`filter-hosts = ["$HOSTNAME"]` fails the other way — matches nothing, so retention silently
+never runs. That is bug #1 from §2.1, reproduced exactly.
+
+**New refusal: `check_sources_are_expanded`.** Any `sources` entry containing `~` or `$`,
+on a job that backs up, is a load-time error naming the set, the path and the consequence.
+Batched with every other rule. `forget`-only jobs are exempt — a profile is shared, and a
+forget never reads `sources`.
+
+This is the same bargain as the `--name` check: rusticprofile reads a file it does not own,
+because nothing else in the chain can catch the mistake and the mistake is invisible.
+
+**Rejected: emitting `--filter-host <hostname>`.** It would remove the need to template the
+hostname, and it is the wrong trade — `-P`, the operation, `--name` and `--json` are the
+only flags this tool emits, a test asserts it, and the home path would need templating
+regardless.
+
+**The useful half of the answer:** `jobs.yaml` needs no templating at all. `${env:HOME}` is
+resolved by rusticprofile itself and `enabled-on-hosts` is a host list that reads the same
+everywhere, so one byte-identical file serves all seven hosts — prune-host gate included.
+Only `rustic.toml` has to be generated. 221 tests, up from 213.
 
 ### v0.0.23 — `config --example`: ship the findings as a config (unreleased)
 

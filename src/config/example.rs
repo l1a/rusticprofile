@@ -236,6 +236,18 @@ globs = [
 # ---------------------------------------------------------------------------------------
 # Snapshot sets, split by how reliably each path exists across your machines.
 #
+# SOURCES MUST BE ABSOLUTE. rustic expands neither `~` nor `$VAR`, and the failure is
+# silent and destructive rather than loud: the literal string is a *relative* path, so it
+# misses the hard-fail that an absent absolute path gets. rustic logs a warning, backs up
+# nothing, saves a 0-byte snapshot and exits 0 -- and that empty snapshot then wins its
+# retention slot against the real one. rusticprofile refuses to load a profile whose
+# sources contain ~ or $, which is the only reason that mistake is survivable.
+#
+# So this file is NOT portable between machines: the home path and the hostname filter
+# above both have to be real. Generate it per host (chezmoi, or any templating you like)
+# rather than trying to make one file work everywhere. Note jobs.yaml has no such problem
+# -- it is genuinely identical on every host.
+#
 # rustic hard-fails an ENTIRE entry if any one of its sources is missing, with no opt-out —
 # but one broken entry does not abort the others. So a path that is absent on some hosts
 # belongs in its own set, gated per host in jobs.yaml. That is the whole reason for

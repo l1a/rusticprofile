@@ -706,6 +706,69 @@ Trap 2 — **`program_version` inside that JSON does not report the binary's ver
 `rustic 0.11.3`; every emitted snapshot object says `"program_version": "rustic 0.12.0"`. Version
 gating must come from `rustic --version`, not from snapshot output.
 
+## 5.9 rustic expands nothing in paths — and §5.7's strictness does not apply (2026-08-02)
+
+Found while trying to write **one** `rustic.toml` for the whole fleet. It cannot be done,
+and the way it fails is the dangerous part.
+
+rustic expands neither `~` nor `$VAR` in `sources`, and there is no env-var route to the
+host filter either:
+
+| written | result |
+|---|---|
+| `sources = ["$HOME/Sync"]` | not expanded |
+| `sources = ["~/Sync"]` | not expanded |
+| `sources = ["${HOME}/Sync"]` | not expanded |
+| `filter-hosts = ["$HOSTNAME"]` | literal string; matches **0 snapshots**, no error |
+| `RUSTIC_FILTER_HOST`, `RUSTIC_FILTER_HOSTS`, `RUSTIC_SNAPSHOT_FILTER_FILTER_HOSTS` | all ignored |
+
+**§5.7 does not save you here.** That section established that rustic hard-fails a whole
+snapshot set when a source is missing. An unexpanded path does not take that route, because
+`~/…` and `$HOME/…` are *relative* paths as far as rustic is concerned, and the sanitising
+step that produces the hard error only applies to absolute ones. Measured, same repository,
+same rustic 0.11.3:
+
+```text
+$HOME/Sync            -> [WARN] ignoring error … No such file or directory
+                         processed 0 files, snapshot b7dafdf9 successfully saved, exit 0
+/definitely/not/here  -> [ERROR] error sanitizing source=s"PathList([...])"
+                         "Not all snapshots were generated successfully!"
+```
+
+So the config produces **a real, successful, 0-byte snapshot** whose recorded path is the
+literal string `$HOME/Sync`. And by §7.3, that empty snapshot competes for the same
+retention slot as the real one and, being newer, wins — the exact mechanism that already
+destroyed a 395 MiB snapshot. A "portable" config of this shape does not fail to back up;
+it replaces the backups with nothing, and reports success while doing it.
+
+`filter-hosts = ["$HOSTNAME"]` fails in the other direction: it matches nothing, so
+retention silently never runs. That is bug #1 from §2.1 reproduced exactly.
+
+### Consequences
+
+**One `rustic.toml` cannot be shared across hosts.** Both the hostname and the home path
+must be materialised into the file, so the fleet-wide config has to be *generated* — one
+chezmoi template, rendered per host. That is not a design failure to be fixed; it is what
+rustic supports.
+
+**`jobs.yaml` needs no templating at all.** It is genuinely portable: `${env:HOME}` is
+resolved by rusticprofile's own interpolation, and `enabled-on-hosts` names hosts in a list
+that is identical everywhere. **One byte-identical file on all seven hosts**, including the
+prune-host gate. Worth stating plainly, because it is the difference between a config format
+designed for a fleet and one designed for a machine.
+
+**Rejected: emitting `--filter-host <hostname>` from rusticprofile.** It would solve the
+hostname half without templating, and it is the wrong trade. `-P`, the operation, `--name`
+and `--json` are the only flags this tool emits, a test asserts exactly that, and the
+delegation boundary is the thing that keeps this project from becoming the wrapper it was
+written not to be. The home path would still need templating regardless, so it buys nothing.
+
+**Accepted: refuse it at load time.** `check_sources_are_expanded` rejects any `sources`
+entry containing `~` or `$` for a job that backs up. This is the same bargain as the
+`--name` check in §7.2 — rusticprofile reads a file it does not own, because nothing else
+in the chain can catch the mistake, and the mistake is silent. A tool whose stated purpose
+is preventing silent degradation cannot let this particular one through.
+
 ## Safety rules observed during this testing
 
 Read-only against GCS (`repoinfo`, `snapshots`); every write test in a throwaway local repo under

@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.0.23" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.0.24" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -80,6 +80,8 @@ Evaluate as though running on \fIHOST\fP instead of the real hostname\. This is 
 .PP
 Read \fIPATH\fP instead of the default `\f[CR]jobs\.yaml\fP`\.
 .RE
+.PP
+Validation also rejects a `\f[CR]sources\fP` entry containing `\f[CR]~\fP` or `\f[CR]$\fP` in a profile a job backs up with\. rustic expands neither, and the failure is silent rather than loud: the literal string is a \fIrelative\fP path, so it misses the hard error an absent absolute path produces\. rustic warns, backs up nothing, saves a 0\-byte snapshot and exits 0 \-\- and that empty snapshot then wins its retention slot against the real one\. A `\f[CR]rustic\.toml\fP` therefore cannot be shared unmodified between hosts and must be generated per host; `\f[CR]jobs\.yaml\fP` has no such limitation and is identical everywhere\.
 .PP
 Validation rejects, among other things, any key it does not recognise; a snapshot set that is not defined in the rustic profile it names; a job whose snapshot sets are all gated away on this host; an \fBenabled\-on\-hosts\fP list that is empty; a relative log path; and an unknown or malformed `\f[CR]${\.\.\.}\fP` reference\. Each of these would otherwise cause the tool to quietly do less than the configuration says\.
 

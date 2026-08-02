@@ -147,6 +147,10 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         &rustic_config_dir,
     ));
     violations.extend(validate::check_forget_is_scoped(&raw, &rustic_config_dir));
+    violations.extend(validate::check_sources_are_expanded(
+        &raw,
+        &rustic_config_dir,
+    ));
 
     let mut jobs = Vec::new();
     let mut gated_out = Vec::new();

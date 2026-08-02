@@ -289,6 +289,56 @@ pub fn check_snapshot_sets_exist(raw: &RawConfig, rustic_config_dir: &Path) -> V
     out
 }
 
+/// Refuse a profile whose `sources` contain `~` or `$`.
+///
+/// rustic expands neither, and the way it fails is the reason this is an error rather than
+/// a warning: an unexpanded source is a *relative* path, so it misses the hard-fail route
+/// that an absent absolute path takes. rustic logs `[WARN] ignoring error`, reports
+/// `processed 0 files`, **saves the snapshot and exits 0** — and under the label grouping
+/// this project requires, that 0-byte snapshot then wins its retention slot against the
+/// real one. Measured against rustic 0.11.3; see [`rustic_toml::UnexpandableSource`].
+///
+/// This is the same bargain as the `--name` check: rusticprofile reads a file it does not
+/// own, because nothing else in the chain can catch the mistake. A tool whose whole purpose
+/// is preventing silent degradation cannot let this one through.
+///
+/// Only jobs that actually back up are checked. A profile is shared by several jobs, and a
+/// `forget`-only job never reads `sources` at all.
+pub fn check_sources_are_expanded(raw: &RawConfig, rustic_config_dir: &Path) -> Vec<Violation> {
+    let mut out = Vec::new();
+
+    for (name, job) in &raw.jobs {
+        if !job.operations.contains(&Operation::Backup) || !is_valid_name(&job.profile) {
+            continue;
+        }
+
+        let path = paths::profile_toml(rustic_config_dir, &job.profile);
+        // An unreadable profile is reported by the checks that own that failure; adding a
+        // third message for the same missing file is noise.
+        let Ok(profile) = rustic_toml::read_profile(&path) else {
+            continue;
+        };
+
+        for bad in &profile.unexpandable_sources {
+            out.push(Violation::new(
+                format!("jobs.{name}.profile"),
+                format!(
+                    "{} declares source `{}` in snapshot set `{}`. rustic does not expand \
+                     `~` or `$VAR`: it takes the path literally, backs up nothing, and still \
+                     saves a 0-byte snapshot with exit 0 — which then wins its retention slot \
+                     against the real one. Use an absolute path, and generate the file per \
+                     host if it has to differ",
+                    path.display(),
+                    bad.source,
+                    bad.set
+                ),
+            ));
+        }
+    }
+
+    out
+}
+
 /// Refuse a `forget` that is not restricted to some subset of snapshots.
 ///
 /// `forget` is irreversible and the repository is shared by every machine in the fleet.
@@ -657,6 +707,107 @@ jobs:
     profile: p
     operations: [backup, forget]
 ";
+
+    // --- unexpandable sources ---------------------------------------------------------
+    //
+    // rustic expands neither `~` nor `$VAR`, and an unexpanded source produces a
+    // successful 0-byte snapshot rather than an error, because the literal string is a
+    // relative path and misses the hard-fail route an absent absolute path takes. Under
+    // label grouping that empty snapshot then evicts the real one. These tests are the
+    // reason the rule is a refusal and not a warning.
+
+    #[test]
+    fn absolute_sources_are_accepted() {
+        let dir = profile_with(
+            "[[backup.snapshots]]\nname = \"core\"\nsources = [\"/home/user/.config\", \"/etc\"]\n",
+        );
+        assert!(check_sources_are_expanded(&parse(FORGET_JOB), dir.path()).is_empty());
+    }
+
+    #[test]
+    fn a_tilde_source_is_refused() {
+        let dir =
+            profile_with("[[backup.snapshots]]\nname = \"core\"\nsources = [\"~/.config\"]\n");
+        let v = check_sources_are_expanded(&parse(FORGET_JOB), dir.path());
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(locations(&v).contains(&"jobs.j.profile"));
+    }
+
+    #[test]
+    fn a_dollar_variable_source_is_refused_in_both_spellings() {
+        for spelling in ["$HOME/.config", "${HOME}/.config"] {
+            let dir = profile_with(&format!(
+                "[[backup.snapshots]]\nname = \"core\"\nsources = [\"{spelling}\"]\n"
+            ));
+            let v = check_sources_are_expanded(&parse(FORGET_JOB), dir.path());
+            assert_eq!(v.len(), 1, "{spelling} should be refused: {v:?}");
+        }
+    }
+
+    #[test]
+    fn a_variable_anywhere_in_the_path_is_refused() {
+        // Not just at the start: rustic expands nothing, anywhere.
+        let dir = profile_with(
+            "[[backup.snapshots]]\nname = \"core\"\nsources = [\"/mnt/$USER/data\"]\n",
+        );
+        assert_eq!(
+            check_sources_are_expanded(&parse(FORGET_JOB), dir.path()).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn every_bad_source_is_reported_at_once() {
+        // Batched like every other rule here — fixing one and rerunning to find the next
+        // is the workflow this project refuses to impose.
+        let dir = profile_with(
+            "[[backup.snapshots]]\nname = \"core\"\nsources = [\"~/a\", \"/ok\", \"$HOME/b\"]\n\n\
+             [[backup.snapshots]]\nname = \"other\"\nsources = [\"~/c\"]\n",
+        );
+        assert_eq!(
+            check_sources_are_expanded(&parse(FORGET_JOB), dir.path()).len(),
+            3
+        );
+    }
+
+    #[test]
+    fn the_message_names_the_set_and_the_offending_path() {
+        let dir =
+            profile_with("[[backup.snapshots]]\nname = \"gnupg\"\nsources = [\"$HOME/.gnupg\"]\n");
+        let v = check_sources_are_expanded(&parse(FORGET_JOB), dir.path());
+        let msg = format!("{:?}", v[0]);
+        assert!(msg.contains("gnupg"), "{msg}");
+        assert!(msg.contains("$HOME/.gnupg"), "{msg}");
+        assert!(
+            msg.contains("0-byte"),
+            "the consequence must be stated: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_forget_only_job_does_not_read_sources() {
+        // A profile is shared between jobs, and a forget never looks at `sources`.
+        let dir =
+            profile_with("[[backup.snapshots]]\nname = \"core\"\nsources = [\"~/.config\"]\n");
+        let forget_only = "
+schema: 1
+jobs:
+  j:
+    profile: p
+    operations: [forget]
+";
+        assert!(check_sources_are_expanded(&parse(forget_only), dir.path()).is_empty());
+    }
+
+    #[test]
+    fn an_unnamed_snapshot_set_is_still_checked() {
+        // It cannot be selected by --name, but it still backs something up.
+        let dir = profile_with("[[backup.snapshots]]\nsources = [\"~/.config\"]\n");
+        assert_eq!(
+            check_sources_are_expanded(&parse(FORGET_JOB), dir.path()).len(),
+            1
+        );
+    }
 
     #[test]
     fn a_scoped_forget_with_explicit_grouping_is_accepted() {
