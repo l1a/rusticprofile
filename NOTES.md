@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.20)
+## Current State (v0.0.21)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -327,6 +327,28 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.21 — the pre-PR gate no longer needs a terminal (unreleased)
+
+Tooling only; no code changed.
+
+`just pr` ended its checklist with a bare `read`, which is fine for a human and wrong for
+everything else. Called from a script, a CI step or an agent shell, it either blocked on a
+stdin that would never answer or died without printing why — the failure looked like the
+gate itself breaking rather than the gate asking a question nobody could hear.
+
+The checklist now takes its answer from `PR_CONFIRM` if set, from an interactive stdin if
+there is one, and otherwise from whatever was piped in under a ten-second bound. All four
+paths still require an explicit `y`: `PR_CONFIRM=n` and a piped `n` both refuse, so this
+widens *who can answer*, not *what counts as an answer*. With nothing to read from, it now
+fails in milliseconds and names `PR_CONFIRM` in the message — a gate that cannot be
+satisfied from the context it failed in is a wall, not a gate.
+
+`open-pr` also hands `gh` an explicitly empty stdin when there is no terminal. It would
+otherwise inherit the pipe the checklist just drained, and `gh` reads stdin itself for
+`--body-file -`; failing there loses a gate that had already passed.
+
+The interactive path is unchanged, including `gh pr create` with no arguments.
 
 ### v0.0.20 — first host cut over, and a retention hazard from outside the tool (unreleased)
 

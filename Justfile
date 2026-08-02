@@ -250,22 +250,62 @@ pr:
     echo "  [ ] No live infrastructure identifiers added to tracked files (see WIP.md)"
     echo "  [ ] Safety rules observed: no prune against the shared repo, no snapshots deleted"
     echo ""
-    echo -n "All manual items confirmed? [y/N] "
-    read -r CONFIRM
+
+    # The checklist is a human gate, so it must stay a deliberate act — but it must not
+    # deadlock a caller that has no terminal. An agent shell, a CI step or a pipeline all
+    # reach this line with stdin closed or connected to something that will never answer,
+    # and a bare `read` there blocks or dies without saying why. Three sources of an
+    # answer, tried in order:
+    #
+    #   1. PR_CONFIRM in the environment — the explicit answer for any non-interactive
+    #      caller. It is not a bypass: setting it is the same act of confirmation as
+    #      typing y, just recorded where a script can supply it.
+    #   2. An interactive stdin — a human at a terminal, prompted exactly as before.
+    #   3. Neither, so read whatever was piped in, bounded by a timeout. `echo y | just
+    #      open-pr` keeps working, and a stdin that never answers costs ten seconds
+    #      instead of hanging until someone notices.
+    #
+    # The failure message names PR_CONFIRM, because a gate that cannot be satisfied from
+    # the context it failed in is not a gate, it is a wall.
+    if [ -n "${PR_CONFIRM:-}" ]; then
+        CONFIRM="$PR_CONFIRM"
+        echo "All manual items confirmed? [y/N] $CONFIRM   (answered by PR_CONFIRM)"
+    elif [ -t 0 ]; then
+        echo -n "All manual items confirmed? [y/N] "
+        read -r CONFIRM
+    else
+        echo -n "All manual items confirmed? [y/N] "
+        read -r -t 10 CONFIRM || CONFIRM=""
+        echo "$CONFIRM"
+        [ -n "$CONFIRM" ] \
+            || fail "No terminal to confirm the checklist on, and nothing on stdin. Re-run with PR_CONFIRM=y once each item above is actually checked."
+    fi
     [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ] \
         || { echo -e "${RED}Aborted.${NC} Complete the checklist first."; exit 1; }
 
     echo -e "\n${GREEN}Gate passed. You may now run: gh pr create${NC}\n"
 
 # Run the pre-PR gate, then gh pr create — always use this, never gh pr create directly
+#   just open-pr --title "..." --body-file body.md      # at a terminal
+#   PR_CONFIRM=y just open-pr --title "..." --fill      # script, CI or agent
 open-pr *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
     # This recipe is the only thing that can gate PR creation: neither `gh` nor `git`
     # has a hook for "a PR is about to open". Being a Justfile recipe rather than
     # editor or agent configuration, it binds every contributor and tool identically.
+    #
+    # At a terminal gh keeps stdin, so its interactive flow still works when open-pr is
+    # called with no arguments. Without one, gh is given an explicitly empty stdin: it
+    # would otherwise inherit whatever the gate's checklist prompt drained (`echo y |
+    # just open-pr`), and gh reads stdin itself for `--body-file -`. Failing at the last
+    # step on an unrelated dead pipe is a confusing way to lose a passed gate.
     just pr
-    gh pr create "$@"
+    if [ -t 0 ]; then
+        gh pr create "$@"
+    else
+        gh pr create "$@" </dev/null
+    fi
 
 # Generate a flamegraph for execution profiling (requires perf on Linux or dtrace on macOS)
 flamegraph *ARGS="":
