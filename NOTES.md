@@ -86,12 +86,15 @@ costs real complexity in the publish recipes.
   write test goes to a throwaway repository under a temp dir, deleted afterwards; never
   `prune` against a shared repository before M4; never delete snapshots without explicit
   per-step authorisation. See `AGENTS.md` Part 2 §3.
-- **No live infrastructure identifiers in tracked files** while the repository is private
-  pending redaction. See `WIP.md`.
+- **No live infrastructure identifiers in tracked files.** The repository is public, so this
+  is now permanent rather than a pre-publication chore: no real hostnames, bucket names,
+  project ids or home paths. Hosts are `host-a`…`host-h`; paths are `/home/user`. Grep the
+  diff before opening a PR, and beware substring false positives — a redacted hostname can
+  hide inside an ordinary English word.
 
 ---
 
-## Current State (v0.0.19)
+## Current State (v0.0.20)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -300,7 +303,16 @@ Smaller items:
       tarball, and there is no tag yet.
 - [ ] Decide what a partial backup should *do* — classify as warning, so `forget` still
       runs, is the design intent; settle the exit code when `rustic/exit.rs` is written
-- [ ] Redact infrastructure identifiers before making the repository public (see `WIP.md`)
+- [x] **Redact infrastructure identifiers and make the repository public.** Done in v0.0.9.
+- [x] **Why one snapshot set backs up 0 B — answered 2026-08-01, and it is not a defect.**
+      The source directory is empty: 0 files on disk. Both rusticprofile and the predecessor
+      report 0 B for it because 0 B is correct. Worth keeping as a set — it will contain data
+      on other hosts — but it is a reminder that an empty snapshot still competes for a
+      retention slot, which is how it came to displace a 395 MiB one (`PLAN.md` §7.5).
+- [ ] **A `doctor` command.** `PLAN.md` §7.5 describes the check that would have caught the
+      retention crossfire from inside the repository: warn when one host's snapshots carry a
+      mix of labelled and unlabelled entries, which is what a second retention authority
+      looks like. Not scheduled; recorded so the idea is not lost.
 - [ ] Add a Pre-PR Checklist section to `AGENTS.md` Part 2, mirroring retch's §4
 - [ ] Decide what migrates out of `PLAN.md` into this file now that code exists
 
@@ -315,6 +327,37 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.20 — first host cut over, and a retention hazard from outside the tool (unreleased)
+
+Documentation and findings only; no code changed.
+
+**rusticprofile is now the scheduler for one host.** `schedule --enable` armed the hourly
+timer, the predecessor's timer for the same job was disabled, and a triggered run completed
+`Result=success` in 6.8 s wall clock: 3 of 3 snapshot sets saved, `forget` retiring exactly
+the two snapshots that had aged past `keep-hourly`. First time the tool has been the thing
+actually taking backups anywhere.
+
+**`PLAN.md` §7.5 — exactly one retention authority per (repository, host).** Enabling the
+timer alongside the predecessor would have destroyed a real snapshot every hour, and the
+same thing had already happened twice by hand that afternoon. §7.3's rule — group named sets
+by label — protects the sets from each other; it says nothing about a second tool applying
+its own retention to the same host. The predecessor's `group-by: host` with `path` and `tag`
+off swept our labelled snapshots into its bucket and kept the newest per hour, deleting a
+395 MiB `core` snapshot in favour of a 0-byte one written one second later. Our own
+correctly grouped `forget` deleted one of *its* 397 MiB snapshots by the mirror-image
+mechanism, since an unlabelled foreign snapshot is just another member of the empty-label
+group. Two defensible configurations, no overlap in intent, snapshots lost in both
+directions.
+
+The operational consequence is an ordering: disable the outgoing tool's retention *before*
+enabling the incoming tool's schedule, and confirm from the repository rather than from
+either tool's own report. rusticprofile cannot detect this itself — it emits no retention
+flags by design — so a `doctor` command is now in the backlog.
+
+**Part 8 corrected.** It claimed the predecessor was authoritative on all seven hosts, which
+stopped being true with this cutover, and listed three open upstream PRs that ceased to
+exist when the fork was deleted.
 
 ### v0.0.19 — M2 complete: schedule, unschedule, status (unreleased)
 
