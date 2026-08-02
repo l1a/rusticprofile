@@ -20,6 +20,7 @@
 //! back as [`ValidationErrors`] and exits 2. One error type, one presentation, and "the
 //! config is wrong" stays distinguishable from "the backup failed".
 
+pub mod example;
 pub mod hosts;
 pub mod interp;
 pub mod job;

@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.0.22" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.0.23" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -51,18 +51,33 @@ Write a shell completion script to standard output\. \fISHELL\fP is one of `\f[C
 .SH "CONFIG"
 \fB\-\-check\fP
 .RS
+.PP
 Validate the configuration\. \fBEvery problem is reported at once\fP, not one per run, and nothing is spawned before validation completes\. Exits 0 if the configuration is usable, 2 otherwise\. Also prints which jobs this host runs and which are excluded by \fBenabled\-on\-hosts\fP \-\- a gate that cannot be seen is indistinguishable from a job that was never written\.
 .RE
 \fB\-\-show\fP \fB\-n\fP \fIJOB\fP
 .RS
+.PP
 Print the resolved form of one job: its operations, the snapshot sets that survive host gating, its schedule and its log path\. If \fIJOB\fP exists but is gated off on this host, that is reported as such rather than as an unknown job\.
+.RE
+\fB\-\-example\fP \fIWHAT\fP
+.RS
+.PP
+Write an annotated starting\-point configuration to stdout, where \fIWHAT\fP is \fBjobs\fP or \fBrustic\fP\. Requires no existing configuration and reads nothing \-\- it is what you ask for when you have neither file yet\.
+.PP
+\fBjobs\fP is the small one: rusticprofile owns only which jobs exist, what they run, on which hosts, and when\. \fBrustic\fP is the one that matters, because the delegation boundary puts nearly everything that can silently lose data in rustic's own config \-\- the exclusion globs that are \fIinclude\fP filters unless prefixed with `\f[CR]!\fP`, the scoping filter that rustic accepts and ignores if placed under \fB[forget]\fP instead of \fB[snapshot\-filter]\fP, and the retention grouping that lets a 0\-byte snapshot evict a 395 MiB one\. Each annotation records a measured failure, not a preference\.
+.PP
+Emitted to stdout rather than written anywhere, exactly as \fB\-\-completions\fP is: placing the file is a deliberate act, and this command cannot overwrite a working configuration\. Redirect it yourself\.
+.PP
+Placeholders (`\f[CR]host\-a\fP`, `\f[CR]/home/user\fP`) are \fBstatic\fP\. Your hostname and home directory are deliberately not filled in \-\- a configuration that appears to work is one nobody reads, and every value in these files is worth reading once\.
 .RE
 \fB\-\-as\-host\fP \fIHOST\fP
 .RS
+.PP
 Evaluate as though running on \fIHOST\fP instead of the real hostname\. This is the only way to check another machine's view of a per\-host gate without logging into it\.
 .RE
 \fB\-\-config\fP \fIPATH\fP
 .RS
+.PP
 Read \fIPATH\fP instead of the default `\f[CR]jobs\.yaml\fP`\.
 .RE
 .PP

@@ -1015,6 +1015,51 @@ unlabelled snapshots on one host indicates a second retention authority; a repos
 is written by rustic while any restic schedule still holds an exclusive operation indicates
 a second lock authority. The second is the more dangerous of the two.
 
+## 7.7 Shipping the findings as a config — `config --example` (decided 2026-08-02)
+
+Everything Part 7 discovered lives in prose here and in one hand-written file on one
+machine that is not in chezmoi. That is the wrong place for it. The delegation boundary
+means rusticprofile owns almost nothing, so **every decision that can silently destroy data
+is in the rustic config** — and a user who reads the README's 17-line sketch and writes
+their own `rustic.toml` will get several of them wrong, because we did.
+
+The guidance an example has to carry, all of it already measured, none of it guessable:
+
+| the trap | where |
+|---|---|
+| `opendal:gcs`, not restic's `gs:` — the scheme does not exist in rustic | §5.1 |
+| scoping filters go in `[snapshot-filter]`; under `[forget]` rustic **accepts and ignores** them, and rejects no unknown keys, so a config can look scoped and filter nothing | §5.5 |
+| `group-by = "host,label"` — with `"host"` the named sets compete for one slot and a 0-byte snapshot evicts a 395 MiB one | §7.3 |
+| exclusion globs need a leading `!`; a bare pattern is an *include* filter | §7.2 |
+| split sets by how reliably the path exists — rustic hard-fails an entire set if any one source is missing, with no opt-out | §5.7 |
+| an unknown `--name` is silently ignored whenever a valid one is also given | §7.2 |
+| the password file and credentials must be excluded from the backup, or the key goes inside the lock | §4.1 |
+| `path`/`tag` filters embed the source list, so a renamed directory orphans the history | §7.3 |
+
+### Shape: `config --example <jobs|rustic>`, to stdout
+
+**Stdout, not a file.** This is the same decision as `--completions`, for the same reason:
+the tool emits, and *placing* it is the user's explicit act. It also makes the command
+hermetic and unable to clobber a working config, which matters more than usual when the
+thing it would overwrite is what stands between a fleet and its backups. `just
+install-completions` is the precedent for a convenience wrapper if one is ever wanted.
+
+**A flag on `config`, not an `init` verb.** `config --check` and `config --show` already
+mean "inspect the configuration"; emitting a starting point belongs with them. An `init`
+that writes two files into XDG paths is a different and more dangerous command, and nothing
+yet needs it.
+
+**Static placeholders, using this project's own redaction vocabulary** — `host-a`…`host-h`
+and `/home/user`. Emitting the *real* hostname and `$HOME` would produce a file that runs
+as-is, which is precisely the objection: a config that appears to work is one nobody reads,
+and every value in it needs reading once. It also keeps the feature clearly outside the
+"no templating in any form" non-goal — there is no user-supplied template, no expression
+language, and nothing is substituted at all.
+
+**The examples must pass `config --check`.** A test writes both, substitutes only the
+directory, and validates them through the real binary. An example that has drifted out of
+step with the validator is worse than none, because it is quoted with authority.
+
 # Part 8 — Related state elsewhere
 
 - **`~/Sync/git/resticprofile/UPSTREAMING.md`** — the companion document for the Go fork: PR

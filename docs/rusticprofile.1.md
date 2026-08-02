@@ -51,6 +51,15 @@ The **run** subcommand executes a job, and **schedule** installs the systemd uni
 **--show** **-n** *JOB*
 :   Print the resolved form of one job: its operations, the snapshot sets that survive host gating, its schedule and its log path. If *JOB* exists but is gated off on this host, that is reported as such rather than as an unknown job.
 
+**--example** *WHAT*
+:   Write an annotated starting-point configuration to stdout, where *WHAT* is **jobs** or **rustic**. Requires no existing configuration and reads nothing — it is what you ask for when you have neither file yet.
+
+    **jobs** is the small one: rusticprofile owns only which jobs exist, what they run, on which hosts, and when. **rustic** is the one that matters, because the delegation boundary puts nearly everything that can silently lose data in rustic's own config — the exclusion globs that are *include* filters unless prefixed with `!`, the scoping filter that rustic accepts and ignores if placed under **[forget]** instead of **[snapshot-filter]**, and the retention grouping that lets a 0-byte snapshot evict a 395 MiB one. Each annotation records a measured failure, not a preference.
+
+    Emitted to stdout rather than written anywhere, exactly as **--completions** is: placing the file is a deliberate act, and this command cannot overwrite a working configuration. Redirect it yourself.
+
+    Placeholders (`host-a`, `/home/user`) are **static**. Your hostname and home directory are deliberately not filled in — a configuration that appears to work is one nobody reads, and every value in these files is worth reading once.
+
 **--as-host** *HOST*
 :   Evaluate as though running on *HOST* instead of the real hostname. This is the only way to check another machine's view of a per-host gate without logging into it.
 

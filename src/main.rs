@@ -561,6 +561,14 @@ fn print_env(show_secrets: bool) {
 }
 
 fn run_config(args: &ConfigArgs) -> ExitCode {
+    // Handled before loading anything: an example is what you ask for when you do not yet
+    // have a configuration, so requiring a valid one first would make the command useless
+    // in the only situation that calls for it.
+    if let Some(kind) = args.example {
+        print!("{}", kind.text());
+        return ExitCode::SUCCESS;
+    }
+
     let (config, path) = match load_config(args.config.clone(), args.as_host.clone(), None) {
         Ok(v) => v,
         Err(code) => return code,
