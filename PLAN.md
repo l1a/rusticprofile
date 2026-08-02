@@ -1001,7 +1001,7 @@ bare, and every policy comes from the rustic profile — so it cannot detect thi
 carry a mix of labelled and unlabelled entries, which is what a second writer looks like
 from inside the repository.
 
-## 7.6 The other authority — rustic takes no repository lock (found 2026-08-02)
+## 7.6 Mixing restic and rustic against one repository (found and corrected 2026-08-02)
 
 §7.5 established that a (repository, host) may have exactly one **retention** authority.
 That is not the only authority a repository has, and the second one was already broken
@@ -1054,29 +1054,70 @@ alone — but the object at risk is pack files rather than snapshots, so the con
 worse. §7.5's snapshots were unreachable but their data survived, because `prune: false`
 left the packs behind. Here the packs are what gets deleted.
 
-> **Exactly one lock authority per repository, and every writer must speak the same
-> protocol.** This is a separate claim from §7.5's retention authority, over the same
-> repository. A tool that takes no lock is not "safely concurrent"; it is invisible to
-> everything that is.
+> **Exactly one lock *protocol* per repository.** This is a separate claim from §7.5's
+> retention authority, over the same repository. Two tools that each guarantee safety by a
+> different mechanism do not compose: each is correct alone, and together neither holds.
 
-### Consequences for this project
+### Correction, same day — rustic is not deficient, the *mixture* is
 
-**M4 is load-bearing, not prospective.** It was written as the milestone that would allow
-`prune` to be scheduled. It is now the precondition for prune to *return*: the designated
-prune host's timer was disabled on 2026-08-02 rather than left to run against a repository
-that a rustic client writes to. The cost is real and should be stated plainly — packs from
-forgotten snapshots accumulate until M4 lands, and nothing reclaims that space.
+The paragraphs above were written before reading rustic's own documentation, and they
+overstate the finding in a way that led to a wrong operational decision. Recorded rather
+than rewritten, because the mistake is the useful part: **"tool X lacks the mechanism I
+expected" is not the same as "tool X is unsafe", and the gap between them was a day of
+unnecessary exposure and a prune schedule disabled for no reason.**
 
-**`LockBudget` cannot be built on rustic's locking, because there isn't any.** `run/lock.rs`
-locks per job on this host; the M4 seam has to supply repository-level exclusion itself, and
-it has to be one restic can see — which means writing and honouring objects under `locks/`
-in restic's own format, not inventing a parallel scheme. Any design that only coordinates
-rusticprofile instances leaves the predecessor, and plain `restic` run by hand, outside it.
+rustic's FAQ is explicit:
 
-**The `doctor` command proposed in §7.5 gains a second check.** A mix of labelled and
-unlabelled snapshots on one host indicates a second retention authority; a repository that
-is written by rustic while any restic schedule still holds an exclusive operation indicates
-a second lock authority. The second is the more dangerous of the two.
+> "Yes, all operations are designed lock-free. This means all commands can run parallel."
+>
+> "rustic uses the same repository format as restic, so you can use rustic and restic on the
+> same repository. The only thing you have to take care of is that you don't run prune with
+> restic and rustic at the same time."
+
+The mechanism is **two-phase deletion, not locking**. `prune` marks packs and removes them
+only after `--keep-delete`, which defaults to **23 hours**, so a concurrent backup that
+references a marked pack has a day of grace. `--instant-delete` is the documented opt-out and
+carries the warning *"Only use if you are sure the repository is not accessed by parallel
+processes!"*
+
+Verified rather than taken on faith — a throwaway repository with three unreferenced packs:
+
+| command | packs before | packs after |
+|---|---|---|
+| `rustic prune` (default) | 3 | **3** — reported `to delete: 3 packs`, removed none |
+| `rustic prune --instant-delete` | 3 | **0** |
+
+So the true matrix is:
+
+| combination | safe | why |
+|---|---|---|
+| `rustic prune` + rustic backup | **yes** | the 23-hour grace period |
+| `restic prune` + restic backup | **yes** | restic's repository lock |
+| **`restic prune` + rustic backup** | **no** | restic deletes immediately, which is safe *only* because of a lock rustic never takes |
+| `rustic prune` + restic backup | probably | the grace period still applies |
+
+The measured corruption was the third row, and only the third row.
+
+### Consequences for this project — revised
+
+**M4 shrinks, and stops being a precondition for prune.** The earlier conclusion — that
+nothing may prune until repository-lock coordination is built — was wrong. **Finishing the
+migration is the fix.** Once every host writes with rustic, prune is safe by rustic's own
+design, and the designated prune host's schedule can return as a **`rustic prune`** rather
+than a `restic prune`. What M4 would add is defence in depth, not permission.
+
+**What must not happen** is a `restic prune` against this repository while any host backs up
+with rustic — which is exactly the state the fleet was in between the first cutover and
+2026-08-02. That is a migration-ordering hazard, and it belongs beside §7.5's: *move the
+prune authority to the same tool as the writers, or move it after them.*
+
+**`LockBudget` is no longer load-bearing.** It stays a seam. If it is ever built, restic-format
+`locks/` objects remain the only design that a non-rusticprofile writer could see — but the
+cheaper answer is that a fleet running one tool needs no such thing.
+
+**The `doctor` check from §7.5 keeps its second item, restated.** Not "rustic is writing and
+something else holds a lock", but the narrower and checkable: *a repository written by rustic
+while a restic `prune` schedule still exists anywhere on the fleet.*
 
 ## 7.7 Shipping the findings as a config — `config --example` (decided 2026-08-02)
 

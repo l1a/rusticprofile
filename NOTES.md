@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.2)
+## Current State (v0.1.3)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -334,6 +334,41 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.3 — correct the lock finding: rustic is not deficient, the mixture is (unreleased)
+
+**v0.0.22 and the `0.1.0` README overstated §7.6, and the overstatement caused a wrong
+operational decision.** Corrected in `PLAN.md` §7.6, the README and the shipped example.
+
+The original finding — that rustic writes no repository lock object and is therefore
+invisible to restic's mutual exclusion — is **true**, and the measured corruption
+(`restic prune` deleting 14 packs from under an in-flight rustic backup, repository failing
+`restic check`) is real. What was wrong is the conclusion drawn from it: that rustic is
+unsafe under concurrent access, that prune must not run from any tool, and that M4 was the
+precondition for prune ever returning.
+
+rustic's FAQ says the opposite, and it is right:
+
+> "Yes, all operations are designed lock-free. This means all commands can run parallel."
+
+The mechanism is **two-phase deletion**. `prune` marks packs and removes them only after
+`--keep-delete`, default **23 hours**, so a concurrent backup referencing a marked pack has a
+day of grace. `--instant-delete` is the documented opt-out. Verified on a throwaway
+repository with three unreferenced packs: default `rustic prune` reported `to delete: 3
+packs` and left **all three on disk**; `--instant-delete` removed them.
+
+So the hazard is one row of a four-row matrix — `restic prune` against a rustic writer —
+not a property of rustic.
+
+**The operational consequence is the point.** "Nothing reclaims space until M4" was wrong,
+and it disabled a prune schedule for no reason. **Finishing the migration is the fix:** once
+every host writes with rustic, prune is safe by rustic's own design and the prune host's
+schedule returns as a `rustic prune`. M4 becomes defence in depth rather than permission.
+
+**The lesson, recorded rather than tidied away:** *"tool X lacks the mechanism I expected" is
+not "tool X is unsafe"*, and the gap between them was a day of unnecessary exposure plus a
+disabled schedule. The measurement was sound; reading the tool's own design documentation
+before generalising from it was the missing step.
 
 ### v0.1.2 — AUR recipes, and a bug they found (unreleased)
 
