@@ -151,6 +151,167 @@ publish-check:
 publish:
     cargo publish
 
+# Build and lint the AUR package in a container — no Arch install needed
+aur-verify:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BOLD='\033[1m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
+    pass() { echo -e "${GREEN}[✓]${NC} $1"; }
+    fail() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
+    info() { echo -e "${YELLOW}[→]${NC} $1"; }
+
+    command -v podman >/dev/null || fail "podman is required (or edit this recipe for docker)"
+
+    # `rustic` is installed in the container ON PURPOSE, and it is the whole reason this
+    # recipe exists rather than a one-line makepkg. Without it the build still succeeds,
+    # but the rustic-backed integration tests skip themselves with a printed notice — so a
+    # green makepkg proves considerably less than it looks like it does. That mistake was
+    # made once here already; encoding the fix in a recipe is how it stays fixed.
+    info "Building the package in archlinux:base-devel (this compiles the crate)..."
+    podman run --rm -v "{{justfile_directory()}}/packaging/aur:/pkg:ro,Z" archlinux:base-devel bash -c '
+        set -e
+        pacman -Syu --noconfirm --quiet >/dev/null 2>&1
+        pacman -S --noconfirm --quiet --needed namcap rust rustic gcc-libs >/dev/null 2>&1
+        echo "container has: $(rustic --version)"
+        useradd -m builder
+        mkdir -p /home/builder/b && cp /pkg/PKGBUILD /home/builder/b/
+        chown -R builder /home/builder/b
+        cd /home/builder/b
+        su builder -c "makepkg --noconfirm" > /tmp/mk.log 2>&1 || { echo "MAKEPKG FAILED"; tail -30 /tmp/mk.log; exit 1; }
+        echo "--- tests run by check() ---"
+        grep -E "^test result" /tmp/mk.log
+        # makepkg also emits a -debug package. Globbing both hands tar a second argument
+        # it reads as a member name ("Not found in archive"), and because that sits in a
+        # pipeline the failure is swallowed and the recipe reports success anyway. Select
+        # the real package explicitly, and check the payload listing outside a pipeline.
+        PKGFILE=$(find . -maxdepth 1 -name "*.pkg.tar.zst" ! -name "*-debug-*" | head -1)
+        [ -n "$PKGFILE" ] || { echo "no package was produced"; exit 1; }
+        echo "--- package payload ($PKGFILE) ---"
+        tar tf "$PKGFILE" > /tmp/payload.txt
+        grep -v "^\.\|/$" /tmp/payload.txt | sort
+        echo "--- namcap PKGBUILD ---"
+        namcap PKGBUILD
+        echo "--- namcap package ---"
+        namcap "$PKGFILE" || true
+    ' || fail "container verification failed"
+    pass "package builds, tests pass, payload and namcap shown above"
+    echo
+    echo -e "${BOLD}Two namcap package warnings are expected and correct:${NC}"
+    echo "  rustic    — namcap reads linked libraries; rusticprofile *spawns* rustic, so it cannot see this"
+    echo "  gcc-libs  — implicitly satisfied via libgcc_s, and the standard Rust dependency on Arch"
+
+# Regenerate packaging/aur/.SRCINFO from the PKGBUILD (never edit it by hand)
+aur-srcinfo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The AUR rejects a .SRCINFO that disagrees with its PKGBUILD, and the file is pure
+    # derived data — so it is generated, never written.
+    podman run --rm -v "{{justfile_directory()}}/packaging/aur:/pkg:ro,Z" archlinux:base-devel bash -c '
+        useradd -m builder; mkdir -p /home/builder/b && cp /pkg/PKGBUILD /home/builder/b/
+        chown -R builder /home/builder/b; cd /home/builder/b
+        su builder -c "makepkg --printsrcinfo"' > "{{justfile_directory()}}/packaging/aur/.SRCINFO"
+    echo "packaging/aur/.SRCINFO regenerated"
+
+# Point the PKGBUILD at a released tag: bump pkgver, reset pkgrel, refresh the checksum
+aur-bump VERSION:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
+    fail() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
+    V="{{VERSION}}"
+    URL="https://github.com/l1a/rusticprofile/archive/refs/tags/v${V}.tar.gz"
+
+    # The tag must exist first: the PKGBUILD builds from the release tarball, so bumping
+    # ahead of the release produces a package nobody can build.
+    curl -sfIL -o /dev/null "$URL" || fail "no release tarball at $URL — tag and release v$V first"
+
+    SHA=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+    P="{{justfile_directory()}}/packaging/aur/PKGBUILD"
+    sed -i -e "s/^pkgver=.*/pkgver=${V}/" -e "s/^pkgrel=.*/pkgrel=1/" \
+           -e "s/^sha256sums=.*/sha256sums=('${SHA}')/" "$P"
+    echo -e "${GREEN}[✓]${NC} pkgver=${V} pkgrel=1 sha256=${SHA}"
+    just aur-srcinfo
+    echo "Now run: just aur-verify"
+
+# Push packaging/aur to the AUR — verifies the checksum and refuses if the AUR is down
+aur-publish:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BOLD='\033[1m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
+    pass() { echo -e "${GREEN}[✓]${NC} $1"; }
+    fail() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
+    info() { echo -e "${YELLOW}[→]${NC} $1"; }
+
+    DIR="{{justfile_directory()}}/packaging/aur"
+    [ -f "$DIR/PKGBUILD" ] && [ -f "$DIR/.SRCINFO" ] || fail "packaging/aur is missing PKGBUILD or .SRCINFO"
+
+    PKGVER=$(sed -n 's/^pkgver=//p' "$DIR/PKGBUILD")
+    pass "PKGBUILD pkgver: $PKGVER"
+
+    # .SRCINFO must agree with the PKGBUILD. The AUR rejects a mismatch, and finding that
+    # out from a push rejection is a worse way to learn it than finding out here.
+    grep -q "pkgver = $PKGVER" "$DIR/.SRCINFO" \
+        || fail ".SRCINFO disagrees with PKGBUILD — run: just aur-srcinfo"
+    pass ".SRCINFO agrees with PKGBUILD"
+
+    # The classic AUR breakage is a bumped pkgver with a stale checksum, which fails on the
+    # user's machine and nowhere else. Check it against the tarball that will actually be
+    # downloaded.
+    info "Verifying sha256sums against the real tarball..."
+    URL="https://github.com/l1a/rusticprofile/archive/refs/tags/v${PKGVER}.tar.gz"
+    ACTUAL=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+    DECLARED=$(sed -n "s/^sha256sums=('\(.*\)')/\1/p" "$DIR/PKGBUILD")
+    [ "$ACTUAL" = "$DECLARED" ] \
+        || fail "checksum mismatch for v$PKGVER — declared $DECLARED, actual $ACTUAL. Run: just aur-bump $PKGVER"
+    pass "sha256 matches the v$PKGVER tarball"
+
+    # The AUR takes maintenance windows, and during one the SSH endpoint authenticates and
+    # then refuses. Reporting that plainly beats a confusing git failure.
+    info "Checking the AUR is reachable..."
+    OUT=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new aur@aur.archlinux.org help 2>&1 || true)
+    if echo "$OUT" | grep -qi 'maintenance'; then
+        fail "the AUR is in a maintenance window — it said: $(echo "$OUT" | head -1)"
+    fi
+    echo "$OUT" | grep -qi 'Permission denied' \
+        && fail "the AUR refused this SSH key; register it at https://aur.archlinux.org/account/"
+    pass "AUR reachable and the SSH key is accepted"
+
+    echo
+    echo -e "${BOLD}About to publish rusticprofile $PKGVER to the AUR.${NC}"
+    echo "This is public and immediate."
+    echo ""
+    # Same three-way answer as the pre-PR gate: an env var for non-interactive callers, a
+    # terminal for humans, piped input otherwise — and never a block that hangs.
+    if [ -n "${AUR_CONFIRM:-}" ]; then
+        CONFIRM="$AUR_CONFIRM"
+        echo "Publish to the AUR? [y/N] $CONFIRM   (answered by AUR_CONFIRM)"
+    elif [ -t 0 ]; then
+        echo -n "Publish to the AUR? [y/N] "; read -r CONFIRM
+    else
+        echo -n "Publish to the AUR? [y/N] "
+        read -r -t 10 CONFIRM || CONFIRM=""
+        echo "$CONFIRM"
+        [ -n "$CONFIRM" ] || fail "no terminal and nothing on stdin. Re-run with AUR_CONFIRM=y"
+    fi
+    [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ] || { echo -e "${RED}Aborted.${NC}"; exit 1; }
+
+    CLONE=$(mktemp -d)
+    trap 'rm -rf "$CLONE"' EXIT
+    git clone "ssh://aur@aur.archlinux.org/rusticprofile.git" "$CLONE/pkg" 2>&1 | tail -2
+    cp "$DIR/PKGBUILD" "$DIR/.SRCINFO" "$CLONE/pkg/"
+    cd "$CLONE/pkg"
+    if git diff --quiet --exit-code -- PKGBUILD .SRCINFO && [ -z "$(git status --porcelain)" ]; then
+        pass "the AUR already matches these files — nothing to push"
+        exit 0
+    fi
+    git add PKGBUILD .SRCINFO
+    git -c user.name="$(git -C {{justfile_directory()}} config user.name)" \
+        -c user.email="$(git -C {{justfile_directory()}} config user.email)" \
+        commit -q -m "rusticprofile $PKGVER"
+    git push origin master 2>&1 | tail -3
+    pass "published rusticprofile $PKGVER to the AUR"
+    echo "  https://aur.archlinux.org/packages/rusticprofile"
+
 # Merge the active PR, switch to main, pull, and delete the branch (requires gh)
 merge-pr:
     #!/usr/bin/env bash
@@ -286,11 +447,12 @@ pr:
     echo -e "\n${GREEN}Gate passed. You may now run: gh pr create${NC}\n"
 
 # Run the pre-PR gate, then gh pr create — always use this, never gh pr create directly
-#   just open-pr --title "..." --body-file body.md      # at a terminal
-#   PR_CONFIRM=y just open-pr --title "..." --fill      # script, CI or agent
 open-pr *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
+    #   just open-pr --title "..." --body-file body.md      # at a terminal
+    #   PR_CONFIRM=y just open-pr --title "..." --fill      # script, CI or agent
+    #
     # This recipe is the only thing that can gate PR creation: neither `gh` nor `git`
     # has a hook for "a PR is about to open". Being a Justfile recipe rather than
     # editor or agent configuration, it binds every contributor and tool identically.
