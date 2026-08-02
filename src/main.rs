@@ -18,7 +18,7 @@ use rusticprofile::cli::{
 use rusticprofile::config::schedule::Permission;
 use rusticprofile::config::{self, Config, LoadOptions};
 use rusticprofile::rustic::invoke::{self, Options};
-use rusticprofile::schedule::{install, systemd};
+use rusticprofile::schedule::{self, install, systemd};
 
 /// Configuration is invalid. Distinct from a failed run (1) so that a monitoring system,
 /// or a person reading a unit's status, can tell "I wrote the config wrong" apart from
@@ -247,6 +247,18 @@ fn own_binary() -> Result<std::path::PathBuf, ExitCode> {
 }
 
 fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
+    // Refused before the config is even read. On a platform without systemd this command
+    // would write units nobody will ever run and exit 0, which is indistinguishable from
+    // working. `--unit-dir` does not change that: the units are systemd units either way.
+    if !schedule::backend_is_available() {
+        eprintln!(
+            "{} {}",
+            "error:".red().bold(),
+            schedule::unsupported_platform_message()
+        );
+        return ExitCode::from(EXIT_CONFIG_ERROR);
+    }
+
     let (config, path) = match load_config(args.config.clone(), None, None) {
         Ok(v) => v,
         Err(code) => return code,
@@ -436,6 +448,19 @@ fn show_status(args: &StatusArgs) -> ExitCode {
     };
 
     println!("{} {}", "host:".bold(), config.host);
+
+    // Not an error: "nothing is scheduled here, and here is why" is a truthful answer to
+    // the question `status` asks. Erroring would make an informational command fail on a
+    // platform where the information is simply "none, yet".
+    if !schedule::backend_is_available() {
+        println!();
+        println!(
+            "{} {}",
+            "note:".yellow().bold(),
+            schedule::unsupported_platform_message()
+        );
+        return ExitCode::SUCCESS;
+    }
 
     for job in &config.jobs {
         let permission = job

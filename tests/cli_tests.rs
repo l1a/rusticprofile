@@ -1055,3 +1055,62 @@ fn the_emitted_examples_plan_a_real_argv() {
         "both sets are enabled on host-a, so both must appear:\n{stdout}"
     );
 }
+
+// --- platform guard ----------------------------------------------------------------
+//
+// Only systemd is implemented. Without a guard, `schedule` on macOS writes systemd units
+// into a directory launchd never reads, prints the files it created and exits 0 — which is
+// exactly what a working install looks like. CI runs `cargo test` on macOS, so this test
+// verifies the real behaviour on whichever platform it runs on rather than asserting one.
+
+#[test]
+fn schedule_writes_units_only_where_systemd_exists() {
+    let (dir, path) = fixture(GOOD_CONFIG);
+    let unit_dir = dir.path().join("units");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+        .args([
+            "schedule",
+            "-n",
+            "dot-files",
+            "--config",
+            &path,
+            "--unit-dir",
+            &unit_dir.display().to_string(),
+        ])
+        .output()
+        .expect("failed to execute binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let written = std::fs::read_dir(&unit_dir).map(|d| d.count()).unwrap_or(0);
+
+    if cfg!(target_os = "linux") {
+        assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
+        assert_eq!(written, 2, "a service and a timer should be written");
+    } else {
+        // The refusal is the whole point: no files, and a message that distinguishes
+        // "not yet" from "never".
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "scheduling must be refused where it cannot work.\nstderr:\n{stderr}"
+        );
+        assert_eq!(
+            written, 0,
+            "no unit may be written on a platform that cannot run it"
+        );
+        assert!(stderr.contains("Milestone 3"), "stderr:\n{stderr}");
+    }
+}
+
+#[test]
+fn status_reports_the_platform_rather_than_failing() {
+    // `status` asks "what is scheduled here". On a platform with no backend the truthful
+    // answer is "nothing, and here is why" — an answer, not an error.
+    let (_dir, path) = fixture(GOOD_CONFIG);
+    let (stdout, stderr, code) = run_code(&["status", "--config", &path, "--as-host", "host-a"]);
+    assert_eq!(code, 0, "status must not fail anywhere.\nstderr:\n{stderr}");
+    if !cfg!(target_os = "linux") {
+        assert!(stdout.contains("Milestone 3"), "stdout:\n{stdout}");
+    }
+}
