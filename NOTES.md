@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.1)
+## Current State (v0.1.2)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -334,6 +334,45 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.2 — AUR recipes, and a bug they found (unreleased)
+
+Publishing to the AUR was done by hand — a long `podman run` typed at a prompt — which is
+exactly the shape of thing this repo turns into a `just` recipe. Four now exist:
+
+| recipe | |
+|---|---|
+| `just aur-verify` | build + `namcap` in `archlinux:base-devel`; no Arch install needed |
+| `just aur-srcinfo` | regenerate `.SRCINFO` from the `PKGBUILD` — it is derived data, never hand-written |
+| `just aur-bump VERSION` | set `pkgver`, reset `pkgrel`, refresh `sha256sums` from the real tarball |
+| `just aur-publish` | verify, confirm, clone, push |
+
+**`aur-verify` installs `rustic` in the container on purpose**, which is the whole reason it
+is a recipe rather than a one-liner: without it the build still passes while the
+rustic-backed integration tests skip themselves, so a green `makepkg` proves much less than
+it appears to. That was learned the hard way once; a recipe is how it stays learned.
+
+**`aur-publish` refuses rather than failing obscurely.** It checks `.SRCINFO` agrees with the
+`PKGBUILD`, re-downloads the release tarball and compares its sha256 against `sha256sums` —
+the classic AUR breakage is a bumped `pkgver` with a stale checksum, which fails on the
+user's machine and nowhere else — and reports an AUR maintenance window in the AUR's own
+words instead of letting `git clone` fail. It takes the same three-way confirmation as the
+pre-PR gate (`AUR_CONFIRM`, a terminal, or piped input), so it never blocks a script.
+
+**Running the recipe found a bug the hand-typed version had hidden.** `makepkg` also emits a
+`-debug` package, so `./*.pkg.tar.zst` expands to two paths; `tar` reads the second as a
+member name and fails with *"Not found in archive"*. Because that sat inside a pipeline the
+failure was swallowed, and the recipe printed a success tick over a payload listing that had
+never been produced. Now the package is selected explicitly, and the listing is checked
+outside a pipeline. Exactly the failure class this project exists to prevent, in its own
+tooling.
+
+**Also fixed: `just --list` was showing the wrong description for `open-pr`.** `just` takes
+the last contiguous comment block above a recipe as its doc comment, so the usage examples
+added in v0.1.0 displaced the real description. Moved inside the recipe body.
+
+The AUR push itself is still outstanding — the AUR has been in a maintenance window
+throughout. `just aur-publish` is what completes it.
 
 ### v0.1.1 — published, and AUR packaging (unreleased)
 

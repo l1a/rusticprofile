@@ -4,34 +4,31 @@ Source of truth for the `rusticprofile` AUR package. The AUR repository is a sep
 repository containing only `PKGBUILD` and `.SRCINFO`; these files are kept here so they are
 reviewed alongside the code they package, and copied there on release.
 
-## Verifying a change
-
-Never push an unverified PKGBUILD — a broken one fails on the user's machine, not on yours.
-This needs no Arch install:
+## Use the recipes
 
 ```bash
-podman run --rm -v "$PWD/packaging/aur:/pkg:ro,Z" archlinux:base-devel bash -c '
-  pacman -Syu --noconfirm --quiet >/dev/null 2>&1
-  pacman -S --noconfirm --quiet --needed namcap rust rustic gcc-libs >/dev/null 2>&1
-  useradd -m builder; mkdir -p /home/builder/b && cp /pkg/PKGBUILD /home/builder/b/
-  chown -R builder /home/builder/b; cd /home/builder/b
-  su builder -c "makepkg --noconfirm" && namcap PKGBUILD && namcap *.pkg.tar.zst'
+just aur-verify           # build + namcap in a container; needs no Arch install
+just aur-srcinfo          # regenerate .SRCINFO from the PKGBUILD
+just aur-bump 0.2.0       # set pkgver, reset pkgrel, refresh sha256 from the real tarball
+just aur-publish          # verify, confirm, clone, push
 ```
 
-Install `rustic` in the container as shown: without it, `check()` still passes but the
-rustic-backed integration tests silently skip themselves, so the build proves less than it
-appears to.
+`aur-verify` installs `rustic` in the container **on purpose**. Without it the build still
+passes while the rustic-backed integration tests skip themselves, so a green `makepkg`
+proves considerably less than it looks like it does.
 
-Regenerate `.SRCINFO` with `makepkg --printsrcinfo` — never by hand. The AUR rejects a
-`.SRCINFO` that disagrees with the `PKGBUILD`.
+`.SRCINFO` is derived data — always `just aur-srcinfo`, never an editor. The AUR rejects a
+`.SRCINFO` that disagrees with its `PKGBUILD`, and `aur-publish` catches that before the
+push does.
 
 ## Releasing a new version
 
-1. Tag and release upstream first; the PKGBUILD builds from the tag tarball.
-2. Bump `pkgver`, reset `pkgrel=1`, update `sha256sums` from the new tarball:
-   `curl -sL <url> | sha256sum`
-3. Rebuild and lint as above, regenerate `.SRCINFO`.
-4. Copy both files into the AUR clone, commit, push.
+1. Tag and release upstream first — the PKGBUILD builds from the tag tarball, and
+   `aur-bump` refuses a version that has no release.
+2. `just aur-bump <version>` (bumps, resets `pkgrel`, refreshes the checksum, regenerates
+   `.SRCINFO`).
+3. `just aur-verify`.
+4. `just aur-publish`.
 
 `pkgver` tracks the **released** version, which is deliberately not the same as the version
 in `Cargo.toml` on `main` — the repo moves on after a release, the package does not.
