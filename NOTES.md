@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.21)
+## Current State (v0.0.22)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -309,10 +309,16 @@ Smaller items:
       report 0 B for it because 0 B is correct. Worth keeping as a set — it will contain data
       on other hosts — but it is a reminder that an empty snapshot still competes for a
       retention slot, which is how it came to displace a 395 MiB one (`PLAN.md` §7.5).
-- [ ] **A `doctor` command.** `PLAN.md` §7.5 describes the check that would have caught the
-      retention crossfire from inside the repository: warn when one host's snapshots carry a
-      mix of labelled and unlabelled entries, which is what a second retention authority
-      looks like. Not scheduled; recorded so the idea is not lost.
+- [ ] **A `doctor` command.** Two checks now, one per authority a shared repository has.
+      `PLAN.md` §7.5: warn when one host's snapshots carry a mix of labelled and unlabelled
+      entries, which is what a second *retention* authority looks like from inside the
+      repository. `PLAN.md` §7.6: warn when the repository is written by rustic while any
+      restic schedule still runs an exclusive operation, which is a second *lock* authority
+      and the more dangerous of the two. Not scheduled; recorded so the idea is not lost.
+- [ ] **M4 blocks space reclamation, as of 2026-08-02.** The designated prune host's timer is
+      disabled (`PLAN.md` §7.6), so packs from forgotten snapshots accumulate with nothing to
+      reclaim them. This is a deliberate cost, not an oversight, and it is the reason M4 is now
+      ahead of M3 in practical priority even though M3 is next in the numbering.
 - [ ] Add a Pre-PR Checklist section to `AGENTS.md` Part 2, mirroring retch's §4
 - [ ] Decide what migrates out of `PLAN.md` into this file now that code exists
 
@@ -327,6 +333,44 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.22 — rustic takes no repository lock, and the cutover made that matter (unreleased)
+
+Documentation and findings only; no code changed.
+
+**`PLAN.md` §7.6 — exactly one lock authority per repository, and every writer must speak the
+same protocol.** A restic lock is an object *inside* the repository, under `locks/`, so on
+object storage every machine sharing it sees the same key — that is what makes restic's
+mutual exclusion work across a fleet. rustic 0.11.3 writes no such object and checks for
+none, so it is invisible to it.
+
+Measured in a throwaway repository rather than argued from documentation: with a rustic
+backup frozen mid-write, `restic prune` did not refuse. It deleted 14 packs (487.780 MiB) as
+unreferenced, and `restic check --read-data` afterwards reported *"The repository is damaged
+and must be repaired"* with five data packs missing. The control — the same prune against a
+held restic lock — refused, naming the holder.
+
+Nothing about the prune host changed. Before the cutover this host ran restic and its lock
+was seen; the cutover replaced the writer with one that does not speak the protocol. §7.5's
+retention crossfire cost snapshots whose data survived, because `prune: false` left the packs
+behind. This one deletes the packs.
+
+**M4 is reclassified from prospective to load-bearing.** The designated prune host's timer is
+disabled, so nothing reclaims space until M4 lands — and the exclusion M4 implements has to be
+written in restic's own `locks/` format, because coordinating only rusticprofile instances
+would leave the predecessor and hand-run `restic` outside it.
+
+**A methodological correction worth more than the finding.** The first control test used a
+second `restic backup` and expected a refusal. It succeeded, because backups take a *shared*
+lock — and briefly looked like evidence that restic does not lock either. Exclusion has to be
+tested with an operation that actually excludes. Separately, the prune schedule is
+hostname-gated in the predecessor's config, so its absence on the machine in front of you
+proves nothing about the fleet; a claim that "nothing prunes this repository" was made on that
+evidence the day before and was wrong.
+
+`doctor` (backlog) gains a second check to go with §7.5's: a repository written by rustic
+while any restic schedule still runs an exclusive operation. It is the more dangerous of the
+two.
 
 ### v0.0.21 — the pre-PR gate no longer needs a terminal (unreleased)
 
