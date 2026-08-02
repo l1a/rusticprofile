@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.24)
+## Current State (v0.1.0)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -334,6 +334,42 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.0 — the first release
+
+**The version policy's own trigger fired seventeen versions ago and nobody noticed.** §3
+reserves `v0.1.0` for "the first version that can actually run a backup end to end" — which
+was **v0.0.7**, when Milestone 1 completed. M2 has since landed too. So this is not a
+promotion, it is a correction: the tool has been past `0.1.0` by its own definition for some
+time, and the version was understating it rather than overstating it.
+
+Two things were fixed first, because both were the project's own failure class turned
+inward.
+
+**The README advertised two features that do not exist.** It listed "systemd units and
+launchd agents" and "lock coordination against a repository shared by several machines"
+under *what it does*. launchd is M3 and unwritten; `lock::budget()` returns `None`. The
+second one mattered most — the front page promised fleet lock coordination to people who
+would install this and point it at a shared repository, and §7.6 had just established that
+**rustic takes no repository lock at all**. Both moved to a *What it does not do yet*
+section, with the measured prune-corruption result quoted as a warning. A backup tool's
+README is a safety surface, and an aspirational feature list is a way to lose data.
+
+**`schedule` had no platform guard.** `unit_dir()` returns `~/.config/systemd/user`
+unconditionally, so on macOS the command wrote systemd units into a directory launchd never
+reads, printed the files it created, and exited 0 — files on disk plus a success message,
+which is indistinguishable from a working install. That is precisely the silent degradation
+this project exists to prevent, shipped inside the tool that opposes it.
+
+`schedule` now refuses on any non-systemd platform, before the config is even read, naming
+the milestone rather than saying "unsupported" — the reader needs "not yet", not "never" —
+and saying what still works. `status` instead *reports* the platform, because "nothing is
+scheduled here, and here is why" is a truthful answer rather than a failure. The check is
+runtime (`cfg!`) rather than `#[cfg]`, so unit generation stays testable everywhere; CI runs
+`cargo test` on macOS, so the integration test verifies the real behaviour on both sides
+rather than asserting one.
+
+225 tests, up from 221.
 
 ### v0.0.24 — refuse source paths rustic will not expand (unreleased)
 

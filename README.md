@@ -8,11 +8,15 @@ A local, per-machine scheduler and orchestrator for [rustic](https://rustic.cli.
 
 ## Status
 
-**Milestones 1 and 2 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a lock, sequencing operations, classifying what rustic reports and summarising the result — and schedule itself with systemd. macOS launchd support is next.
+**Milestones 1 and 2 complete — this is `0.1.0`, the first release.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — and schedule itself with systemd.
+
+**Linux only in practice.** Everything but `schedule` works anywhere; scheduling needs systemd, and macOS launchd is the next milestone. See *What it does not do yet* below, which you should read before pointing several machines at one repository.
 
 Today:
 
 ```bash
+rusticprofile config --example jobs                  # an annotated starting-point config
+rusticprofile config --example rustic                # ...and the rustic side, annotated at length
 rusticprofile config --check                         # validate; every problem at once
 rusticprofile config --check --as-host host-a.local  # another machine's view of the gates
 rusticprofile config --show -n dot-files             # the resolved form of one job
@@ -36,11 +40,37 @@ Installing a timer and starting it are separate on purpose: adding a writer to a
 
 rusticprofile owns **when** backups run, **which** jobs exist, and **on which hosts**:
 
-- systemd units and launchd agents — install, remove, status
+- **systemd** units — install, remove, status
 - per-host job gating, so one machine runs the prune job and the others do not
 - operation sequencing within a job (backup, then forget)
 - exit classification, including telling a partial backup apart from a failed one
-- lock coordination against a repository shared by several machines
+- refusing configurations that would quietly do less than they say
+
+## What it does not do *yet*
+
+These are planned and not written. They are listed here rather than in the section above
+because a backup tool's README is a safety surface, and an aspirational feature list is a
+way to lose data.
+
+- **launchd (macOS).** Only systemd is implemented. `schedule` **refuses** on other
+  platforms rather than writing units nothing will run; `config`, `plan` and `run` work
+  everywhere, so a job can be driven by any scheduler you already have.
+- **Repository lock coordination.** `run` takes a local per-job lock so two runs on *one*
+  machine cannot overlap. There is **no cross-machine coordination**, and you should read
+  the next paragraph before pointing several machines at one repository.
+
+> [!WARNING]
+> **rustic takes no repository lock at all**, and this is a property of rustic rather than
+> of rusticprofile. restic's lock is an object inside the repository, so restic clients on
+> different machines exclude each other; rustic writes no such object and checks for none.
+>
+> Measured: with a `rustic backup` in flight, a `restic prune` elsewhere did not wait. It
+> deleted 14 packs as unreferenced, and `restic check --read-data` afterwards reported
+> *"The repository is damaged and must be repaired."*
+>
+> **So do not run `prune` — from any tool — against a repository while rustic may be
+> writing to it.** rusticprofile emits no `prune` schedule of its own for exactly this
+> reason. `PLAN.md` §7.6 has the measurements.
 
 ## What it deliberately does not do
 
