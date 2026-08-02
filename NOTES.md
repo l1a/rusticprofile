@@ -37,7 +37,7 @@ src/
   lib.rs          documented module index — the map of where things live
   main.rs         thin bin: parse -> dispatch -> report -> exit
   cli.rs          clap derive; only what is implemented is declared
-  config/         M1  parse, host-gate, interpolate, validate jobs.yaml
+  config/         M1  parse, host-gate, interpolate, validate jobs.yaml; annotated examples
   rustic/         M1  build the rustic argv; classify its exit
   exec/           M1  spawn, forward signals, mask secrets in logs
   run/            M1  operation ordering; LockBudget seam
@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.0.22)
+## Current State (v0.0.23)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -202,6 +202,7 @@ Modules:
 | `config/interp.rs` | the closed `${…}` variable set |
 | `config/schedule.rs` | schedule vocabulary — parsed and validated now, acted on in M2 |
 | `config/rustic_toml.rs` | read-only: snapshot-set names out of `rustic.toml` |
+| `config/example.rs` | the annotated starting-point configs behind `config --example` |
 | `config/validate.rs` | batched rules, `Violation` / `ValidationErrors` |
 | `config/paths.rs` | XDG locations for both config trees |
 | `rustic/invoke.rs` | build the argv; the secret-flag and flag-inventory assertions |
@@ -333,6 +334,40 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.0.23 — `config --example`: ship the findings as a config (unreleased)
+
+`config --example <jobs|rustic>` writes an annotated starting-point configuration to stdout.
+
+**The `rustic` one is the point.** The delegation boundary means rusticprofile owns almost
+nothing, so nearly everything that can silently destroy data lives in rustic's config — and
+until now all of it existed only as prose in `PLAN.md` and one hand-written file on one
+machine. The example carries, with the measurement behind each: `opendal:gcs` rather than
+restic's non-existent `gs:`; scoping filters in `[snapshot-filter]`, where rustic actually
+reads them, rather than `[forget]`, where it accepts and ignores them; `group-by =
+"host,label"`, without which a 0-byte snapshot evicts a 395 MiB one; exclusion globs with
+their leading `!`, since a bare pattern is an *include* filter; snapshot sets split because
+rustic hard-fails an entire set when one source is missing; and the password file and
+credentials excluded, or the key goes inside the lock.
+
+**Emitted to stdout, never written** — the same decision as `--completions`, and for a
+sharper reason: the file this would otherwise overwrite is what stands between a fleet and
+its backups. It requires no existing configuration and reads nothing, since an example is
+what you want when you have neither file yet.
+
+**Placeholders are static.** `host-a`, `/home/user` — this project's own redaction
+vocabulary. Filling in the real hostname and `$HOME` would produce something that runs
+as-is, which is exactly the objection: a config that appears to work is one nobody reads.
+It also keeps the feature clearly outside the "no templating in any form" non-goal — there
+is no template, no expression language, and nothing is substituted.
+
+**The examples are tested through the real binary**, not just asserted to parse: both are
+emitted, written out with only the profile directory redirected, and then put through
+`config --check` and `plan --format lines`. An example that has drifted out of step with
+the validator is worse than none, because it is quoted with authority. 213 tests, up from
+203.
+
+Design and the full guidance table in `PLAN.md` §7.7.
 
 ### v0.0.22 — rustic takes no repository lock, and the cutover made that matter (unreleased)
 

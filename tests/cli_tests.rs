@@ -919,3 +919,139 @@ fn config_check_never_needs_the_rustic_binary() {
         .expect("failed to execute binary");
     assert_eq!(output.status.code(), Some(0));
 }
+
+// --- `config --example` ------------------------------------------------------------
+//
+// The point of these tests is that the shipped examples are not merely plausible: they
+// pass the tool's own validator. An example that has drifted out of step with the rules
+// it is meant to demonstrate is worse than no example, because it is quoted with
+// authority.
+
+#[test]
+fn config_example_emits_to_stdout_without_needing_a_configuration() {
+    // An example is what you ask for when you have no configuration yet, so it must not
+    // require one — and it must be hermetic, like every other `config` mode.
+    for what in ["jobs", "rustic"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+            .args(["config", "--example", what])
+            .env("PATH", "/nonexistent")
+            .env("XDG_CONFIG_HOME", "/nonexistent")
+            .output()
+            .expect("failed to execute binary");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "--example {what} should exit 0"
+        );
+        assert!(
+            !output.stdout.is_empty(),
+            "--example {what} should write to stdout"
+        );
+    }
+}
+
+#[test]
+fn the_emitted_examples_pass_config_check() {
+    // Write both examples out as a real user would, substituting only the directory, and
+    // validate them through the real binary. This is the test that keeps the examples
+    // honest as validation rules change.
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    let jobs_text = String::from_utf8(
+        Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+            .args(["config", "--example", "jobs"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let rustic_text = String::from_utf8(
+        Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+            .args(["config", "--example", "rustic"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+
+    let rustic_dir = dir.path().display().to_string();
+    std::fs::write(dir.path().join("dot-files.toml"), &rustic_text).unwrap();
+
+    // Only the profile directory is redirected — every other value is the example as
+    // shipped, placeholders and all.
+    let jobs_path = dir.path().join("jobs.yaml");
+    std::fs::write(
+        &jobs_path,
+        jobs_text.replace(
+            r#"rustic-config-dir: "${env:HOME}/.config/rustic""#,
+            &format!("rustic-config-dir: \"{rustic_dir}\""),
+        ),
+    )
+    .unwrap();
+
+    // host-a is the placeholder the examples gate on, so it is the host they describe.
+    let (stdout, stderr, code) = run_code(&[
+        "config",
+        "--check",
+        "--config",
+        &jobs_path.display().to_string(),
+        "--as-host",
+        "host-a",
+    ]);
+    assert_eq!(
+        code, 0,
+        "the shipped examples must validate.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("dot-files"));
+}
+
+#[test]
+fn the_emitted_examples_plan_a_real_argv() {
+    // Validation proving the files parse is not the same as proving they describe a
+    // runnable job. `plan` builds the argv rustic would actually receive.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let rustic_text = String::from_utf8(
+        Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+            .args(["config", "--example", "rustic"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let jobs_text = String::from_utf8(
+        Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+            .args(["config", "--example", "jobs"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("dot-files.toml"), rustic_text).unwrap();
+    let jobs_path = dir.path().join("jobs.yaml");
+    std::fs::write(
+        &jobs_path,
+        jobs_text.replace(
+            r#"rustic-config-dir: "${env:HOME}/.config/rustic""#,
+            &format!("rustic-config-dir: \"{}\"", dir.path().display()),
+        ),
+    )
+    .unwrap();
+
+    let (stdout, stderr, code) = run_code(&[
+        "plan",
+        "-n",
+        "dot-files",
+        "--format",
+        "lines",
+        "--config",
+        &jobs_path.display().to_string(),
+        "--as-host",
+        "host-a",
+    ]);
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    assert!(stdout.contains("backup"), "stdout:\n{stdout}");
+    assert!(
+        stdout.contains("--name") && stdout.contains("core") && stdout.contains("gnupg"),
+        "both sets are enabled on host-a, so both must appear:\n{stdout}"
+    );
+}

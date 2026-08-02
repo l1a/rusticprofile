@@ -190,7 +190,7 @@ pub struct PlanArgs {
 
 #[derive(Args, Debug)]
 #[command(group(
-    clap::ArgGroup::new("mode").required(true).args(["check", "show"])
+    clap::ArgGroup::new("mode").required(true).args(["check", "show", "example"])
 ))]
 pub struct ConfigArgs {
     /// Validate the configuration, reporting every problem at once
@@ -200,6 +200,20 @@ pub struct ConfigArgs {
     /// Show the resolved form of one job
     #[arg(long, requires = "name")]
     pub show: bool,
+
+    /// Write an annotated starting-point configuration to stdout
+    ///
+    /// `jobs` is what rusticprofile owns; `rustic` is the delegated backup configuration,
+    /// which is where nearly everything that can silently lose data actually lives — so
+    /// that one is annotated at length.
+    ///
+    /// Emitted to stdout rather than written anywhere, exactly like `--completions`:
+    /// placing the file is a deliberate act, and this command cannot overwrite a working
+    /// configuration. Placeholders (`host-a`, `/home/user`) are static and are *not*
+    /// filled in with your hostname or home directory — a config that appears to work is
+    /// one nobody reads, and every value in these files is worth reading once.
+    #[arg(long, value_name = "WHAT", value_enum)]
+    pub example: Option<crate::config::example::ExampleKind>,
 
     /// Job to show
     #[arg(short = 'n', long, value_name = "JOB")]

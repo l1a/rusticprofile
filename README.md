@@ -71,6 +71,24 @@ The design also carries hard-won opinions from operating its Go predecessor, whe
 
 `PLAN.md` has the full reasoning, every rejected alternative, and the measurements behind each decision.
 
+## Getting a configuration
+
+Two annotated files, written to stdout:
+
+```bash
+rusticprofile config --example jobs   > ~/.config/rusticprofile/jobs.yaml
+rusticprofile config --example rustic > ~/.config/rustic/dot-files.toml
+rusticprofile config --check
+```
+
+The second one is the one to read properly. Because rusticprofile delegates all backup
+configuration to rustic, nearly everything that can silently lose data lives in that file —
+exclusion globs are *include* filters unless prefixed with `!`, a scoping filter under
+`[forget]` is accepted and then ignored, and retention grouped by host alone lets a 0-byte
+snapshot evict a 395 MiB one. Every annotation in it records a measured failure.
+
+Placeholders (`host-a`, `/home/user`) are static and deliberately not filled in for you.
+
 ## Configuration sketch
 
 ```yaml
