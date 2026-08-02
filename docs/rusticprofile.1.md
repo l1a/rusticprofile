@@ -66,6 +66,8 @@ The **run** subcommand executes a job, and **schedule** installs the systemd uni
 **--config** *PATH*
 :   Read *PATH* instead of the default `jobs.yaml`.
 
+Validation also rejects a `sources` entry containing `~` or `$` in a profile a job backs up with. rustic expands neither, and the failure is silent rather than loud: the literal string is a *relative* path, so it misses the hard error an absent absolute path produces. rustic warns, backs up nothing, saves a 0-byte snapshot and exits 0 — and that empty snapshot then wins its retention slot against the real one. A `rustic.toml` therefore cannot be shared unmodified between hosts and must be generated per host; `jobs.yaml` has no such limitation and is identical everywhere.
+
 Validation rejects, among other things, any key it does not recognise; a snapshot set that is not defined in the rustic profile it names; a job whose snapshot sets are all gated away on this host; an **enabled-on-hosts** list that is empty; a relative log path; and an unknown or malformed `${...}` reference. Each of these would otherwise cause the tool to quietly do less than the configuration says.
 
 # RUN

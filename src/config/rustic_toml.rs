@@ -73,6 +73,9 @@ struct SnapshotEntry {
     /// Absent on entries not selectable by `--name`. Those are legitimate; they simply
     /// cannot be referenced from a job.
     name: Option<String>,
+    /// Read only to check for paths rustic will not expand — see [`unexpandable_sources`].
+    #[serde(default)]
+    sources: Vec<String>,
 }
 
 /// The scoping keys, as `Option`s so "absent" and "empty" stay distinguishable.
@@ -133,6 +136,50 @@ pub struct Profile {
     pub forget_group_by: Option<String>,
     /// Filter keys found under `[forget]`, where rustic accepts and ignores them.
     pub misplaced_forget_filters: Vec<&'static str>,
+    /// Sources rustic will take literally rather than expanding — see
+    /// [`UnexpandableSource`]. Each is `(set name, the source as written)`.
+    pub unexpandable_sources: Vec<UnexpandableSource>,
+}
+
+/// A `sources` entry containing `~` or `$`, which rustic does not expand.
+///
+/// **This is a silent, destructive failure, and it is why the check exists.** Measured
+/// against rustic 0.11.3: a source of `$HOME/Sync` is not expanded, and because the result
+/// is a *relative* path, it does not take the hard-fail route an absent absolute path
+/// takes. Instead rustic logs `[WARN] ignoring error … No such file or directory`,
+/// reports `processed 0 files`, **saves the snapshot anyway, and exits 0** — leaving a real
+/// 0-byte snapshot in the repository whose recorded path is the literal string
+/// `$HOME/Sync`.
+///
+/// Compare an absent *absolute* path, which does fail loudly:
+///
+/// ```text
+/// $HOME/Sync            -> WARN, processed 0 files, snapshot saved, exit 0
+/// /definitely/not/here  -> ERROR error sanitizing source, "Not all snapshots were generated successfully!"
+/// ```
+///
+/// A 0-byte snapshot is not merely useless. Under the label grouping this project requires
+/// (`PLAN.md` §7.3) it competes for the same retention slot as the real one and, being
+/// newer, wins — which is exactly how a 395 MiB snapshot was already lost once.
+///
+/// So the rule is not "these paths are unlikely to work". It is: **a configuration that
+/// would quietly replace your backups with empty ones must not load.** Portability across
+/// hosts has to come from generating the file, not from asking rustic to expand it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnexpandableSource {
+    /// The `[[backup.snapshots]]` entry it appeared in, or `<unnamed>`.
+    pub set: String,
+    /// The source exactly as written in the profile.
+    pub source: String,
+}
+
+/// Find sources rustic will not expand.
+///
+/// Checks for `~` and `$` anywhere, not just at the start: `$HOME/x`, `${HOME}/x`, `~/x`
+/// and the rarer `/mnt/$USER/x` all fail the same way. A path is only ever expanded by a
+/// shell, and this project never uses one — `PLAN.md` §2.3.
+fn unexpandable(source: &str) -> bool {
+    source.contains('~') || source.contains('$')
 }
 
 impl Profile {
@@ -166,16 +213,32 @@ pub fn read_profile(path: &Path) -> Result<Profile, ReadError> {
     let raw: RawProfile =
         toml::from_str(&text).map_err(|e| ReadError::Malformed(e.message().to_string()))?;
 
+    let mut snapshot_set_names = Vec::new();
+    let mut unexpandable_sources = Vec::new();
+    for entry in raw.backup.snapshots {
+        // An unnamed entry still backs something up, so it is still checked. It just
+        // cannot be referenced by `--name`.
+        let set = entry
+            .name
+            .clone()
+            .unwrap_or_else(|| "<unnamed>".to_string());
+        for source in entry.sources.iter().filter(|s| unexpandable(s)) {
+            unexpandable_sources.push(UnexpandableSource {
+                set: set.clone(),
+                source: source.clone(),
+            });
+        }
+        if let Some(name) = entry.name {
+            snapshot_set_names.push(name);
+        }
+    }
+
     Ok(Profile {
-        snapshot_set_names: raw
-            .backup
-            .snapshots
-            .into_iter()
-            .filter_map(|s| s.name)
-            .collect(),
+        snapshot_set_names,
         scoping_filters: raw.snapshot_filter.declared(),
         forget_group_by: raw.forget.group_by,
         misplaced_forget_filters: raw.forget.misplaced.declared(),
+        unexpandable_sources,
     })
 }
 
