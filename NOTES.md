@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.0)
+## Current State (v0.1.1)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -334,6 +334,34 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.1 — published, and AUR packaging (unreleased)
+
+**`v0.1.0` is released.** GitHub release with binaries for linux-x86_64, linux-arm64 and
+macos-arm64 plus the man page; **crates.io** has `rusticprofile 0.1.0`, so
+`cargo install rusticprofile` works. Both `rusticprofile` and `rustic-profile` were free;
+the plain name was taken.
+
+**AUR packaging under `packaging/aur/`** — `PKGBUILD`, `.SRCINFO` and the workflow to verify
+a change. It is not pushed to the AUR yet: the AUR was down for maintenance
+(*"The AUR is down due to maintenance"*) at the time. The name is free (`resultcount: 0`).
+
+**The package is verified, not merely written.** Built end to end in an `archlinux:base-devel`
+container: `makepkg` completed, `check()` ran **187 unit and 38 integration tests against
+real rustic 0.11.3**, and the payload is exactly the binary, three shell completions, the
+man page, README and LICENSE. `namcap PKGBUILD` is clean.
+
+One detail worth keeping: **install `rustic` in the verification container.** Without it the
+build still passes, but the rustic-backed integration tests skip themselves with a printed
+notice — so the build proves considerably less than it appears to. The first run here made
+exactly that mistake.
+
+`depends=('rustic')` is the dependency that matters most and the one `namcap` cannot see:
+it reads linked libraries, and rusticprofile links nothing against rustic — it *spawns* it.
+The warning is expected and the dependency is correct.
+
+`pkgver` tracks the **released** version, not `Cargo.toml` on `main`. The repository moves on
+after a release; the package does not.
 
 ### v0.1.0 — the first release
 
