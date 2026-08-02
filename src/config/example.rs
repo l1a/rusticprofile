@@ -114,11 +114,18 @@ jobs:
 
   # Prune, gated to exactly one host.
   #
-  # prune takes an EXCLUSIVE repository lock and rewrites pack files, so exactly one
-  # machine may run it. Note that rustic itself takes no repository lock at all: if any
-  # other tool (restic, or the Go resticprofile) also writes to this repository, a prune
-  # can delete packs that an in-flight rustic backup has written but not yet referenced,
-  # and the result fails `restic check`. One writer, or no prune.
+  # Gated because prune rewrites pack files and there is no reason for several machines to
+  # do that work at once -- not because it would be unsafe. rustic is lock-free BY DESIGN:
+  # prune marks packs and only deletes them after --keep-delete (23h default), so a
+  # concurrent rustic backup has a day of grace.
+  #
+  # The one combination that IS unsafe is mixing tools. `restic prune` deletes immediately,
+  # which is safe only because of an exclusive lock inside the repository -- and rustic
+  # never takes that lock. A restic prune against a repository a rustic client is writing
+  # to was measured deleting the in-flight packs and leaving it failing `restic check`.
+  #
+  # So: never run `restic prune` against a repository rustic writes to. If everything
+  # touching it is rustic, this is a non-issue.
   dot-files-prune:
     profile: dot-files
     operations: [prune]

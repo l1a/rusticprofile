@@ -60,17 +60,29 @@ way to lose data.
   the next paragraph before pointing several machines at one repository.
 
 > [!WARNING]
-> **rustic takes no repository lock at all**, and this is a property of rustic rather than
-> of rusticprofile. restic's lock is an object inside the repository, so restic clients on
-> different machines exclude each other; rustic writes no such object and checks for none.
+> **Do not run `restic prune` against a repository that rustic may be writing to.**
 >
-> Measured: with a `rustic backup` in flight, a `restic prune` elsewhere did not wait. It
-> deleted 14 packs as unreferenced, and `restic check --read-data` afterwards reported
+> This is about *mixing* the two tools, not about rustic. rustic is lock-free **by design**
+> and it works: `prune` marks packs and only deletes them after `--keep-delete`, 23 hours by
+> default, so a concurrent rustic backup has a day of grace. Verified — a default
+> `rustic prune` left every pack on disk and only `--instant-delete` removed them.
+>
+> restic reaches the same safety a different way: an exclusive lock object inside the
+> repository, which lets it delete immediately. **rustic does not take that lock**, so the
+> two schemes do not compose.
+>
+> | | safe? | |
+> |---|---|---|
+> | `rustic prune` + rustic backup | yes | 23h grace period |
+> | `restic prune` + restic backup | yes | restic's repository lock |
+> | **`restic prune` + rustic backup** | **no** | restic deletes at once, relying on a lock rustic never takes |
+>
+> Measured for that last row: with a rustic backup in flight, `restic prune` did not wait.
+> It deleted 14 packs as unreferenced, and `restic check --read-data` afterwards reported
 > *"The repository is damaged and must be repaired."*
 >
-> **So do not run `prune` — from any tool — against a repository while rustic may be
-> writing to it.** rusticprofile emits no `prune` schedule of its own for exactly this
-> reason. `PLAN.md` §7.6 has the measurements.
+> If everything touching the repository is rustic, none of this applies. `PLAN.md` §7.6 has
+> the measurements.
 
 ## What it deliberately does not do
 
