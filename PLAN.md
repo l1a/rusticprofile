@@ -510,6 +510,12 @@ four idle hosts are untouched during M1 — they are the control group.
   gui/$UID`. Covers host-e.local and host-g.local. After M2 because 5 hosts > 2.
 - **M4 — lock coordination.** `LockBudget` implemented: wait budget, execution-time crediting,
   stale-lock handling. Only then is `prune` against the shared repo supported.
+  **Reclassified 2026-08-02 from prospective to load-bearing** (§7.6): rustic takes no
+  repository lock at all, so the moment a host was cut over it became invisible to the prune
+  scheduled on `host-d`. That prune is now disabled, and M4 is what has to land before it can
+  come back — until then nothing reclaims space. Note the exclusion M4 implements must be
+  written in restic's own `locks/` format, since coordinating only rusticprofile instances
+  would still leave the predecessor and hand-run `restic` outside it.
 - **M5 — observability.** Log targets (`O_APPEND`), status file, `--json`.
 - **M6 — polish and publish.** Man page via `mandown`, six-shell completions, crates.io via
   `just publish-check` → `just publish`.
@@ -560,6 +566,11 @@ snapshots — addressed by the verification ladder and gated by the prerequisite
 host/path/tag filter is **refused at load time**, because "forget across every host in a 7-host
 shared repo" must be spelled out, never defaulted. (c) **Migrating 7 machines** — managed by
 keeping Go resticprofile installed and authoritative through M1–M3 and rolling out host-d-first.
+(d) **Two tools sharing one repository is itself the risk**, and it materialised twice in two
+days: as competing retention (§7.5) and as competing locks (§7.6). Both were configurations
+that were individually correct and only wrong in combination, and neither was detectable from
+inside rusticprofile — which is the argument for the `doctor` command rather than for more
+validation rules. Assume the next one exists and has not been found yet.
 
 **Non-goals for v1.** Reading resticprofile config; a `migrate` command; restic as a backend;
 Windows; crond/schtasks; groups; **restore** (use rustic directly — say so in the README's first
@@ -927,6 +938,83 @@ bare, and every policy comes from the rustic profile — so it cannot detect thi
 carry a mix of labelled and unlabelled entries, which is what a second writer looks like
 from inside the repository.
 
+## 7.6 The other authority — rustic takes no repository lock (found 2026-08-02)
+
+§7.5 established that a (repository, host) may have exactly one **retention** authority.
+That is not the only authority a repository has, and the second one was already broken
+when §7.5 was written.
+
+**What a restic lock is, stated precisely, because the imprecise version is misleading.**
+It is not a local file. It is an object *inside the repository*, under `locks/`. On object
+storage it is a key in the bucket, so every machine sharing the repository sees it. That is
+what makes restic's mutual exclusion work across a fleet at all, and it is why one client
+can be observed waiting for another to finish.
+
+`restic backup` takes a **shared** lock — concurrent backups from different hosts are legal
+and expected. Only exclusive operations refuse: `prune`, `rebuild-index`, `forget --prune`.
+
+**rustic 0.11.3 does not participate.** It writes no lock object and checks for none. Note
+the only `lock` matches in `rustic backup --help` are the substring inside `--set-blockdev`,
+which is a false positive of exactly the kind that makes "grep for the flag" an unsafe way
+to answer this.
+
+### Measured, in a throwaway local repository
+
+A restic backup was frozen with `SIGSTOP` while holding its lock, so the lock stayed live
+and could be tested against deterministically.
+
+| step | result |
+|---|---|
+| **control** — `restic prune` with a restic lock held | **refused**: `repository is already locked by PID … on host-f`, with the lock's age |
+| a `rustic backup` frozen mid-write — locks present in the repository | **0** |
+| `restic prune` while that rustic backup is mid-write | **proceeded**: `deleting unreferenced packs … 14 / 14 files deleted`, 487.780 MiB |
+| let rustic finish, then `restic check --read-data` | **`The repository is damaged and must be repaired. Fatal: repository contains errors`** — 5 data packs missing |
+
+So this is not a race that might in principle be lost. It is a reproducible path from
+"prune runs while rustic backs up" to a repository that fails its own integrity check:
+prune classifies rustic's in-flight packs as unreferenced, deletes them, and the snapshot
+rustic subsequently writes points at data that is gone.
+
+**A wrong control is worth recording.** The first attempt used a second `restic backup` and
+expected it to be refused. It succeeded — because backups take a *shared* lock — and for a
+moment that looked like evidence that restic does not lock either. Exclusion must be tested
+with an operation that actually excludes.
+
+### Why this became true on 2026-08-01
+
+Nothing about the prune host changed. Before the cutover, `host-f` ran restic, so the prune
+on `host-d` saw its lock and waited. The cutover replaced the writer with one that does not
+speak the protocol, and that removed the only thing making the two tools mutually visible.
+
+This is the same shape as §7.5 — two tools, one repository, each configuration defensible
+alone — but the object at risk is pack files rather than snapshots, so the consequence is
+worse. §7.5's snapshots were unreachable but their data survived, because `prune: false`
+left the packs behind. Here the packs are what gets deleted.
+
+> **Exactly one lock authority per repository, and every writer must speak the same
+> protocol.** This is a separate claim from §7.5's retention authority, over the same
+> repository. A tool that takes no lock is not "safely concurrent"; it is invisible to
+> everything that is.
+
+### Consequences for this project
+
+**M4 is load-bearing, not prospective.** It was written as the milestone that would allow
+`prune` to be scheduled. It is now the precondition for prune to *return*: the designated
+prune host's timer was disabled on 2026-08-02 rather than left to run against a repository
+that a rustic client writes to. The cost is real and should be stated plainly — packs from
+forgotten snapshots accumulate until M4 lands, and nothing reclaims that space.
+
+**`LockBudget` cannot be built on rustic's locking, because there isn't any.** `run/lock.rs`
+locks per job on this host; the M4 seam has to supply repository-level exclusion itself, and
+it has to be one restic can see — which means writing and honouring objects under `locks/`
+in restic's own format, not inventing a parallel scheme. Any design that only coordinates
+rusticprofile instances leaves the predecessor, and plain `restic` run by hand, outside it.
+
+**The `doctor` command proposed in §7.5 gains a second check.** A mix of labelled and
+unlabelled snapshots on one host indicates a second retention authority; a repository that
+is written by rustic while any restic schedule still holds an exclusive operation indicates
+a second lock authority. The second is the more dangerous of the two.
+
 # Part 8 — Related state elsewhere
 
 - **`~/Sync/git/resticprofile/UPSTREAMING.md`** — the companion document for the Go fork: PR
@@ -944,5 +1032,15 @@ from inside the repository.
   systemd state and left that file alone.
 - **Cutover order is not optional** — see §7.5. Disable the outgoing tool's retention before
   enabling the incoming tool's schedule, or both tools delete each other's snapshots.
+- **The prune schedule on `host-d` is disabled** as of 2026-08-02, per §7.6. Its unit is still
+  installed, so restoring it is one `systemctl --user enable --now` — but it must not be
+  restored while any host backs up with rustic. M4 is the precondition, not a formality.
+  `host-d`'s *backup* timer is untouched and remains safe: backups take a shared lock, and its
+  retention is `host: true`, so it only ever forgets its own snapshots.
+- **The prune schedule is hostname-gated in the predecessor's config**, which is worth knowing
+  because it is a trap for exactly this kind of investigation: `at: '{{ if eq .Hostname "…" }}
+  weekly{{ end }}'` renders to nothing on six hosts, so its absence on the machine in front of
+  you proves nothing about the fleet. A claim that "nothing prunes this repository" was made
+  on 2026-08-01 on exactly that evidence and was wrong.
 - **Upstream maintainer's position on linger** (issue #331) is recorded in `UPSTREAMING.md` — it
   matters for what can be upstreamed, not for this project.
