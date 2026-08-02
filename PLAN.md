@@ -867,18 +867,82 @@ Two lessons, both cheap: do not perform structural edits on safety-critical conf
 string matching, and run `rusticprofile config --check` after *any* edit to a rustic
 profile, not just after editing `jobs.yaml`.
 
+## 7.5 The same hazard from outside the tool — found 2026-08-01
+
+§7.3 says a job using named sets must group retention by label. That rule protects the sets
+from *each other*. It does nothing about a **second tool applying its own retention to the
+same host**, and on a machine mid-migration there is one by definition.
+
+The predecessor's profile ends with:
+
+```yaml
+retention:
+  after-backup: true      # runs after every hourly backup
+  host: true
+  path: false
+  tag: false
+  group-by: "host"        # host alone
+  keep-hourly: 24
+```
+
+`host: true` scopes it to the machine, which reads as safe. But `group-by: host` with
+`path` and `tag` both off puts **every snapshot on that host in one group**, including
+snapshots it did not create and does not know about. `keep-hourly: 24` then keeps one per
+hour: the newest. From its log, a single pass removed three of ours —
+
+| snapshot | written | size | verdict |
+|---|---|---|---|
+| `nushell` | 13:16:24 | 0 B | removed |
+| `core` | 13:20:44 | **395.591 MiB** | **removed** |
+| `gnupg` | 13:20:45 | 2.331 MiB | removed |
+
+— and kept a 0-byte `nushell` snapshot written at 13:20:45, one second younger than the
+395 MiB one it deleted. Same failure mode as §7.3, same 0-byte winner, but the deciding
+configuration was in a *different tool's* file.
+
+**It runs both ways.** The predecessor's own hourly backup for that hour completed and
+logged `snapshot c35cb636 saved`, 397.9 MiB. It is not in the repository. No pass of its own
+removed it, and the only other `forget` that ran that day was ours — so our correctly
+grouped retention deleted one of *its* snapshots. Correct grouping protects the groups it
+knows about; an unlabelled foreign snapshot is just another member of the empty-label group.
+
+Neither tool was scheduled against the other at the time. This happened during manual
+ladder rungs, in a single afternoon, from two configurations that are each defensible alone.
+
+So the rule §7.3 states is necessary but not sufficient. The full form:
+
+> **Exactly one retention authority per (repository, host).** Two tools may *back up* the
+> same host concurrently — backups are additive and, with prune disabled, nothing is
+> destroyed. Two tools may not *forget* it. Migration means moving that authority, not
+> overlapping it.
+
+`status` shows what this host schedules; it cannot show what some other tool schedules. A
+cutover therefore has an ordering that is not optional: **disable the outgoing tool's
+retention before enabling the incoming tool's schedule**, and confirm from the repository
+rather than from either tool's own report.
+
+There is a design consequence too. rusticprofile emits no retention flags — `forget` is
+bare, and every policy comes from the rustic profile — so it cannot detect this. A future
+`doctor` command could: read the profile's `group-by`, and warn when a host's snapshots
+carry a mix of labelled and unlabelled entries, which is what a second writer looks like
+from inside the repository.
+
 # Part 8 — Related state elsewhere
 
 - **`~/Sync/git/resticprofile/UPSTREAMING.md`** — the companion document for the Go fork: PR
   plan, the two config-templating traps, the retention bugs in full, the 7-host inventory, and
   verification recipes. Read it alongside this file.
-- **Three upstream PRs are open** against `creativeprojects/resticprofile`, all awaiting review:
-  [#670](https://github.com/creativeprojects/resticprofile/pull/670) (log-target error),
-  [#671](https://github.com/creativeprojects/resticprofile/pull/671) (eget sbom asset),
-  [#672](https://github.com/creativeprojects/resticprofile/pull/672) (systemd test isolation).
-  Open further ones with **`ghpub`**, not `gh`.
-- **The Go fork is still the tool running backups on all 7 hosts** and stays authoritative until
-  at least M2. Its config (`~/.config/resticprofile/profiles.yaml`) is chezmoi-managed, so edits
-  go through `chezmoi add`.
+- **The three upstream PRs are gone.** #670 (log-target error), #671 (eget sbom asset) and
+  #672 (systemd test isolation) were opened from a fork that has since been deleted, which
+  closes them. The work survives in `UPSTREAMING.md`; re-opening needs a fresh fork and
+  **`ghpub`**, not `gh`.
+- **The Go tool no longer runs backups on every host.** As of 2026-08-01 one host is cut over
+  to rusticprofile — its predecessor timer disabled, not uninstalled, so it is one
+  `systemctl --user enable --now` from coming back. The other six are unchanged and still
+  authoritative there. Its config (`~/.config/resticprofile/profiles.yaml`) is
+  chezmoi-managed, so edits go through `chezmoi add`; the cutover deliberately touched only
+  systemd state and left that file alone.
+- **Cutover order is not optional** — see §7.5. Disable the outgoing tool's retention before
+  enabling the incoming tool's schedule, or both tools delete each other's snapshots.
 - **Upstream maintainer's position on linger** (issue #331) is recorded in `UPSTREAMING.md` — it
   matters for what can be upstreamed, not for this project.
