@@ -83,6 +83,30 @@ impl Config {
     }
 }
 
+/// Note that an unrecognised key or variable may simply be newer than this binary.
+///
+/// Unknown keys and variables are hard errors on purpose — that is what caught a config
+/// block in the predecessor which had silently never taken effect (`PLAN.md` §2.2), and the
+/// rule stays. But there is a second cause, and it is invisible from the message alone.
+///
+/// `jobs.yaml` is designed to be **byte-identical across a fleet**, which makes it only ever
+/// as new as the *oldest binary* reading it. Pushing a config that uses a key added in a
+/// later version stops backups on every host still running an older build — at its next
+/// scheduled run, with nothing to say why. That happened here on 2026-08-03: `${state_dir}`
+/// reached a host running a binary three versions behind, and its hourly backup failed from
+/// then on.
+///
+/// The failure is correct; the *diagnosis* was the missing part. Naming the running version
+/// turns "unknown variable" into "this machine is behind" in one line.
+fn version_skew_hint() -> String {
+    format!(
+        "\n       (this rusticprofile is {}. If this configuration is shared between \
+         machines, it may use a key or variable added in a later version — compare \
+         `rusticprofile --version` across hosts.)",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
 /// Read, gate, interpolate and validate the configuration.
 pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
     let display_path = opts.path.display().to_string();
@@ -95,10 +119,16 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
     })?;
 
     let raw: RawConfig = serde_yaml_ng::from_str(&text).map_err(|e| {
-        ValidationErrors(vec![Violation::new(
-            display_path.clone(),
-            format!("is not valid YAML: {e}"),
-        )])
+        ValidationErrors(vec![Violation::new(display_path.clone(), {
+            let msg = e.to_string();
+            // serde reports an unrecognised key as "unknown field"; that is the shape a
+            // config newer than this binary takes.
+            if msg.contains("unknown field") {
+                format!("is not valid YAML: {msg}{}", version_skew_hint())
+            } else {
+                format!("is not valid YAML: {msg}")
+            }
+        })])
     })?;
 
     // Resolved even when `--as-host` overrides it: telling "this machine" from "the one
