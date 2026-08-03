@@ -65,13 +65,17 @@ pub struct ScheduleArgs {
     #[arg(short = 'n', long, value_name = "JOB")]
     pub name: Option<String>,
 
-    /// Also enable and start the timer.
+    /// Write the units without arming the timer.
     ///
-    /// Writing units and activating them are deliberately separate: on a fleet where
-    /// another tool is still taking the backups, adding a second writer to a shared
-    /// repository should be something you asked for, not a side effect of installing a file.
+    /// `schedule` arms the timer by default, because that is what the verb means and
+    /// because `unschedule` is a single step that fully undoes it. An earlier version
+    /// required a separate `--enable`, on the reasoning that adding a writer to a shared
+    /// repository should be deliberate — but running `schedule` *is* deliberate, and a
+    /// command that reports success while scheduling nothing is its own silent failure.
+    ///
+    /// This flag keeps the inspect-first path: write the units, read them, arm them later.
     #[arg(long)]
-    pub enable: bool,
+    pub write_only: bool,
 
     /// Path to jobs.yaml (defaults to $XDG_CONFIG_HOME/rusticprofile/jobs.yaml)
     #[arg(long, value_name = "PATH")]
@@ -324,14 +328,33 @@ mod tests {
     }
 
     #[test]
-    fn scheduling_does_not_activate_unless_asked() {
-        // The default must be inert. A `schedule` that silently started an hourly writer
-        // against a shared repository would be the worst kind of convenience.
+    fn scheduling_arms_the_timer_by_default() {
+        // `schedule` means "make this run on a schedule". Writing units that never fire and
+        // reporting success is the silent no-op this project exists to prevent, and
+        // `unschedule` is a single step that fully undoes this one.
         let cli = Cli::try_parse_from(["rusticprofile", "schedule", "-n", "j"]).unwrap();
         let Some(Command::Schedule(args)) = cli.command else {
             panic!("expected the schedule subcommand");
         };
-        assert!(!args.enable);
+        assert!(!args.write_only, "arming must be the default");
+    }
+
+    #[test]
+    fn write_only_keeps_the_inspect_first_path() {
+        let cli =
+            Cli::try_parse_from(["rusticprofile", "schedule", "-n", "j", "--write-only"]).unwrap();
+        let Some(Command::Schedule(args)) = cli.command else {
+            panic!("expected the schedule subcommand");
+        };
+        assert!(args.write_only);
+    }
+
+    #[test]
+    fn the_removed_enable_flag_is_rejected_loudly() {
+        // `--enable` was the default-off switch until 0.1.7. Silently accepting it would
+        // leave a script reading as though it opted in to something it no longer controls;
+        // clap's "unexpected argument" is the right amount of noise.
+        assert!(Cli::try_parse_from(["rusticprofile", "schedule", "-n", "j", "--enable"]).is_err());
     }
 
     #[test]

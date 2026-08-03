@@ -100,9 +100,13 @@ jobs:
       - name: gnupg
         enabled-on-hosts: [host-a, host-b]
 
-    # Declaring a schedule installs nothing. `rusticprofile schedule -n dot-files` writes
-    # the units; `--enable` activates them. Adding a second writer to a shared repository
-    # should be something you asked for, not a side effect of installing a file.
+    # Declaring a schedule here installs nothing on its own -- `rusticprofile schedule -n
+    # dot-files` is what writes the units and arms the timer, and `unschedule` fully undoes
+    # it. Add `--write-only` to install them inert and read them first.
+    #
+    # A scheduled job becomes TWO systemd units: a .timer and the .service it activates.
+    # systemd has no way for a timer to run a command directly, so that is not a choice
+    # rusticprofile makes. Only the timer is enable-able; the service is `static`.
     schedule:
       at: hourly           # hourly | daily | weekly | monthly, or an OnCalendar expression
       permission: user     # user | system

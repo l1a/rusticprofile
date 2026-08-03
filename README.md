@@ -8,7 +8,7 @@ A local, per-machine scheduler and orchestrator for [rustic](https://rustic.cli.
 
 ## Status
 
-**Milestones 1 and 2 complete — this is `0.1.0`, the first release.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — and schedule itself with systemd.
+**Milestones 1 and 2 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — and schedule itself with systemd.
 
 **Linux only in practice.** Everything but `schedule` works anywhere; scheduling needs systemd, and macOS launchd is the next milestone. See *What it does not do yet* below, which you should read before pointing several machines at one repository.
 
@@ -26,13 +26,13 @@ rusticprofile plan -n dot-files --show-env           # ...plus the environment, 
 rusticprofile run -n dot-files --dry-run            # what a run would do, writing nothing
 rusticprofile run -n dot-files                      # actually run it
 
-rusticprofile schedule -n dot-files                 # install a systemd timer (inert)
-rusticprofile schedule -n dot-files --enable        # ...and actually start it
+rusticprofile schedule -n dot-files                 # install and arm a systemd timer
+rusticprofile schedule -n dot-files --write-only    # install it inert, to read first
 rusticprofile status                                # what is scheduled here, and what is not
 rusticprofile unschedule -n dot-files               # remove the units
 ```
 
-Installing a timer and starting it are separate on purpose: adding a writer to a shared repository should be something you asked for, not a side effect of installing a file.
+`schedule` and `unschedule` are each a single step, and each fully undoes the other. A job becomes **two** systemd units — a `.timer` and the `.service` it activates — because systemd has no way for a timer to run a command directly; that is true of every tool that schedules with systemd. Only the timer is enable-able: the service is `static`, so it cannot be armed on its own and run outside its schedule.
 
 `config` and `plan` are hermetic — no rustic binary, no repository, no network — so they are safe to run anywhere. `run` is the one that actually invokes rustic, and `schedule` is the one that touches systemd. Running the binary with no arguments exits non-zero and says so rather than doing anything by default.
 
