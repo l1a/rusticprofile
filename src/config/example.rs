@@ -114,7 +114,13 @@ jobs:
 
     # Absolute paths only. ${date:...} is validated now and resolved per run, so a
     # generated systemd unit can never be frozen with the date it was written.
-    log: "${config_dir}/logs/${job}-${date:%Y-%m-%d}.log"
+    #
+    # ${state_dir} is $XDG_STATE_HOME/rusticprofile, NOT the config directory. Logs are
+    # state, and the XDG spec names them as the example of what XDG_STATE_HOME is for.
+    # Writing them under ${config_dir} also tends to be self-defeating: if ~/.config is one
+    # of your backup sources, the job appends to a directory it is in the middle of backing
+    # up, and the rustic profile then needs an exclusion to paper over it.
+    log: "${state_dir}/${job}-${date:%Y-%m-%d}.log"
 
   # Prune, gated to exactly one host.
   #
@@ -240,7 +246,10 @@ globs = [
   "!**/.config/rustic/*.pw.txt",
   "!**/example-credentials.json",
 
-  # Scheduled-run logs, which are written into the tree while it is being backed up.
+  # Scheduled-run logs, if you have pointed them somewhere inside a backed-up tree.
+  # With the default `${state_dir}` log path this exclusion is unnecessary — that is
+  # $XDG_STATE_HOME, which is not normally a backup source. Kept as an example of the
+  # hazard: a job that appends to a directory it is backing up.
   "!**/.config/rusticprofile/logs",
 ]
 

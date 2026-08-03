@@ -104,6 +104,7 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
     let host_short = hosts::short(&host).to_string();
 
     let config_dir = paths::user_config_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let state_dir = paths::user_state_dir().unwrap_or_else(|_| PathBuf::from("."));
     let temp_dir = std::env::temp_dir();
 
     let mut violations = validate::check_declared(&raw);
@@ -116,6 +117,7 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         job,
         profile: None,
         config_dir: &config_dir,
+        state_dir: &state_dir,
         temp_dir: &temp_dir,
         env: Env::System,
         now: opts.now.as_ref(),
@@ -221,6 +223,7 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
             job: Some(name),
             profile: Some(&raw_job.profile),
             config_dir: &config_dir,
+            state_dir: &state_dir,
             temp_dir: &temp_dir,
             env: Env::System,
             now: opts.now.as_ref(),

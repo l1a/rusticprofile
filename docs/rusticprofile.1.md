@@ -142,7 +142,7 @@ Anything rusticprofile prints is masked as a backstop. Masking is by variable na
 
 Strings in the configuration may contain `${...}` references. This is a closed set, not a template language: there are no conditionals, functions, pipelines or loops. An unrecognised name is an error naming the offending key, never an empty string.
 
-`${host}`, `${host_short}`, `${job}`, `${profile}`, `${config_dir}`, `${temp_dir}`, `${os}`, `${arch}`, `${env:NAME}` and `${date:FORMAT}` are recognised. `$${` produces a literal `${`.
+`${host}`, `${host_short}`, `${job}`, `${profile}`, `${config_dir}`, `${state_dir}`, `${temp_dir}`, `${os}`, `${arch}`, `${env:NAME}` and `${date:FORMAT}` are recognised. `$${` produces a literal `${`.
 
 `${job}` and `${profile}` have no value outside a job and are errors there. `${env:NAME}` is an error when the variable is unset. `${date:FORMAT}` is validated when the configuration loads but resolved when the job runs, so that a generated unit file carries the reference rather than one day's date.
 
@@ -169,6 +169,9 @@ The contract the implemented commands follow:
 
 **$XDG_CONFIG_HOME/rustic/PROFILE.toml**
 :   rustic's own configuration, which owns all backup detail. rusticprofile reads it read-only, to verify that every snapshot-set name it is about to pass actually exists.
+
+**$XDG_STATE_HOME/rusticprofile/**
+:   Where `${state_dir}` points, and where run logs belong. Logs are **state, not configuration** — the XDG Base Directory specification names them as the example of what `XDG_STATE_HOME` is for. Pointing a `log:` at `${config_dir}` instead is also self-defeating when `~/.config` is one of your backup sources: the job then appends to a directory it is in the middle of backing up, and the rustic profile needs an exclusion to compensate.
 
 # SEE ALSO
 
