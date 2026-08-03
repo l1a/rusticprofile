@@ -218,6 +218,7 @@ mod tests {
         UnitContext {
             binary: Path::new("/usr/bin/rusticprofile"),
             config: Path::new("/etc/rp/jobs.yaml"),
+            rustic_binary: Path::new("/usr/bin/rustic"),
         }
     }
 

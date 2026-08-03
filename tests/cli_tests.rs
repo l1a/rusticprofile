@@ -1076,9 +1076,31 @@ fn the_emitted_examples_plan_a_real_argv() {
 // exactly what a working install looks like. CI runs `cargo test` on macOS, so this test
 // verifies the real behaviour on whichever platform it runs on rather than asserting one.
 
+/// Like `GOOD_CONFIG`, but naming a rustic that exists on every runner.
+///
+/// `schedule` resolves the rustic binary to an absolute path so the generated unit does not
+/// depend on the service manager's `PATH`, and refuses when it cannot — CI has no rustic
+/// installed. `/bin/sh` is present on Linux and macOS alike and is never executed here; only
+/// its existence is checked. Weakening the resolver for tests would remove the guarantee
+/// this test is meant to protect.
+const SCHEDULABLE_CONFIG: &str = "
+schema: 1
+defaults:
+  rustic-config-dir: RUSTIC_DIR
+  rustic-binary: /bin/sh
+jobs:
+  dot-files:
+    profile: p
+    operations: [backup, forget]
+    snapshot-sets:
+      - name: core
+    schedule:
+      at: hourly
+";
+
 #[test]
 fn schedule_writes_units_only_where_systemd_exists() {
-    let (dir, path) = fixture(GOOD_CONFIG);
+    let (dir, path) = fixture(SCHEDULABLE_CONFIG);
     let unit_dir = dir.path().join("units");
 
     let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
@@ -1126,4 +1148,41 @@ fn status_reports_the_platform_rather_than_failing() {
     if !cfg!(target_os = "linux") {
         assert!(stdout.contains("Milestone 3"), "stdout:\n{stdout}");
     }
+}
+
+#[test]
+fn schedule_refuses_when_rustic_cannot_be_resolved() {
+    // The unit must carry an absolute path to rustic, because the systemd user manager's
+    // PATH is not the shell's — with `linger` it is the boot environment. If rustic cannot
+    // be found there is no correct unit to write, so nothing is written.
+    if !cfg!(target_os = "linux") {
+        return; // `schedule` refuses on non-systemd platforms for a different reason.
+    }
+    let (dir, path) = fixture(GOOD_CONFIG); // no `rustic-binary`, and no rustic on PATH
+    let unit_dir = dir.path().join("units");
+    let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+        .args([
+            "schedule",
+            "-n",
+            "dot-files",
+            "--config",
+            &path,
+            "--unit-dir",
+            &unit_dir.display().to_string(),
+        ])
+        .env("PATH", "/nonexistent")
+        .output()
+        .expect("failed to execute binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.code(), Some(2), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("linger"),
+        "the reason must be named: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read_dir(&unit_dir).map(|d| d.count()).unwrap_or(0),
+        0,
+        "no unit may be written when it could not be written correctly"
+    );
 }

@@ -102,7 +102,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.9)
+## Current State (v0.1.10)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -343,6 +343,53 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.10 — units name rustic by absolute path
+
+**A scheduled backup could not find `rustic` at all on a host where the shell finds it
+fine.** Every run failed with `could not run rustic: No such file or directory`, on a unit
+**byte-identical** to one working elsewhere.
+
+The unit invokes rusticprofile by absolute path — deliberately, and the code says why:
+*"systemd requires `ExecStart` to be absolute; a bare name is not resolved against `PATH`."*
+That reasoning was never extended to the binary doing the actual work. rusticprofile then
+spawned `rustic` by bare name, resolved against the **service manager's** `PATH`, which is
+not the shell's.
+
+**With `linger` enabled — and it must be, or backups only run while someone is logged in —
+the user manager starts at boot** with the system default `PATH=/usr/local/bin:/usr/bin`.
+No login shell, no `~/.zprofile`, no `~/.cargo/bin`. A cargo-installed rustic is invisible
+to it.
+
+Measured across two hosts, identical configs and identical units, neither containing a
+`PATH` or `Environment` line:
+
+| | rustic | service manager `PATH` | result |
+|---|---|---|---|
+| host with manager restarted from a login session | `~/.cargo/bin/rustic` | includes `~/.cargo/bin` | worked |
+| host with manager started at boot | `~/.cargo/bin/rustic` | `/usr/local/bin:/usr/bin` | **every run failed** |
+
+**The working host was the accident.** A reboot would have taken it too, with no change by
+anyone — the kind of latent failure that looks like a regression months later.
+
+`schedule` now resolves the configured rustic to an absolute path and writes it into
+`ExecStart` as `--rustic-binary`. An absolute path in the config is taken as given but
+checked for existence; a bare name is resolved against the interactive `PATH`, which is the
+only place there is to look, and **baking in what the shell finds now is the entire point.**
+
+**Consequence worth knowing: `schedule` now requires rustic to be installed.** Provisioning
+in the order rusticprofile → config → schedule → rustic no longer works; schedule that host
+after installing rustic. That is the right trade — there is no correct unit to write without
+it, and the alternative is a unit that fails at 03:00 instead of an error now. CI has no
+rustic, so the integration fixture names `/bin/sh`, which exists on every runner and is
+never executed; weakening the resolver for tests would have removed the guarantee the test
+exists to protect.
+
+If it cannot be resolved, `schedule` **refuses and writes nothing**, naming `linger` as the
+reason — moving the failure to a moment when someone is watching, instead of 03:00 on a red
+unit nobody reads. A test asserts every `/`-containing token in `ExecStart` is rooted, so
+the third path cannot quietly join the other two in depending on an environment the unit
+does not control.
 
 ### v0.1.9 — second release: everything since v0.1.0
 

@@ -246,6 +246,61 @@ fn own_binary() -> Result<std::path::PathBuf, ExitCode> {
     })
 }
 
+/// Resolve the configured rustic executable to an absolute path, for a unit file.
+///
+/// A unit must not depend on the service manager's `PATH`. With `linger` enabled — which it
+/// must be, or backups only run while someone is logged in — the user manager starts at
+/// boot with the system default `PATH=/usr/local/bin:/usr/bin`, having seen no login shell.
+/// A cargo-installed rustic in `~/.cargo/bin` is then invisible to it, and every scheduled
+/// run fails with `could not run rustic: No such file or directory`.
+///
+/// Resolving here moves that failure to `schedule` time, where a person is watching and can
+/// act, instead of hourly at 03:00 where it is a red unit nobody reads.
+fn resolve_rustic_binary(name: &str) -> Result<std::path::PathBuf, ExitCode> {
+    let candidate = std::path::Path::new(name);
+
+    // An absolute path was configured deliberately; take it as given, but say so if it is
+    // not there — a unit pointing at a missing binary is the same silent-at-03:00 failure.
+    if candidate.is_absolute() {
+        if candidate.is_file() {
+            return Ok(candidate.to_path_buf());
+        }
+        eprintln!(
+            "{} the configured rustic binary `{name}` does not exist. A unit cannot fall \
+             back to `PATH`, so this would fail on every scheduled run.",
+            "error:".red().bold()
+        );
+        return Err(ExitCode::from(EXIT_CONFIG_ERROR));
+    }
+
+    // A bare name is resolved against *this* process's PATH — the interactive one, which is
+    // the only place we can look. That is the point: what the shell finds now is baked in,
+    // rather than left to whatever the service manager happens to have.
+    let found = std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join(name))
+                .find(|p| p.is_file())
+        })
+        .unwrap_or(None);
+
+    match found {
+        Some(path) => Ok(path),
+        None => {
+            eprintln!(
+                "{} could not find `{name}` on PATH, and a unit cannot search PATH for it: \
+                 with `linger` the systemd user manager starts at boot with a minimal \
+                 environment that will not include `~/.cargo/bin`.",
+                "error:".red().bold()
+            );
+            eprintln!(
+                "       Install rustic, or set `defaults.rustic-binary` to an absolute path."
+            );
+            Err(ExitCode::from(EXIT_CONFIG_ERROR))
+        }
+    }
+}
+
 fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
     // Refused before the config is even read. On a platform without systemd this command
     // would write units nobody will ever run and exit 0, which is indistinguishable from
@@ -264,6 +319,10 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
         Err(code) => return code,
     };
     let binary = match own_binary() {
+        Ok(b) => b,
+        Err(code) => return code,
+    };
+    let rustic_binary = match resolve_rustic_binary(&config.rustic_binary) {
         Ok(b) => b,
         Err(code) => return code,
     };
@@ -307,6 +366,7 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
         let ctx = systemd::UnitContext {
             binary: &binary,
             config: &path,
+            rustic_binary: &rustic_binary,
         };
 
         match install::write_units(job, &schedule, &ctx, &dir) {
