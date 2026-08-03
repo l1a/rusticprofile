@@ -168,7 +168,13 @@ aur-verify:
     # green makepkg proves considerably less than it looks like it does. That mistake was
     # made once here already; encoding the fix in a recipe is how it stays fixed.
     info "Building the package in archlinux:base-devel (this compiles the crate)..."
-    podman run --rm -v "{{justfile_directory()}}/packaging/aur:/pkg:ro,Z" archlinux:base-devel bash -c '
+    # `z`, never `Z`. Uppercase assigns a fresh private MCS category pair per container run,
+    # which permanently relabels this directory to categories no *other* container holds. On a
+    # machine where the repo lives under a Syncthing folder, that is enough to make Syncthing's
+    # own container fail to scan it: `permission denied`, one unsyncable directory, forever.
+    # Lowercase `z` gives the shared `container_file_t:s0` label with no categories, which is
+    # what a read-only PKGBUILD mount wants and is portable to hosts with no fcontext rule.
+    podman run --rm -v "{{justfile_directory()}}/packaging/aur:/pkg:ro,z" archlinux:base-devel bash -c '
         set -e
         pacman -Syu --noconfirm --quiet >/dev/null 2>&1
         pacman -S --noconfirm --quiet --needed namcap rust rustic gcc-libs >/dev/null 2>&1
@@ -206,7 +212,8 @@ aur-srcinfo:
     set -euo pipefail
     # The AUR rejects a .SRCINFO that disagrees with its PKGBUILD, and the file is pure
     # derived data — so it is generated, never written.
-    podman run --rm -v "{{justfile_directory()}}/packaging/aur:/pkg:ro,Z" archlinux:base-devel bash -c '
+    # `z`, not `Z` — see the note in `aur-verify`.
+    podman run --rm -v "{{justfile_directory()}}/packaging/aur:/pkg:ro,z" archlinux:base-devel bash -c '
         useradd -m builder; mkdir -p /home/builder/b && cp /pkg/PKGBUILD /home/builder/b/
         chown -R builder /home/builder/b; cd /home/builder/b
         su builder -c "makepkg --printsrcinfo"' > "{{justfile_directory()}}/packaging/aur/.SRCINFO"
