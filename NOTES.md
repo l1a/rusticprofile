@@ -102,7 +102,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.8)
+## Current State (v0.1.9)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -335,42 +335,59 @@ Smaller items:
 
 ## 5. Release Log
 
-Versions are `0.0.x` until Milestone 1 is complete; see §3. Nothing has been tagged or
-published, so no version here has ever left this repository.
+Versioning rule in §3. **`v0.1.0` and `v0.1.9` are released** — tagged, on GitHub, and on
+crates.io. Everything numbered `0.0.x` predates the first release and never left this
+repository; the `0.1.x` entries between the two releases shipped together in `v0.1.9`.
 
 *The first two entries were briefly numbered `0.1.0` and `0.2.0` before that policy was set,
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
 
-### v0.1.6 — the AUR recipes were breaking Syncthing (unreleased)
+### v0.1.9 — second release: everything since v0.1.0
 
-**Tooling only; no code changed. The bug was outside the repository, which is why nothing
-here could have caught it.**
+**Tagged, released and published.** `v0.1.0` was the only prior release, so this carries
+eight versions of work. Entries `0.1.1`–`0.1.8` below are the detail.
 
-`aur-verify` and `aur-srcinfo` mounted `packaging/aur` with podman's **`:Z`**. Uppercase `Z`
-assigns a *fresh private MCS category pair per container run* and relabels the mount in
-place, so after `just aur-verify` the directory and its three files were left as
-`container_file_t:s0:c238,c656` — categories no other container holds.
+#### Upgrading from 0.1.0 — one breaking change
 
-This repository lives under a Syncthing folder. Syncthing's own container runs as
-`container_t:s0:c337,c880`, so it could no longer read that directory: `scan: open
-…/packaging/aur: permission denied`, one permanently unsyncable subtree, re-created on every
-run of the recipe. Unix permissions were untouched and looked perfectly normal
-(`drwxr-xr-x`), so only `ls -Z` showed anything.
+**`rusticprofile schedule --enable` no longer exists.** `schedule` now arms the timer by
+default, and `--write-only` is the opt-out:
 
-**The way it presented is the part worth keeping.** The folder reported `state: idle` and
-`needBytes: 0` — indistinguishable from healthy. The failure appeared only as
-`"errors": 1, "pullErrors": 1` in `/rest/db/status`, and the *reason* only at
-`/rest/folder/errors`. A tool built around the idea that silent degradation is the failure
-class that matters had shipped one in its own packaging recipes.
+```bash
+rusticprofile schedule -n dot-files                # was: schedule -n dot-files --enable
+rusticprofile schedule -n dot-files --write-only   # was: schedule -n dot-files
+```
 
-**Fixed to lowercase `:z`** — the shared `container_file_t:s0` label, no categories.
-Lowercase rather than dropping the flag: this repository is public, and on a machine without
-an fcontext rule pinning the tree to `container_file_t`, `$HOME` is `user_home_t`, which
-`container_t` cannot read at all. `z` is correct everywhere; no flag is correct only here.
+A script still passing `--enable` gets clap's `unexpected argument` and stops. That is
+deliberate — the alternative was accepting a flag that silently does nothing, which is the
+failure class this tool exists to prevent — but it is the one thing here that can break an
+existing setup, so it belongs at the top rather than eight entries down. Full reasoning in
+`0.1.7`.
 
-### v0.1.8 — the automatic Claude review is off (unreleased)
+Everything else is additive or internal.
+
+#### The rest, briefly
+
+- **A new load-time refusal:** a `filter-hosts` that cannot match the host it will run on
+  (`0.1.4`). rustic matches that field exactly, so a filter naming anything else selects
+  nothing and retention silently never runs. Found because a generated config had exactly
+  that defect — `.chezmoi.hostname` is the name up to the first `.`, which matches no
+  snapshot on a `*.local` host.
+- **`config --example jobs|rustic`** — annotated starting-point configurations, tested
+  through the real binary so they cannot drift from the validator (`0.1.1`).
+- **The service unit is now `static`**, so it cannot be enabled independently and run a
+  backup at every login (`0.1.7`).
+- **`schedule` refuses on platforms without systemd** rather than writing units nothing will
+  run — verified on a real macOS CI runner (`v0.1.0`, restated here because it is what makes
+  the macOS binary honest).
+- **AUR packaging** under `packaging/aur/`, with `just aur-verify` building and linting it in
+  a container (`0.1.1`, `0.1.2`, `0.1.6`).
+- **Documentation corrections that change operational advice**: `PLAN.md` §7.6 was
+  overstated and is corrected in `0.1.3` — rustic's lock-free design is sound, and the hazard
+  is specifically `restic prune` against a rustic writer.
+
+### v0.1.8 — the automatic Claude review is off
 
 `claude-code-review.yml` no longer runs on pull requests. It is `workflow_dispatch` only:
 
@@ -402,7 +419,7 @@ The `prompt:` now reads `inputs.pr` instead of `github.event.pull_request.number
 does not exist on a dispatch event and would have silently produced a review of
 `repository/pull/` — the empty-value failure this project keeps running into.
 
-### v0.1.7 — `schedule` is one step, and the service unit is `static` (unreleased)
+### v0.1.7 — `schedule` is one step, and the service unit is `static`
 
 **`--enable` is gone and `schedule` now arms the timer by default.** Both changes came from
 a question about why rusticprofile needs a timer *and* a service.
@@ -445,7 +462,34 @@ than quietly changing what a command does.
 
 202 tests, up from 198.
 
-### v0.1.5 — fix a fixture that lied on CI, and stop `merge-pr` merging red (unreleased)
+### v0.1.6 — the AUR recipes were breaking Syncthing
+
+**Tooling only; no code changed. The bug was outside the repository, which is why nothing
+here could have caught it.**
+
+`aur-verify` and `aur-srcinfo` mounted `packaging/aur` with podman's **`:Z`**. Uppercase `Z`
+assigns a *fresh private MCS category pair per container run* and relabels the mount in
+place, so after `just aur-verify` the directory and its three files were left as
+`container_file_t:s0:c238,c656` — categories no other container holds.
+
+This repository lives under a Syncthing folder. Syncthing's own container runs as
+`container_t:s0:c337,c880`, so it could no longer read that directory: `scan: open
+…/packaging/aur: permission denied`, one permanently unsyncable subtree, re-created on every
+run of the recipe. Unix permissions were untouched and looked perfectly normal
+(`drwxr-xr-x`), so only `ls -Z` showed anything.
+
+**The way it presented is the part worth keeping.** The folder reported `state: idle` and
+`needBytes: 0` — indistinguishable from healthy. The failure appeared only as
+`"errors": 1, "pullErrors": 1` in `/rest/db/status`, and the *reason* only at
+`/rest/folder/errors`. A tool built around the idea that silent degradation is the failure
+class that matters had shipped one in its own packaging recipes.
+
+**Fixed to lowercase `:z`** — the shared `container_file_t:s0` label, no categories.
+Lowercase rather than dropping the flag: this repository is public, and on a machine without
+an fcontext rule pinning the tree to `container_file_t`, `$HOME` is `user_home_t`, which
+`container_t` cannot read at all. `z` is correct everywhere; no flag is correct only here.
+
+### v0.1.5 — fix a fixture that lied on CI, and stop `merge-pr` merging red
 
 **Two failures, and the second one is why the first reached `main`.**
 
@@ -471,7 +515,7 @@ refuses while checks are still running rather than racing them. It names the fai
 Merging a red PR deliberately still works — via `gh` directly, which is the right amount of
 friction for something that should be a conscious act.
 
-### v0.1.4 — refuse a `filter-hosts` that cannot match this host (unreleased)
+### v0.1.4 — refuse a `filter-hosts` that cannot match this host
 
 **Found by asking whether the fleet rollout was ready. It was not, and the reason was a bug
 in the chezmoi template written the same day.**
@@ -514,7 +558,7 @@ naming a host that does not exist passed validation with exit 0.
 bites: `schedule` and `run` resolve the hostname themselves and have no `--as-host`, so their
 integration fixture now substitutes the real hostname into `filter-hosts`.
 
-### v0.1.3 — correct the lock finding: rustic is not deficient, the mixture is (unreleased)
+### v0.1.3 — correct the lock finding: rustic is not deficient, the mixture is
 
 **v0.0.22 and the `0.1.0` README overstated §7.6, and the overstatement caused a wrong
 operational decision.** Corrected in `PLAN.md` §7.6, the README and the shipped example.
@@ -549,7 +593,7 @@ not "tool X is unsafe"*, and the gap between them was a day of unnecessary expos
 disabled schedule. The measurement was sound; reading the tool's own design documentation
 before generalising from it was the missing step.
 
-### v0.1.2 — AUR recipes, and a bug they found (unreleased)
+### v0.1.2 — AUR recipes, and a bug they found
 
 Publishing to the AUR was done by hand — a long `podman run` typed at a prompt — which is
 exactly the shape of thing this repo turns into a `just` recipe. Four now exist:
@@ -588,7 +632,7 @@ added in v0.1.0 displaced the real description. Moved inside the recipe body.
 The AUR push itself is still outstanding — the AUR has been in a maintenance window
 throughout. `just aur-publish` is what completes it.
 
-### v0.1.1 — published, and AUR packaging (unreleased)
+### v0.1.1 — published, and AUR packaging
 
 **`v0.1.0` is released.** GitHub release with binaries for linux-x86_64, linux-arm64 and
 macos-arm64 plus the man page; **crates.io** has `rusticprofile 0.1.0`, so
@@ -652,7 +696,7 @@ rather than asserting one.
 
 225 tests, up from 221.
 
-### v0.0.24 — refuse source paths rustic will not expand (unreleased)
+### v0.0.24 — refuse source paths rustic will not expand
 
 **One `rustic.toml` cannot be shared across hosts, and finding out why turned up a new
 silent-destruction path.** `PLAN.md` §5.9 has the measurements.
@@ -688,7 +732,7 @@ resolved by rusticprofile itself and `enabled-on-hosts` is a host list that read
 everywhere, so one byte-identical file serves all seven hosts — prune-host gate included.
 Only `rustic.toml` has to be generated. 221 tests, up from 213.
 
-### v0.0.23 — `config --example`: ship the findings as a config (unreleased)
+### v0.0.23 — `config --example`: ship the findings as a config
 
 `config --example <jobs|rustic>` writes an annotated starting-point configuration to stdout.
 
@@ -722,7 +766,7 @@ the validator is worse than none, because it is quoted with authority. 213 tests
 
 Design and the full guidance table in `PLAN.md` §7.7.
 
-### v0.0.22 — rustic takes no repository lock, and the cutover made that matter (unreleased)
+### v0.0.22 — rustic takes no repository lock, and the cutover made that matter
 
 Documentation and findings only; no code changed.
 
@@ -760,7 +804,7 @@ evidence the day before and was wrong.
 while any restic schedule still runs an exclusive operation. It is the more dangerous of the
 two.
 
-### v0.0.21 — the pre-PR gate no longer needs a terminal (unreleased)
+### v0.0.21 — the pre-PR gate no longer needs a terminal
 
 Tooling only; no code changed.
 
@@ -782,7 +826,7 @@ otherwise inherit the pipe the checklist just drained, and `gh` reads stdin itse
 
 The interactive path is unchanged, including `gh pr create` with no arguments.
 
-### v0.0.20 — first host cut over, and a retention hazard from outside the tool (unreleased)
+### v0.0.20 — first host cut over, and a retention hazard from outside the tool
 
 Documentation and findings only; no code changed.
 
@@ -813,7 +857,7 @@ flags by design — so a `doctor` command is now in the backlog.
 stopped being true with this cutover, and listed three open upstream PRs that ceased to
 exist when the fork was deleted.
 
-### v0.0.19 — M2 complete: schedule, unschedule, status (unreleased)
+### v0.0.19 — M2 complete: schedule, unschedule, status
 
 **Milestone 2 is done. rusticprofile can now schedule itself.**
 
@@ -835,7 +879,7 @@ exist when the fork was deleted.
   ignores `SIGPIPE`, so print macros panic on a closed pipe. The default disposition is now
   restored at startup and the process dies quietly like every other Unix tool.
 
-### v0.0.18 — M2 begins: systemd unit generation (unreleased)
+### v0.0.18 — M2 begins: systemd unit generation
 
 - `schedule/calendar.rs` and `schedule/systemd.rs`. **Pure functions — nothing is written,
   no unit installed, `systemctl` never consulted** — so a unit can be inspected before it
@@ -860,7 +904,7 @@ exist when the fork was deleted.
 Still to come in M2: `schedule` / `unschedule` / `status`, which is the part that touches
 the filesystem and `systemctl`.
 
-### v0.0.17 — verification ladder rungs 7 and 8, and a design finding (unreleased)
+### v0.0.17 — verification ladder rungs 7 and 8, and a design finding
 
 **The tool has now backed up to, and forgotten from, the real shared repository.** Ladder
 rungs 7 and 8 are done; only rung 9 (fleet rollout) remains, and that is gated on
@@ -886,7 +930,7 @@ scheduling rather than on more verification. Full detail in `PLAN.md` §7.3–7.
 with the hostname and eight absolute paths hard-coded. Templating it is a prerequisite for
 rung 9, not an afterthought.
 
-### v0.0.16 — CI timing, and the review workflow verified end to end (unreleased)
+### v0.0.16 — CI timing, and the review workflow verified end to end
 
 - **Pull-request CI is now 83 seconds wall clock**, from roughly 19 minutes at its worst.
   The two contributors were `cargo install cargo-audit` (v0.0.8) and the `fedora-arm` leg
@@ -899,7 +943,7 @@ rung 9, not an afterthought.
   `rust.yml` and was reviewed normally. `NOTES.md` and the workflow comment already scoped
   this correctly to `claude*.yml`; a PR description did not.
 
-### v0.0.15 — drop fedora-arm from pull-request CI (unreleased)
+### v0.0.15 — drop fedora-arm from pull-request CI
 
 - `build (fedora-arm)` took **19 minutes** on one merge, essentially all of it `dnf install`
   plus a from-scratch rustup inside a Fedora container on an ARM runner. It set the wall
@@ -912,7 +956,7 @@ rung 9, not an afterthought.
   a handful of `nix` syscalls, so an independent failure of just that intersection is
   unlikely enough to be worth catching at tag time rather than on every PR.
 
-### v0.0.14 — make the review outcome visible, properly (unreleased)
+### v0.0.14 — make the review outcome visible, properly
 
 - The v0.0.12 fix did not work. `use_sticky_comment` controls *how many* comments are used,
   not *whether* one is posted — confirmed by reading the action's `action.yml`, which is
@@ -930,7 +974,7 @@ rung 9, not an afterthought.
   reports "ran, shape unrecognised" rather than asserting a turn count that is not there.
   All four shapes and both shell branches were exercised locally before committing.
 
-### v0.0.13 — correct the control-group definition (unreleased)
+### v0.0.13 — correct the control-group definition
 
 - `AGENTS.md` listed **four** idle hosts as the control group, including `host-f`.
   `PLAN.md`'s fleet table shows `host-f` as active and identifies it as the development
@@ -939,7 +983,7 @@ rung 9, not an afterthought.
   this is a defect in a safety rule rather than a typo. There are **three** idle hosts.
 - Spotted while redacting the identifiers, where the two documents sat side by side.
 
-### v0.0.12 — make the review visible when it finds nothing (unreleased)
+### v0.0.12 — make the review visible when it finds nothing
 
 - **This entry was wrong; see v0.0.14.** `use_sticky_comment` means "use just one comment
   to deliver PR comments" — it does not make the action post when it has nothing to say, so
@@ -956,7 +1000,7 @@ rung 9, not an afterthought.
 - The two ways a review can produce nothing are now both documented in the workflow file
   itself, where someone changing it will actually read them.
 
-### v0.0.11 — record how the review workflow can silently skip (unreleased)
+### v0.0.11 — record how the review workflow can silently skip
 
 - **A green "Claude Code Review" check does not prove a review happened.** The action
   validates that the workflow file in a pull request is byte-identical to the copy on the
@@ -970,7 +1014,7 @@ rung 9, not an afterthought.
   review, silently. When changing them, read the job log rather than the check mark — look
   for `Attempt 1 failed: Workflow validation failed`.
 
-### v0.0.10 — Claude review workflows (unreleased)
+### v0.0.10 — Claude review workflows
 
 - `claude-code-review.yml` reviews every pull request; `claude.yml` responds to an
   `@claude` mention. Both authenticate with `CLAUDE_CODE_OAUTH_TOKEN`.
@@ -986,7 +1030,7 @@ rung 9, not an afterthought.
 - `--allowedTools` includes `just golden` and `just test`, which retch has no equivalent of:
   a changed argv must be regenerated and committed deliberately, never left stale.
 
-### v0.0.9 — redacted infrastructure identifiers (unreleased)
+### v0.0.9 — redacted infrastructure identifiers
 
 - `PLAN.md` and `AGENTS.md` now use placeholder hostnames, bucket and project names. A pure
   1:1 substitution — 30 lines changed, no text altered beyond the identifiers themselves.
@@ -997,7 +1041,7 @@ rung 9, not an afterthought.
 - Source, tests, workflows, `README.md` and this file were already clean; commit messages
   too. Only the two design documents carried anything.
 
-### v0.0.8 — faster CI audit (unreleased)
+### v0.0.8 — faster CI audit
 
 - The Security Audit job was the slowest thing in CI by four times over — ~373s against the
   Rust job's ~94s — and roughly 5.5 minutes of that was `cargo install cargo-audit`
@@ -1016,7 +1060,7 @@ rung 9, not an afterthought.
 - Note the `paths:` filter on that workflow never spares a run in practice: the house
   convention bumps the version in `Cargo.toml` on every PR, which always matches it.
 
-### v0.0.7 — the CLI surface, and Milestone 1 complete (unreleased)
+### v0.0.7 — the CLI surface, and Milestone 1 complete
 
 - Milestone 1 step 7, and the end of the milestone. `--rustic-binary` on `run` and `plan`.
 - Verification-ladder rung 2 is now a test: a recording shim stands in for rustic, the job
@@ -1027,7 +1071,7 @@ rung 9, not an afterthought.
   job name and is machine-wide — right in production, where two runs of one job must not
   overlap. Fixed by giving each test its own job name rather than by weakening the lock.
 
-### v0.0.6 — the runner (unreleased)
+### v0.0.6 — the runner
 
 - Milestone 1 step 6. `run -n <job>` with `--dry-run`. The first version that can actually
   run a backup.
@@ -1048,7 +1092,7 @@ rung 9, not an afterthought.
   different profile, or none at all.
 - A dry run reports what it *would* save, never what it saved.
 
-### v0.0.5 — exit classification (unreleased)
+### v0.0.5 — exit classification
 
 - Milestone 1 step 5, the most important behaviour in the milestone. `rustic/exit.rs` tells
   a partial backup from a failed one by counting `--json` snapshot objects on stdout, since
@@ -1063,7 +1107,7 @@ rung 9, not an afterthought.
 - Three integration tests run against real rustic in a throwaway local repository and skip
   with a notice when it is absent. **CI has no rustic, so CI skips them.**
 
-### v0.0.4 — exec and redaction (unreleased)
+### v0.0.4 — exec and redaction
 
 - Milestone 1 step 4. `exec/` spawns a child with no shell, forwards SIGINT and SIGTERM to
   it and waits rather than orphaning it, and reports a descriptive `Outcome` that passes no
@@ -1080,7 +1124,7 @@ rung 9, not an afterthought.
 - A test spawns a real child and forwards a signal to it, so the forwarding path is exercised
   rather than assumed.
 
-### v0.0.3 — invocation planning (unreleased)
+### v0.0.3 — invocation planning
 
 - Milestone 1 step 3. `plan -n <job>` with `--format lines|human`, printing the exact argv a
   job would run without running it. `rustic/invoke.rs` is a pure function of (config, job).
@@ -1097,7 +1141,7 @@ rung 9, not an afterthought.
   directly and `just` is not installed on every runner, so relying on the pre-push hook alone
   would have let a stale golden reach `main` via `GIT_NO_CHECK=1` or a machine without `just`.
 
-### v0.0.2 — configuration (unreleased)
+### v0.0.2 — configuration
 
 - Milestone 1 step 2. `config --check` and `config --show -n <job>`, both with `--as-host`
   and `--config`, both hermetic — no rustic binary, no repository, no network.
@@ -1113,7 +1157,7 @@ rung 9, not an afterthought.
   absolute, and `${job}`/`${profile}` refused inside `defaults`.
 - Deps added: `serde`, `serde_yaml_ng`, `toml`, `dirs`, `jiff`, `nix`, and `tempfile` (dev).
 
-### v0.0.1 — scaffolding (unreleased)
+### v0.0.1 — scaffolding
 
 - Repository scaffolded per the house conventions in `PLAN.md` §2.5: `just` as the only
   task runner, the `check`/`pr`/`open-pr`/`merge-pr` gate triad, real git hooks, CI with a
