@@ -10,13 +10,13 @@ rusticprofile - a local, per-machine scheduler and orchestrator for rustic backu
 
 **rusticprofile config** **--show** **-n** *JOB* [**--as-host** *HOST*] [**--config** *PATH*]
 
-**rusticprofile run** **-n** *JOB* [**--dry-run**] [**--rustic-binary** *PATH*] [**--as-host** *HOST*] [**--config** *PATH*]
+**rusticprofile run** **-n** *JOB* [**--dry-run**] [**--json**] [**--rustic-binary** *PATH*] [**--as-host** *HOST*] [**--config** *PATH*]
 
 **rusticprofile schedule** [**-n** *JOB*] [**--write-only**] [**--config** *PATH*] [**--unit-dir** *DIR*]
 
 **rusticprofile unschedule** **-n** *JOB* [**--config** *PATH*] [**--unit-dir** *DIR*]
 
-**rusticprofile status** [**--as-host** *HOST*] [**--config** *PATH*] [**--unit-dir** *DIR*]
+**rusticprofile status** [**--json**] [**--as-host** *HOST*] [**--config** *PATH*] [**--unit-dir** *DIR*]
 
 **rusticprofile snapshots** **-n** *JOB* [**--config** *PATH*] [**--as-host** *HOST*] [**--rustic-binary** *PATH*] [**--** *RUSTIC ARGS*]
 
@@ -113,6 +113,15 @@ Units are named `rusticprofile-`*JOB*`.service` and `.timer`, and both commands 
 The generated timer sets **Persistent=true**, so a run missed while the machine was asleep is caught up rather than silently skipped, and **RandomizedDelaySec**, so several machines sharing one repository do not all wake on the same instant. Scheduling priority is expressed as `Nice=` and `IOSchedulingClass=` in the unit rather than applied in-process.
 
 Units deliberately contain **no log path and no date**. A unit written today must not log to today's file forever, so `${date:...}` is resolved per run rather than at install time.
+
+**--json**
+:   Emit the report as JSON instead of the human summary, on **run** and **status**. For anything automated: matching the human summary would mean matching English, which is exactly what rusticprofile refuses to do to rustic's own output and for the same reason — a summary line is a message to a person and changes when the wording improves.
+
+    The object opens with a `schema` number. Fields may be **added** without changing it; anything removed or given a new meaning bumps it, so a consumer that ignores unknown fields keeps working.
+
+    **`last_success` is the field worth alerting on.** A schedule can be armed, green and firing while every run fails, and a disabled timer fails nothing at all — neither shows up in `enabled` or `next_run`. `null` there means the job has never succeeded. Note `enabled` and `active` are likewise `null` for "could not tell", which is not the same as `false`: only `false` means the schedule is definitely off.
+
+    rustic's own progress output goes to stderr, so `rusticprofile run --json 2>/dev/null` is parseable as-is.
 
 **status** distinguishes *installed but not enabled* from *state unknown*, since only the former means the schedule is definitely off, and it lists jobs excluded by **enabled-on-hosts** so that a host without a given timer reads as a decision rather than an absence.
 

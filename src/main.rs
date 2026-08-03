@@ -533,6 +533,10 @@ fn show_status(args: &StatusArgs) -> ExitCode {
         Err(code) => return code,
     };
 
+    if args.json {
+        return status_as_json(&config, args);
+    }
+
     println!("{} {}", "host:".bold(), config.host);
 
     // Not an error: "nothing is scheduled here, and here is why" is a truthful answer to
@@ -668,7 +672,19 @@ fn run_job(args: &RunArgs) -> ExitCode {
         },
         &lock,
     );
-    rusticprofile::report::print_job(&report);
+    if args.json {
+        println!(
+            "{}",
+            rusticprofile::report::json::to_string(
+                &rusticprofile::report::json::RunJson::from_report(&report)
+            )
+        );
+    } else {
+        rusticprofile::report::print_job(&report);
+    }
+    // The log and the status file are written either way: they are the record, not the
+    // report, and which output format a caller asked for says nothing about whether the
+    // run should be remembered.
     write_run_log(job, &report, &now);
     write_run_status(&report, &now);
     ExitCode::from(report.exit_code())
@@ -799,6 +815,53 @@ fn resolve_job_name(
     eprintln!("       Pass `-n <job>`, or add:\n");
     eprintln!("           defaults:\n             default-job: <job>\n");
     Err(ExitCode::from(EXIT_CONFIG_ERROR))
+}
+
+/// `status` as JSON.
+///
+/// Written as its own path rather than threaded through the human printer: the two have
+/// different obligations, and interleaving them is how a stray `println!` ends up corrupting
+/// a stream something is parsing.
+fn status_as_json(config: &Config, args: &StatusArgs) -> ExitCode {
+    use rusticprofile::report::json::{GatedJobJson, JobStatusJson, StatusJson};
+
+    let state_dir = config::paths::user_state_dir().ok();
+
+    let jobs = config
+        .jobs
+        .iter()
+        .map(|job| {
+            let permission = job
+                .schedule
+                .map(|s| s.permission)
+                .unwrap_or(Permission::User);
+            let dir = resolve_unit_dir(args.unit_dir.clone(), permission);
+            let timer = install::timer_status(job, permission, &dir);
+            let recorded = state_dir.as_ref().and_then(|d| {
+                rusticprofile::run::status::read(&rusticprofile::run::status::path_for(
+                    d, &job.name,
+                ))
+            });
+            JobStatusJson::new(&job.name, job.schedule.is_some(), &timer, recorded.as_ref())
+        })
+        .collect();
+
+    let report = StatusJson {
+        schema: 1,
+        host: config.host.clone(),
+        jobs,
+        not_on_this_host: config
+            .gated_out
+            .iter()
+            .map(|g| GatedJobJson {
+                job: g.name.clone(),
+                enabled_on_hosts: g.enabled_on_hosts.clone(),
+            })
+            .collect(),
+    };
+
+    println!("{}", rusticprofile::report::json::to_string(&report));
+    ExitCode::SUCCESS
 }
 
 fn print_env(show_secrets: bool) {

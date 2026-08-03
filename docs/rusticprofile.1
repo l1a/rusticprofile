@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.22" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.23" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -12,13 +12,13 @@ rusticprofile \- a local, per\-machine scheduler and orchestrator for rustic bac
 .PP
 \fBrusticprofile config\fP \fB\-\-show\fP \fB\-n\fP \fIJOB\fP [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
 .PP
-\fBrusticprofile run\fP \fB\-n\fP \fIJOB\fP [\fB\-\-dry\-run\fP] [\fB\-\-rustic\-binary\fP \fIPATH\fP] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
+\fBrusticprofile run\fP \fB\-n\fP \fIJOB\fP [\fB\-\-dry\-run\fP] [\fB\-\-json\fP] [\fB\-\-rustic\-binary\fP \fIPATH\fP] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
 .PP
 \fBrusticprofile schedule\fP [\fB\-n\fP \fIJOB\fP] [\fB\-\-write\-only\fP] [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
 .PP
 \fBrusticprofile unschedule\fP \fB\-n\fP \fIJOB\fP [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
 .PP
-\fBrusticprofile status\fP [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
+\fBrusticprofile status\fP [\fB\-\-json\fP] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
 .PP
 \fBrusticprofile snapshots\fP \fB\-n\fP \fIJOB\fP [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-rustic\-binary\fP \fIPATH\fP] [\fB\-\-\fP \fIRUSTIC ARGS\fP]
 .PP
@@ -136,6 +136,17 @@ Units are named `\f[CR]rusticprofile\-\fP`\fIJOB\fP`\f[CR]\.service\fP` and `\f[
 The generated timer sets \fBPersistent=true\fP, so a run missed while the machine was asleep is caught up rather than silently skipped, and \fBRandomizedDelaySec\fP, so several machines sharing one repository do not all wake on the same instant\. Scheduling priority is expressed as `\f[CR]Nice=\fP` and `\f[CR]IOSchedulingClass=\fP` in the unit rather than applied in\-process\.
 .PP
 Units deliberately contain \fBno log path and no date\fP\. A unit written today must not log to today's file forever, so `\f[CR]${date:\.\.\.}\fP` is resolved per run rather than at install time\.
+\fB\-\-json\fP
+.RS
+.PP
+Emit the report as JSON instead of the human summary, on \fBrun\fP and \fBstatus\fP\. For anything automated: matching the human summary would mean matching English, which is exactly what rusticprofile refuses to do to rustic's own output and for the same reason \-\- a summary line is a message to a person and changes when the wording improves\.
+.PP
+The object opens with a `\f[CR]schema\fP` number\. Fields may be \fBadded\fP without changing it; anything removed or given a new meaning bumps it, so a consumer that ignores unknown fields keeps working\.
+.PP
+\fB`\f[CR]last_success\fP` is the field worth alerting on\.\fP A schedule can be armed, green and firing while every run fails, and a disabled timer fails nothing at all \-\- neither shows up in `\f[CR]enabled\fP` or `\f[CR]next_run\fP`\. `\f[CR]null\fP` there means the job has never succeeded\. Note `\f[CR]enabled\fP` and `\f[CR]active\fP` are likewise `\f[CR]null\fP` for "could not tell", which is not the same as `\f[CR]false\fP`: only `\f[CR]false\fP` means the schedule is definitely off\.
+.PP
+rustic's own progress output goes to stderr, so `\f[CR]rusticprofile run \-\-json 2>/dev/null\fP` is parseable as\-is\.
+.RE
 .PP
 \fBstatus\fP distinguishes \fIinstalled but not enabled\fP from \fIstate unknown\fP, since only the former means the schedule is definitely off, and it lists jobs excluded by \fBenabled\-on\-hosts\fP so that a host without a given timer reads as a decision rather than an absence\.
 

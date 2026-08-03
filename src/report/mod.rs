@@ -7,6 +7,8 @@
 //! for a run that did less than asked, and let "retention did not run" be something the
 //! reader has to *infer* from an absence. Skipped operations are printed explicitly.
 
+pub mod json;
+
 use owo_colors::OwoColorize;
 
 use crate::run::JobReport;

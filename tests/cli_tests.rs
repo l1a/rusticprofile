@@ -1276,3 +1276,30 @@ fn snapshots_needs_a_job_name() {
     let (_stdout, _stderr, code) = run_code(&["snapshots", "--config", &path]);
     assert_eq!(code, EXIT_CONFIG_ERROR);
 }
+
+#[test]
+fn status_json_is_parseable_and_carries_a_schema() {
+    // The point of --json is that nothing downstream has to match English. If this ever
+    // emits something a parser chokes on, the flag is worse than useless — a consumer
+    // would have been better off with the human output it could at least read.
+    let (_dir, path) = fixture(GOOD_CONFIG);
+    let (stdout, stderr, code) =
+        run_code(&["status", "--json", "--config", &path, "--as-host", "host-a"]);
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    let v: serde_json::Value =
+        serde_json::from_str(&stdout).expect("status --json must emit parseable JSON");
+    assert_eq!(v["schema"], 1);
+    assert_eq!(v["host"], "host-a");
+    assert!(v["jobs"].is_array(), "{v}");
+}
+
+#[test]
+fn status_json_reports_the_host_gate_rather_than_omitting_it() {
+    // Same rule as the human output: "this host has no prune job" must be readable as a
+    // decision, not inferred from a shorter list.
+    let (_dir, path) = fixture(GOOD_CONFIG);
+    let (stdout, _stderr, _code) =
+        run_code(&["status", "--json", "--config", &path, "--as-host", "host-a"]);
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["not_on_this_host"][0]["job"], "dot-files-prune");
+}
