@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.13)
+## Current State (v0.1.14)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,25 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.14 — the completion check was interrogating the wrong shell
+
+`0.1.13` replaced a recipe that *claimed* zsh completions were loaded with one that checks
+`fpath`. The check used `zsh -c`, which is **non-interactive** and therefore sources neither
+`.zshrc` nor anything it includes — so `fpath` there is the built-in default.
+
+Result: it reported `NOT ACTIVE` on a machine where completion was working perfectly,
+telling the user to add an `fpath+=` line they already had. **The mirror image of the bug it
+replaced** — one claimed success without checking, the other claimed failure while checking
+the wrong thing. Both told the reader something untrue with equal confidence.
+
+`zsh -i -c` now. Measured on the same machine, same moment: the non-interactive `fpath` had
+2 entries matching `site-functions` (the two system directories), the interactive one had 3
+(plus the user's), and `whence -w _rusticprofile` reported `function`.
+
+The lesson is the one this project keeps relearning in new costumes: **a check is only worth
+what its oracle is worth.** `0.1.5` asked `hostname(1)` instead of the function the binary
+uses; this asked a shell that never reads the config being tested.
 
 ### v0.1.13 — help where help belongs, and completions that actually load
 

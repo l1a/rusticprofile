@@ -125,8 +125,13 @@ install-completions: build
     # Writing the file there and printing "auto-loaded" was a lie on any such machine —
     # the completion silently never loaded, and `rusticprofile config --<tab>` produced
     # nothing with no indication why. Check instead of claiming.
+    #
+    # `zsh -i` is required, not optional. A non-interactive zsh sources neither .zshrc nor
+    # anything it includes, so `fpath` there is the built-in default and this check reported
+    # NOT ACTIVE on a machine where completion was working perfectly — a false alarm telling
+    # the user to fix something already correct, which is the mirror of the bug it replaced.
     if command -v zsh >/dev/null 2>&1; then
-        if zsh -c 'print -l $fpath' 2>/dev/null | grep -qx "{{ZSH_COMP}}"; then
+        if zsh -i -c 'print -l $fpath' 2>/dev/null | grep -qx "{{ZSH_COMP}}"; then
             echo "  zsh        auto-loaded from {{ZSH_COMP}}"
         else
             echo "  zsh        NOT ACTIVE — {{ZSH_COMP}} is not on your \$fpath."
