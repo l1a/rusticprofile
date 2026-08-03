@@ -119,13 +119,37 @@ install-completions: build
     "$BIN" --completions power-shell > "{{PS_COMP}}/rusticprofile.ps1"
     echo "Installed completions for rusticprofile"
     echo ""
+
+    # zsh only reads completion functions from directories on `fpath`, and
+    # ~/.local/share/zsh/site-functions is NOT on it by default on every distribution.
+    # Writing the file there and printing "auto-loaded" was a lie on any such machine —
+    # the completion silently never loaded, and `rusticprofile config --<tab>` produced
+    # nothing with no indication why. Check instead of claiming.
+    if command -v zsh >/dev/null 2>&1; then
+        if zsh -c 'print -l $fpath' 2>/dev/null | grep -qx "{{ZSH_COMP}}"; then
+            echo "  zsh        auto-loaded from {{ZSH_COMP}}"
+        else
+            echo "  zsh        NOT ACTIVE — {{ZSH_COMP}} is not on your \$fpath."
+            echo "             The file is written but zsh will never read it. Add this to"
+            echo "             ~/.zshrc BEFORE compinit runs, then restart the shell:"
+            echo ""
+            echo "                 fpath+=({{ZSH_COMP}})"
+            echo ""
+        fi
+    fi
+
     echo "Notes:"
     echo "  bash       source {{BASH_COMP}}/rusticprofile  (or restart shell)"
-    echo "  zsh        auto-loaded from {{ZSH_COMP}}"
     echo "  fish       auto-loaded from {{FISH_COMP}}"
     echo "  elvish     add to rc.elv:  eval (slurp < {{ELVISH_COMP}}/rusticprofile.elv)"
     echo "  nushell    auto-loaded from {{NU_COMP}}"
     echo "  powershell add to \$PROFILE:  . {{PS_COMP}}/rusticprofile.ps1"
+    echo ""
+    echo "  Shell aliases do not inherit completions automatically. For an alias like"
+    echo "  \`rp\`, tell your shell they are the same command:"
+    echo "      zsh   compdef rp=rusticprofile"
+    echo "      fish  complete -c rp -w rusticprofile"
+    echo "      bash  complete -o default -F _rusticprofile rp"
 
 # Run criterion micro-benchmarks (none yet — see the NOTES.md backlog)
 bench:

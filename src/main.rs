@@ -41,13 +41,16 @@ fn main() -> ExitCode {
         Some(Command::Schedule(args)) => schedule_jobs(&args),
         Some(Command::Unschedule(args)) => unschedule_job(&args),
         Some(Command::Status(args)) => show_status(&args),
+        // Reachable only via a global flag that consumed the invocation without naming a
+        // subcommand — `--completions` is handled above and returns, so in practice this
+        // does not happen. `arg_required_else_help` makes a bare invocation print help
+        // during parsing, which is where it belongs.
         None => {
             eprintln!(
-                "{} nothing to do — rusticprofile cannot run jobs yet.",
+                "{} no command given. Run `rusticprofile --help` to see what is available.",
                 "error:".red().bold()
             );
-            eprintln!("       Try `run -n <job>`, or `--help` for everything available.");
-            ExitCode::FAILURE
+            ExitCode::from(EXIT_CONFIG_ERROR)
         }
     }
 }

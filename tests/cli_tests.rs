@@ -67,13 +67,13 @@ fn unknown_shell_is_rejected() {
 
 #[test]
 fn bare_invocation_fails_loudly() {
-    // There is nothing to run yet. It must not exit 0 — a silent success here is exactly
-    // the failure mode this project exists to prevent, and a systemd unit or wrapper
-    // script would happily believe it.
-    let (stdout, stderr, success) = run(&[]);
+    // A bare invocation prints help, as every other CLI does — but must NOT exit 0. A
+    // silent success here is exactly the failure mode this project exists to prevent, and
+    // a systemd unit or wrapper script would happily believe it.
+    let (_stdout, stderr, success) = run(&[]);
     assert!(!success, "bare invocation must not report success");
-    assert!(stdout.is_empty());
-    assert!(stderr.contains("nothing to do"));
+    assert!(stderr.contains("Usage:"), "help should be shown: {stderr}");
+    assert!(stderr.contains("Commands:"), "{stderr}");
 }
 
 /// Exit code meaning "the configuration is wrong", as distinct from a failed run.
