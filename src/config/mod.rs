@@ -151,6 +151,11 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         &raw,
         &rustic_config_dir,
     ));
+    violations.extend(validate::check_filter_hosts_can_match(
+        &raw,
+        &rustic_config_dir,
+        &host,
+    ));
 
     let mut jobs = Vec::new();
     let mut gated_out = Vec::new();
@@ -278,7 +283,11 @@ name = "gnupg"
 sources = ["/y"]
 
 [snapshot-filter]
-filter-hosts = ["host-a", "host-b", "host-c"]
+# Every host any test loads this as, including the dotted form. `enabled-on-hosts` matches
+# a short name against `host-a.local`, but `filter-hosts` is matched by *rustic*, exactly —
+# so both forms have to be listed here. That asymmetry is deliberate and is what
+# `check_filter_hosts_can_match` exists to enforce.
+filter-hosts = ["host-a", "host-b", "host-c", "host-d", "host-a.local"]
 
 [forget]
 group-by = "host,label,paths"

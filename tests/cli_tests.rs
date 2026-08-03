@@ -104,7 +104,7 @@ name = "gnupg"
 sources = ["/y"]
 
 [snapshot-filter]
-filter-hosts = ["host-a", "host-b", "host-c"]
+filter-hosts = ["host-a", "host-b", "host-c", "THIS_HOST"]
 
 [forget]
 group-by = "host,label,paths"
@@ -116,7 +116,21 @@ group-by = "host,label,paths"
 /// never read the developer's real `~/.config/rustic`.
 fn fixture(jobs_yaml: &str) -> (tempfile::TempDir, String) {
     let dir = tempfile::tempdir().expect("temp dir");
-    std::fs::write(dir.path().join("p.toml"), PROFILE_TOML).unwrap();
+    // `THIS_HOST` becomes the real hostname. Commands that resolve the host themselves
+    // (`schedule`, `run`) have no `--as-host`, so a profile whose `filter-hosts` cannot
+    // match the running machine is now a load-time error — correctly, since that is the
+    // silent-retention bug. A fixture for those commands therefore has to name this host.
+    let host = std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|h| h.trim().to_string())
+        .unwrap_or_else(|| "localhost".to_string());
+    std::fs::write(
+        dir.path().join("p.toml"),
+        PROFILE_TOML.replace("THIS_HOST", &host),
+    )
+    .unwrap();
     let jobs = dir.path().join("jobs.yaml");
     let rendered = jobs_yaml.replace("RUSTIC_DIR", &dir.path().display().to_string());
     std::fs::write(&jobs, rendered).unwrap();

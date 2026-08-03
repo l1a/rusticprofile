@@ -139,6 +139,10 @@ pub struct Profile {
     /// Sources rustic will take literally rather than expanding — see
     /// [`UnexpandableSource`]. Each is `(set name, the source as written)`.
     pub unexpandable_sources: Vec<UnexpandableSource>,
+    /// The `filter-hosts` values themselves, so a filter that cannot match this machine
+    /// can be refused. Empty when the key is absent — see
+    /// [`validate::check_filter_hosts_can_match`](super::validate::check_filter_hosts_can_match).
+    pub filter_hosts: Vec<String>,
 }
 
 /// A `sources` entry containing `~` or `$`, which rustic does not expand.
@@ -239,6 +243,7 @@ pub fn read_profile(path: &Path) -> Result<Profile, ReadError> {
         forget_group_by: raw.forget.group_by,
         misplaced_forget_filters: raw.forget.misplaced.declared(),
         unexpandable_sources,
+        filter_hosts: raw.snapshot_filter.filter_hosts.unwrap_or_default(),
     })
 }
 
