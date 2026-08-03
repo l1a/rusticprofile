@@ -57,6 +57,25 @@ pub struct UnitContext<'a> {
     /// Absolute path to `jobs.yaml`, passed explicitly so a unit does not depend on which
     /// `XDG_CONFIG_HOME` the service manager happens to hand the process.
     pub config: &'a Path,
+    /// Absolute path to the **rustic** executable, for the same reason as [`Self::binary`]
+    /// and one that is easy to miss.
+    ///
+    /// The unit invokes rusticprofile by absolute path, and rusticprofile then spawns
+    /// `rustic`. If that second name is bare it is resolved against the *service manager's*
+    /// `PATH` — which is not the shell's. With `linger` enabled (and it must be, or backups
+    /// only run while someone is logged in) the user manager starts at **boot** with the
+    /// system default `PATH=/usr/local/bin:/usr/bin`: no login shell, no `~/.zprofile`, no
+    /// `~/.cargo/bin`. A cargo-installed rustic is then invisible to it.
+    ///
+    /// Measured across two hosts with byte-identical units and no `PATH` line in either:
+    /// one had `~/.cargo/bin` on the manager's `PATH` because its manager happened to be
+    /// restarted from a login session, the other did not and every run failed with
+    /// `could not run rustic: No such file or directory`. The working host was the
+    /// accident, and a reboot would have taken it too.
+    ///
+    /// Resolving it here makes the unit say what it means, and moves the failure to
+    /// `schedule` time where a human is watching.
+    pub rustic_binary: &'a Path,
 }
 
 /// The `[Service]` lines implementing a priority.
@@ -93,11 +112,13 @@ pub fn service_unit(job: &Job, schedule: &Schedule, ctx: &UnitContext) -> String
          \n\
          [Service]\n\
          Type=oneshot\n\
-         ExecStart={binary} run --name {job_name} --config {config}\n\
+         ExecStart={binary} run --name {job_name} --config {config} \
+         --rustic-binary {rustic}\n\
          {priority}",
         job_name = job.name,
         binary = ctx.binary.display(),
         config = ctx.config.display(),
+        rustic = ctx.rustic_binary.display(),
         priority = priority_lines(schedule.priority),
     )
 }
@@ -159,6 +180,7 @@ mod tests {
         UnitContext {
             binary: Path::new("/usr/local/bin/rusticprofile"),
             config: Path::new("/home/u/.config/rusticprofile/jobs.yaml"),
+            rustic_binary: Path::new("/home/u/.cargo/bin/rustic"),
         }
     }
 
@@ -227,6 +249,50 @@ mod tests {
             &ctx(),
         );
         assert!(s.contains("After=network-online.target"));
+    }
+
+    #[test]
+    fn the_unit_names_rustic_by_absolute_path() {
+        // The unit must not depend on the service manager's PATH. With linger the user
+        // manager starts at boot with /usr/local/bin:/usr/bin — no login shell, so no
+        // ~/.cargo/bin — and a bare `rustic` is then unresolvable at 03:00 with nobody
+        // watching. Measured on a real host: every run failed with
+        // `could not run rustic: No such file or directory`, on a unit byte-identical to
+        // one that worked elsewhere.
+        let unit = service_unit(
+            &job("dot-files"),
+            &schedule(At::Hourly, Priority::Background),
+            &ctx(),
+        );
+        assert!(
+            unit.contains("--rustic-binary /home/u/.cargo/bin/rustic"),
+            "{unit}"
+        );
+    }
+
+    #[test]
+    fn every_path_in_the_unit_is_absolute() {
+        // Three paths, one rule: nothing in a unit may be resolved against an environment
+        // the unit does not control.
+        let unit = service_unit(
+            &job("dot-files"),
+            &schedule(At::Hourly, Priority::Background),
+            &ctx(),
+        );
+        let exec = unit
+            .lines()
+            .find(|l| l.starts_with("ExecStart="))
+            .expect("ExecStart");
+        for token in exec.trim_start_matches("ExecStart=").split_whitespace() {
+            // Flags, the subcommand and the job name are not paths; anything that looks
+            // like one must be rooted.
+            if token.contains('/') {
+                assert!(
+                    token.starts_with('/'),
+                    "relative path in unit: {token}\n{exec}"
+                );
+            }
+        }
     }
 
     #[test]
