@@ -83,9 +83,9 @@ pub enum Command {
 /// §7.8 states the line so the next request for one can be answered.
 #[derive(Args, Debug)]
 pub struct SnapshotsArgs {
-    /// Job whose profile to query
+    /// Job whose profile to query. Omit to use `defaults.default-job`.
     #[arg(short = 'n', long, value_name = "JOB")]
-    pub name: String,
+    pub name: Option<String>,
 
     /// Path to jobs.yaml (defaults to $XDG_CONFIG_HOME/rusticprofile/jobs.yaml)
     #[arg(long, value_name = "PATH")]
@@ -167,9 +167,9 @@ pub struct StatusArgs {
 
 #[derive(Args, Debug)]
 pub struct RunArgs {
-    /// Job to run
+    /// Job to run. Omit to use `defaults.default-job` from the configuration.
     #[arg(short = 'n', long, value_name = "JOB")]
-    pub name: String,
+    pub name: Option<String>,
 
     /// Ask rustic what it would do, without writing anything
     #[arg(long)]
@@ -203,9 +203,9 @@ pub enum PlanFormat {
 
 #[derive(Args, Debug)]
 pub struct PlanArgs {
-    /// Job to plan
+    /// Job to plan. Omit to use `defaults.default-job` from the configuration.
     #[arg(short = 'n', long, value_name = "JOB")]
-    pub name: String,
+    pub name: Option<String>,
 
     /// Output format
     #[arg(long, value_enum, default_value = "human")]
@@ -257,8 +257,8 @@ pub struct ConfigArgs {
     #[arg(long)]
     pub check: bool,
 
-    /// Show the resolved form of one job
-    #[arg(long, requires = "name")]
+    /// Show the resolved form of one job (uses `defaults.default-job` if `-n` is omitted)
+    #[arg(long)]
     pub show: bool,
 
     /// Write an annotated starting-point configuration to stdout
@@ -351,19 +351,31 @@ mod tests {
     }
 
     #[test]
-    fn config_show_requires_a_job_name() {
-        assert!(Cli::try_parse_from(["rusticprofile", "config", "--show"]).is_err());
+    fn config_show_may_fall_back_to_the_default_job() {
+        // `--show` without `-n` used to be a parse error. It now parses, and dispatch
+        // resolves the name from `defaults.default-job` — or reports that there is none.
+        // Moving the check out of clap is what lets the error name the config file.
+        assert!(Cli::try_parse_from(["rusticprofile", "config", "--show"]).is_ok());
         assert!(
             Cli::try_parse_from(["rusticprofile", "config", "--show", "-n", "dot-files"]).is_ok()
         );
     }
 
     #[test]
-    fn plan_requires_a_job_name() {
-        // Planning "everything" would invite running it that way later; a job is always
-        // named explicitly.
-        assert!(Cli::try_parse_from(["rusticprofile", "plan"]).is_err());
-        assert!(Cli::try_parse_from(["rusticprofile", "plan", "-n", "dot-files"]).is_ok());
+    fn unschedule_still_demands_an_explicit_name() {
+        // Deliberately excluded from the default-job fallback: removal is the one action
+        // that should never happen because of something a config file said.
+        assert!(Cli::try_parse_from(["rusticprofile", "unschedule"]).is_err());
+    }
+
+    #[test]
+    fn plan_may_fall_back_to_the_default_job() {
+        // `-n` was mandatory at parse time. It is now optional, and dispatch resolves the
+        // name from `defaults.default-job` — or reports that the config sets none, naming
+        // the file. clap cannot mention a config file it has never read, which is why the
+        // check moved out of it.
+        assert!(Cli::try_parse_from(["rusticprofile", "plan"]).is_ok());
+        assert!(Cli::try_parse_from(["rusticprofile", "plan", "-n", "j"]).is_ok());
     }
 
     #[test]
@@ -386,10 +398,13 @@ mod tests {
     }
 
     #[test]
-    fn run_requires_a_job_name() {
-        // There is no "run everything" form: each run is named deliberately.
-        assert!(Cli::try_parse_from(["rusticprofile", "run"]).is_err());
-        assert!(Cli::try_parse_from(["rusticprofile", "run", "-n", "dot-files"]).is_ok());
+    fn run_may_fall_back_to_the_default_job() {
+        // `-n` was mandatory at parse time. It is now optional, and dispatch resolves the
+        // name from `defaults.default-job` — or reports that the config sets none, naming
+        // the file. clap cannot mention a config file it has never read, which is why the
+        // check moved out of it.
+        assert!(Cli::try_parse_from(["rusticprofile", "run"]).is_ok());
+        assert!(Cli::try_parse_from(["rusticprofile", "run", "-n", "j"]).is_ok());
     }
 
     #[test]

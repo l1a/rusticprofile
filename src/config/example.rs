@@ -65,6 +65,18 @@ const JOBS_YAML: &str = r##"# ~/.config/rusticprofile/jobs.yaml
 schema: 1
 
 defaults:
+  # The job to act on when a command is given no `-n`.
+  #
+  # Applies to `run`, `plan`, `snapshots` and `config --show`.
+  #
+  # Deliberately NOT to two commands:
+  #   unschedule  removal is always named explicitly. Deleting a schedule because a config
+  #               file said so, rather than because you typed its name, is the one action
+  #               that should never happen by default.
+  #   schedule    omitting `-n` there already means "every job that declares a schedule",
+  #               which is useful and would be lost.
+  default-job: dot-files
+
   # Where the rustic profiles live. `profile: dot-files` below resolves to
   # <this dir>/dot-files.toml, and rusticprofile passes it to rustic as an absolute path:
   # a bare profile name would make rustic search its own paths, which need not include the

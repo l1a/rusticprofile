@@ -189,7 +189,7 @@ fn run_plan(args: &PlanArgs) -> ExitCode {
         return ExitCode::from(EXIT_CONFIG_ERROR);
     }
 
-    let (config, _path) = match load_config(
+    let (config, path) = match load_config(
         args.config.clone(),
         args.as_host.clone(),
         args.rustic_binary.clone(),
@@ -198,8 +198,12 @@ fn run_plan(args: &PlanArgs) -> ExitCode {
         Err(code) => return code,
     };
 
-    let Some(job) = config.job(&args.name) else {
-        return report_missing_job(&config, &args.name);
+    let name = match resolve_job_name(args.name.as_deref(), &config, &path) {
+        Ok(n) => n,
+        Err(code) => return code,
+    };
+    let Some(job) = config.job(&name) else {
+        return report_missing_job(&config, &name);
     };
 
     let plan = invoke::plan_job(&config, job, Options::default());
@@ -628,7 +632,7 @@ fn run_job(args: &RunArgs) -> ExitCode {
     // One clock for the whole run, so the file `${date:…}` selects and the timestamp
     // written inside it cannot disagree across midnight.
     let now = jiff::Zoned::now();
-    let (config, _path) = match load_config_at(
+    let (config, path) = match load_config_at(
         args.config.clone(),
         args.as_host.clone(),
         args.rustic_binary.clone(),
@@ -638,8 +642,12 @@ fn run_job(args: &RunArgs) -> ExitCode {
         Err(code) => return code,
     };
 
-    let Some(job) = config.job(&args.name) else {
-        return report_missing_job(&config, &args.name);
+    let name = match resolve_job_name(args.name.as_deref(), &config, &path) {
+        Ok(n) => n,
+        Err(code) => return code,
+    };
+    let Some(job) = config.job(&name) else {
+        return report_missing_job(&config, &name);
     };
 
     // Non-blocking: an hourly timer that queued behind a long backup would eventually run
@@ -728,7 +736,7 @@ fn write_run_log(
 /// stdout is inherited rather than captured: this exists to be read by a person, and
 /// rustic's own table is better than anything reprinted from a parse.
 fn list_snapshots(args: &SnapshotsArgs) -> ExitCode {
-    let (config, _path) = match load_config(
+    let (config, path) = match load_config(
         args.config.clone(),
         args.as_host.clone(),
         args.rustic_binary.clone(),
@@ -737,8 +745,12 @@ fn list_snapshots(args: &SnapshotsArgs) -> ExitCode {
         Err(code) => return code,
     };
 
-    let Some(job) = config.job(&args.name) else {
-        return report_missing_job(&config, &args.name);
+    let name = match resolve_job_name(args.name.as_deref(), &config, &path) {
+        Ok(n) => n,
+        Err(code) => return code,
+    };
+    let Some(job) = config.job(&name) else {
+        return report_missing_job(&config, &name);
     };
 
     let argv = invoke::query_argv(
@@ -762,6 +774,31 @@ fn list_snapshots(args: &SnapshotsArgs) -> ExitCode {
             ExitCode::from(EXIT_RUN_FAILED)
         }
     }
+}
+
+/// Resolve which job a command acts on: `-n`, else `defaults.default-job`.
+///
+/// The error when neither exists names the configuration file, because "no job specified"
+/// on its own leaves the reader guessing where a default would go.
+fn resolve_job_name(
+    explicit: Option<&str>,
+    config: &Config,
+    path: &std::path::Path,
+) -> Result<String, ExitCode> {
+    if let Some(name) = explicit {
+        return Ok(name.to_string());
+    }
+    if let Some(name) = &config.default_job {
+        return Ok(name.clone());
+    }
+    eprintln!(
+        "{} no job given, and {} sets no `defaults.default-job`.",
+        "error:".red().bold(),
+        path.display()
+    );
+    eprintln!("       Pass `-n <job>`, or add:\n");
+    eprintln!("           defaults:\n             default-job: <job>\n");
+    Err(ExitCode::from(EXIT_CONFIG_ERROR))
 }
 
 fn print_env(show_secrets: bool) {
@@ -815,16 +852,16 @@ fn run_config(args: &ConfigArgs) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let name = args
-        .name
-        .as_deref()
-        .expect("clap requires --name with --show");
-    match config.job(name) {
+    let name = match resolve_job_name(args.name.as_deref(), &config, &path) {
+        Ok(n) => n,
+        Err(code) => return code,
+    };
+    match config.job(&name) {
         Some(job) => {
             print_job(&config, job);
             ExitCode::SUCCESS
         }
-        None => report_missing_job(&config, name),
+        None => report_missing_job(&config, &name),
     }
 }
 

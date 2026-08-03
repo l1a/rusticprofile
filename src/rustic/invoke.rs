@@ -376,6 +376,7 @@ mod tests {
             rustic_config_dir: std::path::PathBuf::from("/cfg/rustic"),
             jobs: Vec::new(),
             gated_out: Vec::new(),
+            default_job: None,
             simulating_another_host: false,
         }
     }
