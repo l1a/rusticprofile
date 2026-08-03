@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.21)
+## Current State (v0.1.22)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,19 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.22 — AUR package tracks 0.1.21
+
+`packaging/aur/` was pinned to `0.1.9` and superseded four times over while the AUR sat in a
+maintenance window. Re-pointed at `0.1.21` once rather than bumped repeatedly through
+versions nobody could install.
+
+Rebuilt and linted in `archlinux:base-devel`: `makepkg` completes, `check()` runs **217 unit
+and 43 integration tests against real rustic 0.11.3**, the payload is the binary, three shell
+completions, the gzipped man page, README and LICENSE, and `namcap PKGBUILD` is clean.
+
+Still not pushed — the AUR has been in maintenance for the whole of this work. `just
+aur-publish` completes it, and refuses on its own if the window has not lifted.
 
 ### v0.1.21 — tests must not need a time zone database
 
