@@ -1,6 +1,21 @@
 name: Claude Code Review
 
-# Automatic review on every pull request.
+# MANUAL ONLY as of 2026-08-03. This does not run on pull requests any more.
+#
+# It reviewed every PR until the token backing it stopped working mid-session: 19
+# consecutive green runs, then every run failing in ~490ms on turn 1 at $0.00 with no
+# findings posted — a credential or quota rejection before any tokens were billed, not a
+# verdict on any code. Left running, that is a red check on every future PR for a reason
+# unrelated to the PR, which trains everyone to ignore a failing check. That is worse than
+# having no automated review at all.
+#
+# Run it deliberately instead:
+#     gh workflow run claude-code-review.yml -f pr=<number>
+#
+# To restore automatic review, put the `pull_request:` trigger back — the block below is
+# kept intact and commented for exactly that. Check the token first: `gh secret list`
+# shows when CLAUDE_CODE_OAUTH_TOKEN was last set, and `claude setup-token` mints a new
+# one. Note `claude.yml` uses the same secret, so @claude mentions fail the same way.
 #
 # Read-only by design: this job reviews, it does not push. Anything that needs to change
 # the repository goes through `claude.yml`, which is triggered deliberately by an @claude
@@ -14,8 +29,16 @@ name: Claude Code Review
 # `Workflow validation failed` rather than trusting the check mark.
 
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Pull request number to review'
+        required: true
+        type: string
+
+  # Restore automatic review by uncommenting this and deleting the block above.
+  # pull_request:
+  #   types: [opened, synchronize, ready_for_review, reopened]
 
 jobs:
   claude-review:
@@ -40,7 +63,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ inputs.pr }}'
           # Dependabot opens PRs as a bot actor, and the action refuses non-human actors
           # unless they are named. Without this, exactly the PRs least likely to get a
           # human read would also get no review. Scoped to dependabot alone.

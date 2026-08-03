@@ -102,7 +102,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.7)
+## Current State (v0.1.8)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -369,6 +369,38 @@ class that matters had shipped one in its own packaging recipes.
 Lowercase rather than dropping the flag: this repository is public, and on a machine without
 an fcontext rule pinning the tree to `container_file_t`, `$HOME` is `user_home_t`, which
 `container_t` cannot read at all. `z` is correct everywhere; no flag is correct only here.
+
+### v0.1.8 — the automatic Claude review is off (unreleased)
+
+`claude-code-review.yml` no longer runs on pull requests. It is `workflow_dispatch` only:
+
+```bash
+gh workflow run claude-code-review.yml -f pr=<number>
+```
+
+**Why.** The token behind it stopped working mid-session — **19 consecutive green runs,
+then every run failing in ~490 ms on turn 1 at $0.00**, posting no findings. A rejection
+before any tokens were billed is a credential or quota problem, not a verdict on any code;
+re-running it produced an identical failure, so it was not transient.
+
+Left as-is that is a **red check on every future PR for a reason unrelated to the PR**,
+which trains everyone to merge over a failing check. That is worse than having no automated
+review, and this repository has already spent effort on the opposite problem — see v0.0.11
+and v0.0.14, where the same job went *green* without reviewing. A check that cannot be
+believed in either direction is not a check.
+
+**The `pull_request:` trigger is kept, commented, directly beneath the replacement**, with
+the diagnostic path in the header comment: `gh secret list` for when
+`CLAUDE_CODE_OAUTH_TOKEN` was last set, `claude setup-token` to mint a new one. Restoring
+automatic review is uncommenting two lines.
+
+**`claude.yml` is untouched but shares the secret**, so `@claude` mentions fail the same way
+until the token is replaced. That is noted in the workflow header rather than left to be
+rediscovered.
+
+The `prompt:` now reads `inputs.pr` instead of `github.event.pull_request.number`, which
+does not exist on a dispatch event and would have silently produced a review of
+`repository/pull/` — the empty-value failure this project keeps running into.
 
 ### v0.1.7 — `schedule` is one step, and the service unit is `static` (unreleased)
 
