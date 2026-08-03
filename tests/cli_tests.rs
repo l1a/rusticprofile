@@ -1247,3 +1247,32 @@ fn checking_this_host_still_validates_filter_hosts() {
     assert_eq!(code, 2, "stderr:\n{stderr}");
     assert!(stderr.contains("filter-hosts"), "{stderr}");
 }
+
+#[test]
+fn snapshots_is_a_passthrough_that_adds_only_the_profile() {
+    // The command's entire justification is profile resolution. `plan` renders the argv a
+    // job would run; this asserts the query form stays minimal by checking the one thing
+    // that can be checked without rustic present — that a bad job name is refused before
+    // anything is spawned, and the host gate is still reported.
+    let (_dir, path) = fixture(GOOD_CONFIG);
+    let (_stdout, stderr, code) = run_code(&[
+        "snapshots",
+        "-n",
+        "dot-files-prune",
+        "--config",
+        &path,
+        "--as-host",
+        "host-a",
+    ]);
+    assert_eq!(code, EXIT_CONFIG_ERROR);
+    assert!(stderr.contains("not enabled on"), "{stderr}");
+}
+
+#[test]
+fn snapshots_needs_a_job_name() {
+    // No "query everything" form: a passthrough without a profile has nothing to resolve,
+    // which is the only thing this command exists to do.
+    let (_dir, path) = fixture(GOOD_CONFIG);
+    let (_stdout, _stderr, code) = run_code(&["snapshots", "--config", &path]);
+    assert_eq!(code, EXIT_CONFIG_ERROR);
+}

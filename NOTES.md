@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.18)
+## Current State (v0.1.19)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,44 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.19 — `snapshots`, a read-only passthrough
+
+The predecessor answers `resticprofile @dot-files` with a snapshot listing, because its
+config sets `default-command: "snapshots"`. Migrating removed a daily habit and replaced it
+with `rustic -P ~/.config/rustic/dot-files.toml snapshots` — a path the user must remember
+and **rusticprofile already resolves and validates**.
+
+```bash
+rusticprofile snapshots -n dot-files
+rusticprofile snapshots -n dot-files -- --filter-label core
+```
+
+**The value being added is profile resolution, not a new capability**, and the command adds
+exactly that:
+
+- It emits `rustic -P <resolved> snapshots` plus whatever the caller appended after `--`.
+  Every flag beyond `-P` is the caller's; rusticprofile constructs none.
+- rustic's **exit code passes straight through**. Inventing a verdict here would be a second
+  opinion nobody asked for.
+- stdout is **inherited, not captured** — this exists to be read by a person, and rustic's
+  own table beats anything reprinted from a parse.
+
+**It is not an `Operation`.** That enum stays `backup`, `forget`, `prune`, because it is what
+a *job* may schedule and a query is not schedulable work. Letting it into `jobs.yaml` would
+be a real boundary move rather than an ergonomic one.
+
+**The line is now written down** (`PLAN.md` §7.8), so the next request of this kind has an
+answer rather than a precedent: **a passthrough is acceptable only where it is read-only and
+adds no flags.** `check` would qualify. `forget` and `prune` do not — destructive, and their
+scoping belongs in the rustic profile where a flag typed at a prompt cannot contradict it.
+`restore` never does; the non-goals settled that already.
+
+The flag-inventory test in `rustic/invoke.rs` carries the instruction *"if this test needs
+changing, the delegation boundary is moving and that belongs in `PLAN.md` first"*. It did, so
+§7.8 was written first. The test itself is **unchanged** — it guards *job* invocations, and
+this is not one. `query_argv` is separate and has its own test asserting rusticprofile
+contributes only `-P` and the operation word.
 
 ### v0.1.18 — M5: a status file, and `status` answers the real question
 

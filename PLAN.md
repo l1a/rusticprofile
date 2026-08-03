@@ -1164,6 +1164,45 @@ language, and nothing is substituted at all.
 directory, and validates them through the real binary. An example that has drifted out of
 step with the validator is worse than none, because it is quoted with authority.
 
+## 7.8 A read-only passthrough — `snapshots` (decided 2026-08-03)
+
+The predecessor answers `resticprofile @dot-files` with a snapshot listing, because its
+config sets `default-command: "snapshots"`. Migrating removes a daily habit and replaces it
+with `rustic -P ~/.config/rustic/dot-files.toml snapshots` — a path the user must remember
+and rusticprofile already knows, resolves and validates.
+
+**The friction is real; the obvious fix is not.** Wrapping rustic's commands is what Pivot 2
+rejected, and the README states the whole contract as
+`rustic -P <profile> <operation> [--dry-run] [--json] [--name <set>]…`. Growing a `snapshots`
+command invites `check`, then `ls`, then `restore` — and restore is refused on purpose.
+
+### What is actually being added, and what is not
+
+The value the user is missing is **profile resolution**, not a new capability. So the command
+adds exactly that and nothing else:
+
+- It emits `rustic -P <resolved-profile> snapshots` plus **whatever the user appended**. Every
+  flag beyond `-P` comes from the caller. rusticprofile still constructs none.
+- It is **read-only**. `snapshots` cannot alter a repository, which is what makes a
+  passthrough defensible here and would not make one defensible for `forget` or `prune`.
+- It is **not an `Operation`.** `Operation` stays a closed set of three — `backup`, `forget`,
+  `prune` — because that enum is what a *job* may schedule. A query is not schedulable work,
+  and letting it into `jobs.yaml` would be a real boundary move rather than an ergonomic one.
+
+### The line, stated so the next request can be answered
+
+**A passthrough is acceptable only where it is read-only and adds no flags.** By that rule
+`check` would also qualify and could be added if wanted. `restore` never does — not because
+it writes, but because `PLAN.md`'s non-goals already settled it: putting a restore path
+behind a scheduler adds a layer between the operator and their data at the moment they least
+want one. `forget` and `prune` are excluded because they are destructive, and their scoping
+lives in the rustic profile where a `--filter-host` typed at a prompt could contradict it.
+
+The flag-inventory test in `rustic/invoke.rs` continues to assert that **job** invocations
+carry only `-P`, `--json` and `--name`. That guarantee is unchanged; this command is not a
+job invocation and has its own test asserting rusticprofile contributes only `-P` and the
+operation word.
+
 # Part 8 — Related state elsewhere
 
 - **`~/Sync/git/resticprofile/UPSTREAMING.md`** — the companion document for the Go fork: PR

@@ -18,6 +18,8 @@ rusticprofile - a local, per-machine scheduler and orchestrator for rustic backu
 
 **rusticprofile status** [**--as-host** *HOST*] [**--config** *PATH*] [**--unit-dir** *DIR*]
 
+**rusticprofile snapshots** **-n** *JOB* [**--config** *PATH*] [**--as-host** *HOST*] [**--rustic-binary** *PATH*] [**--** *RUSTIC ARGS*]
+
 **rusticprofile plan** **-n** *JOB* [**--format** *FORMAT*] [**--show-env** [**--show-secrets**]] [**--as-host** *HOST*] [**--config** *PATH*]
 
 # DESCRIPTION
@@ -129,6 +131,20 @@ The argv is the whole of what rusticprofile constructs:
     rustic -P RESOLVED-PROFILE-PATH OPERATION [--dry-run] [--json] [--name SET]...
 
 `-P` is given a resolved absolute path rather than a bare profile name, because rustic's own search for a bare name need not include the directory rusticprofile validated against. `--name` appears only for **backup**, once per snapshot set enabled on the current host, as does `--json`. Those three flags plus `-P` are the only ones rusticprofile ever emits; everything else a backup needs comes from rustic's own configuration. `--json` is requested because rustic exits 1 for both a partial and a failed backup, and the count of snapshot objects it writes to standard output is the only reliable way to tell them apart. Progress and diagnostics are unaffected — rustic writes those to standard error.
+
+# SNAPSHOTS
+
+**snapshots -n** *JOB*
+:   List the repository's snapshots by handing the query to **rustic**(1).
+
+    **This is a read-only passthrough, and the only thing rusticprofile contributes is the resolved profile path** — the value you would otherwise have to remember and type. Arguments after `--` are given to rustic unchanged; rusticprofile constructs none of them, and rustic's exit code is passed straight through rather than replaced with a verdict of our own.
+
+    ```
+    rusticprofile snapshots -n dot-files
+    rusticprofile snapshots -n dot-files -- --filter-label core
+    ```
+
+    Read-only is what makes this defensible. There is deliberately no passthrough for **forget** or **prune**, which are destructive and whose scoping belongs in the rustic profile where a flag typed at a prompt cannot contradict it, nor for **restore** — putting a restore path behind a scheduler adds a layer between you and your data at the moment you least want one. `snapshots` is also **not** an operation a job may schedule; that set remains **backup**, **forget** and **prune**.
 
 # SECRETS
 
