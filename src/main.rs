@@ -575,6 +575,36 @@ fn show_status(args: &StatusArgs) -> ExitCode {
         if let Some(next) = &st.next_elapse {
             println!("    {:<20} {next}", "next run");
         }
+
+        // "When did this last actually work?" is the question a schedule cannot answer.
+        // A timer can be armed, green and firing while every run fails — or be quietly
+        // disabled, in which case nothing fails and nothing reports. Only the recorded
+        // outcome distinguishes those from a job that is fine.
+        if let Ok(state_dir) = config::paths::user_state_dir() {
+            let path = rusticprofile::run::status::path_for(&state_dir, &job.name);
+            match rusticprofile::run::status::read(&path) {
+                Some(rec) => {
+                    println!(
+                        "    {:<20} {} ({})",
+                        "last run", rec.last_run, rec.last_verdict
+                    );
+                    match &rec.last_success {
+                        Some(t) => println!("    {:<20} {t}", "last success"),
+                        None => println!("    {:<20} {}", "last success", "never".red().bold()),
+                    }
+                    if !rec.skipped.is_empty() {
+                        println!(
+                            "    {:<20} {}",
+                            "skipped last run",
+                            rec.skipped.join(", ").yellow()
+                        );
+                    }
+                }
+                // Said out loud. An absent record and a job that has never run look the
+                // same from here, and both are worth knowing about.
+                None => println!("    {:<20} {}", "last run", "never recorded".dimmed()),
+            }
+        }
     }
 
     // The gate is the whole point of per-host scheduling, so it has to be visible. "This
@@ -631,7 +661,33 @@ fn run_job(args: &RunArgs) -> ExitCode {
     );
     rusticprofile::report::print_job(&report);
     write_run_log(job, &report, &now);
+    write_run_status(&report, &now);
     ExitCode::from(report.exit_code())
+}
+
+/// Record when this job last ran, and last succeeded.
+///
+/// Like the log, a failure here never changes the exit code — the backup happened, and a
+/// bookkeeping problem must not be reported as a backup problem.
+fn write_run_status(report: &rusticprofile::run::steps::JobReport, now: &jiff::Zoned) {
+    use rusticprofile::run::status;
+
+    let Ok(state_dir) = config::paths::user_state_dir() else {
+        return;
+    };
+    let path = status::path_for(&state_dir, &report.job);
+    // Read first: a failing run must carry forward when the job last actually worked,
+    // which is the only field that can reveal a job that has silently stopped.
+    let previous = status::read(&path);
+    let next = status::next(report, now, previous.as_ref());
+
+    if let Err(e) = status::write(&path, &next) {
+        eprintln!(
+            "{} could not write the status file at {}: {e}. The run itself is unaffected.",
+            "warning:".yellow().bold(),
+            path.display()
+        );
+    }
 }
 
 /// Append this run to the job's log, if it declares one.

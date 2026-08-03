@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.17)
+## Current State (v0.1.18)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,63 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.18 — M5: a status file, and `status` answers the real question
+
+**A run that fails is loud. A run that never happens is silent** — a disabled timer, a
+laptop asleep for a week, a job gated away after a hostname changed. Nothing fails, so
+nothing reports, and the only evidence is an absence. Absence is what nobody notices, and it
+is the failure class this project exists to prevent.
+
+`$XDG_STATE_HOME/rusticprofile/status/<job>.json` now records it:
+
+```json
+{
+  "job": "dot-files",
+  "host": "host-a",
+  "last_run": "2026-08-03T14:43:55-07:00",
+  "last_verdict": "failure",
+  "last_success": "2026-08-03T14:43:37-07:00",
+  "skipped": ["forget"]
+}
+```
+
+**`last_success` survives a failed run.** A file recording only the latest attempt answers
+"did the last run work?" — useful, but not the question. The one worth asking is *when did
+this last actually work?*, so a failure carries the previous success forward instead of
+overwriting it. That single field is what makes "hasn't succeeded in three days" a check
+rather than a discovery.
+
+**`status` now shows it**, which is where the question gets asked:
+
+```
+  dot-files              active
+    declared             hourly (user, background)
+    next run             Mon 2026-08-03 15:00:05 PDT
+    last run             2026-08-03T14:43:55-07:00 (failure)
+    last success         2026-08-03T14:43:37-07:00
+    skipped last run     forget
+```
+
+A timer can be armed, green and firing while **every run fails** — which happened on a fleet
+host earlier the same day, for hours, surfacing only because someone happened to look. The
+schedule cannot answer that; the record can. A job with no record at all reads
+`never recorded` rather than being silently omitted.
+
+Three more decisions, each tested:
+
+- **Partial counts as success.** A partial backup saved data and, by the rule in
+  `run/steps.rs`, retention still ran. Recording it as "never succeeded" would make a
+  monitor cry wolf on a job doing its job.
+- **The write is atomic** — temp file plus `rename(2)`. A monitor polling this must never
+  read a half-written record and conclude something false about a backup.
+- **A corrupt record reads as absent, not as an error.** Losing history is bad; losing the
+  *current* run because the previous one is damaged is worse.
+
+One file per job, so two jobs running at once cannot contend on a read-modify-write and lose
+the loser's record. As with the log, a write failure never changes the exit code.
+
+Still to come in M5: `--json`.
 
 ### v0.1.17 — M5 begins: `log:` finally writes something
 
