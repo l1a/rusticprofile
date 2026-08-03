@@ -133,10 +133,15 @@ mod tests {
     use crate::rustic::exit::{Classification, Verdict};
     use std::time::Duration;
 
+    /// A fixed instant that needs no time zone database.
+    ///
+    /// A named zone here made these tests depend on the machine: the release runner has no
+    /// tzdb, so `[America/Los_Angeles]` failed to parse and every log test panicked — at
+    /// tag time, where `full-test` runs and PR CI does not. A fixed offset is what the
+    /// assertions actually need; the zone name was incidental.
     fn now() -> jiff::Zoned {
-        "2026-08-03T12:34:56-07:00[America/Los_Angeles]"
-            .parse()
-            .unwrap()
+        let ts: jiff::Timestamp = "2026-08-03T19:34:56Z".parse().unwrap();
+        ts.to_zoned(jiff::tz::TimeZone::fixed(jiff::tz::Offset::constant(-7)))
     }
 
     fn report(skipped: Vec<Operation>) -> JobReport {

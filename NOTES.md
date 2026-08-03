@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.20)
+## Current State (v0.1.21)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,38 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.21 — tests must not need a time zone database
+
+Tagging `v0.1.20` failed the release build. Nine tests in `run::log` and `run::status`
+panicked on `full-test (ubuntu-arm)`:
+
+```
+called `Result::unwrap()` on an `Err` value: failed to find time zone
+`America/Los_Angeles` since there is no time zone database configured
+```
+
+The fixtures parsed `"…[America/Los_Angeles]"`, which needs a tzdb the release container
+does not have. The assertions never cared about the *zone* — only about a fixed instant —
+so the dependency was incidental and is now gone: a `Timestamp` plus
+`TimeZone::fixed(Offset::constant(-7))` needs nothing from the machine.
+
+**It passed every pull request.** `full-test` runs only on tags, in a leaner container than
+the PR-time `build` matrix, so the first thing to exercise it was the release itself. That
+is the gap worth noting rather than the parse error: a test suite that is green on every PR
+and red at tag time is one that has not actually been run in the environment it ships from.
+
+Verified by reproducing the condition rather than reasoning about it — `rm -rf
+/usr/share/zoneinfo` in a container, then running the affected tests, which now pass.
+
+The bad tag was deleted before any artefact was published, so `v0.1.20` never existed
+outside this repository.
+
+**Third instance of one pattern in this release series**, and worth naming: `0.1.5` asked
+`hostname(1)` instead of the function the binary uses; `0.1.14` asked a non-interactive
+shell about an interactive `fpath`; this asked for a named time zone when it wanted an
+instant. Each time the test looked reasonable and quietly depended on the machine it was
+written on.
 
 ### v0.1.20 — `defaults.default-job`
 
