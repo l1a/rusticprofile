@@ -192,8 +192,19 @@ shared by 7 machines, and currently holds the only copy of several years of data
 
 * **Read-only operations against it are fine** (`snapshots`, `repoinfo`, `check`).
 * **Every write test goes to a throwaway local repository**, under a temp dir, deleted after.
-* **Never run `prune` against the GCS repository** until the lock-coordination milestone
-  lands (`PLAN.md` M4).
+* **Never run `restic prune` against the GCS repository while any host backs up with
+  rustic.** Measured (`PLAN.md` §7.6): restic deletes packs immediately, which is safe only
+  because it holds an exclusive repository lock — and rustic neither takes nor honours that
+  lock. A restic prune against a rustic writer deleted 14 packs mid-backup and left the
+  repository failing `restic check`.
+* **`rustic prune` is safe and is the only prune that may run here.** rustic is lock-free by
+  design: prune *marks* packs and deletes them only after `--keep-delete`, 23 hours by
+  default, so a concurrent rustic backup has a day of grace. Verified — a default
+  `rustic prune` left every pack on disk; only `--instant-delete` removed them.
+  * This **supersedes the previous rule**, which said no prune at all until M4. That rule
+    was written before rustic's own documentation was read, and it was wrong in a way that
+    cost real time: it disabled the fleet's prune schedule for no reason. M4 is defence in
+    depth, not permission.
 * **Never delete snapshots** on any host without explicit per-step authorisation. Follow the
   verification ladder in `PLAN.md` §4 in order; it is designed so each rung is provably safe
   and the first irreversible step has the smallest possible blast radius.

@@ -92,7 +92,9 @@ costs real complexity in the publish recipes.
   `CHANGELOG.md`. Their absence is the convention — do not add them.
 - **Backup safety**: read-only operations against a production repository are fine; every
   write test goes to a throwaway repository under a temp dir, deleted afterwards; never
-  `prune` against a shared repository before M4; never delete snapshots without explicit
+  **`restic` prune** against a shared repository any rustic client writes to (`PLAN.md`
+  §7.6 — `rustic prune` is safe by design and is the only prune that may run); never delete
+  snapshots without explicit
   per-step authorisation. See `AGENTS.md` Part 2 §3.
 - **No live infrastructure identifiers in tracked files.** The repository is public, so this
   is now permanent rather than a pre-publication chore: no real hostnames, bucket names,
@@ -102,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.10)
+## Current State (v0.1.11)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -343,6 +345,38 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.11 — prune returns to the prune host
+
+**A standing safety rule is superseded, and it is worth saying why rather than quietly
+editing it.**
+
+`AGENTS.md` and §3 both said: *never `prune` against the shared repository until M4 lands*.
+That was written before rustic's own documentation was read, on the inference that a tool
+taking no repository lock must be unsafe under concurrent access. §7.6 corrected the
+inference; the rule never followed.
+
+The corrected pair of rules:
+
+- **Never run `restic prune` against a repository any rustic client writes to.** restic
+  deletes packs immediately, safe only because it holds an exclusive lock — and rustic
+  neither takes nor honours that lock. Measured: 14 packs deleted mid-backup, repository
+  then failing `restic check`.
+- **`rustic prune` is safe, and is the only prune that may run here.** rustic is lock-free by
+  design: prune *marks* packs and deletes them only after `--keep-delete`, 23 h by default.
+  Verified — a default `rustic prune` left every pack on disk; only `--instant-delete`
+  removed them.
+
+**The cost of the wrong rule was real.** The fleet's prune schedule was disabled on
+2026-08-02 and nothing has reclaimed space since, on reasoning that did not hold. M4 is
+defence in depth, not permission.
+
+So a prune job goes back on the designated host — as a **`rustic prune`**, never by
+re-enabling the predecessor's `restic prune` timer, which remains correctly disabled. The
+shipped `config --example jobs` already carried the right explanation; the live config
+carried the old one and is corrected alongside this.
+
+No code changed.
 
 ### v0.1.10 — units name rustic by absolute path
 
