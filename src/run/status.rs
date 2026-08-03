@@ -135,8 +135,13 @@ mod tests {
     use crate::rustic::exit::Classification;
     use std::time::Duration;
 
+    /// Parse an offset timestamp without needing a time zone database.
+    ///
+    /// See the note in `run::log`: a named zone made these depend on the machine, and the
+    /// release runner has none.
     fn at(s: &str) -> jiff::Zoned {
-        format!("{s}[America/Los_Angeles]").parse().unwrap()
+        let ts: jiff::Timestamp = s.parse().unwrap();
+        ts.to_zoned(jiff::tz::TimeZone::fixed(jiff::tz::Offset::constant(-7)))
     }
 
     fn report(verdict: Verdict, skipped: Vec<Operation>) -> JobReport {
