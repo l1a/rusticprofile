@@ -30,6 +30,7 @@ rusticprofile run -n dot-files                      # actually run it
 rusticprofile schedule -n dot-files                 # install and arm a systemd timer
 rusticprofile schedule -n dot-files --write-only    # install it inert, to read first
 rusticprofile status                                # what is scheduled here, plus last run / last success
+rusticprofile status --json                         # ...for a monitor; alert on last_success
 rusticprofile snapshots -n dot-files                # list snapshots (read-only passthrough to rustic)
 rusticprofile unschedule -n dot-files               # remove the units
 ```

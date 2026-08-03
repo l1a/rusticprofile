@@ -152,6 +152,13 @@ pub struct UnscheduleArgs {
 
 #[derive(Args, Debug)]
 pub struct StatusArgs {
+    /// Emit the report as JSON instead of the human summary
+    ///
+    /// `last_success` is the field worth alerting on: a schedule can be armed and green
+    /// while every run fails, and a disabled timer fails nothing at all.
+    #[arg(long)]
+    pub json: bool,
+
     /// Path to jobs.yaml (defaults to $XDG_CONFIG_HOME/rusticprofile/jobs.yaml)
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
@@ -174,6 +181,15 @@ pub struct RunArgs {
     /// Ask rustic what it would do, without writing anything
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Emit the outcome as JSON instead of the human summary
+    ///
+    /// For anything automated. Matching the human summary would mean matching English —
+    /// exactly what `rustic/exit.rs` refuses to do to rustic's own output, and for the same
+    /// reason: a summary line is a message to a person, and it changes when the wording
+    /// improves.
+    #[arg(long)]
+    pub json: bool,
 
     /// Path to jobs.yaml (defaults to $XDG_CONFIG_HOME/rusticprofile/jobs.yaml)
     #[arg(long, value_name = "PATH")]

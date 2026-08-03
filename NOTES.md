@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.22)
+## Current State (v0.1.23)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,55 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.23 — M5 complete: `--json`
+
+`run --json` and `status --json`. **Milestone 5 is done.**
+
+Anything automated reading the human summary would be matching English —
+`backup  ok  backup saved 3 of 3 snapshot sets` — which is exactly what `rustic/exit.rs`
+refuses to do to *rustic's* output, and for the same reason: a summary line is a message to
+a person, and it changes when the wording improves.
+
+```
+$ rusticprofile status --json 2>/dev/null
+{
+  "schema": 1,
+  "host": "host-a",
+  "jobs": [
+    {
+      "job": "dot-files",
+      "scheduled": true, "units_present": true, "enabled": true, "active": true,
+      "next_run": "Mon 2026-08-03 16:04:53 PDT",
+      "last_run": "2026-08-03T15:31:55-07:00",
+      "last_verdict": "success",
+      "last_success": "2026-08-03T15:31:55-07:00",
+      "skipped_last_run": []
+    }
+  ],
+  "not_on_this_host": [ { "job": "dot-files-prune", "enabled_on_hosts": ["gimli"] } ]
+}
+```
+
+Four decisions worth keeping:
+
+- **Shaped separately from the internal types.** `RunJson` is not `#[derive(Serialize)]` on
+  `JobReport`. An internal type may be refactored freely; an emitted schema is something a
+  monitor depends on, and coupling them makes every rename a silent breaking change for
+  somebody's alerting. The mapping is written out once, where a change to it shows in a diff.
+- **`schema` is the promise.** Fields may be added without changing it; anything removed or
+  redefined bumps it. A consumer ignoring unknown fields keeps working.
+- **`null` is not `false`.** `enabled`, `active` and `last_success` stay null for "could not
+  tell" or "never". Collapsing those to `false` would make a monitor confident about
+  something nobody measured — the same distinction `TimerStatus` already draws.
+- **`skipped` is emitted even when empty.** A consumer asking "did retention run?" should not
+  have to tell an absent key from an empty list.
+
+The log and status file are written whichever format was asked for: they are the record, not
+the report, and the caller's choice of output says nothing about whether a run should be
+remembered.
+
+rustic's progress goes to stderr, so `run --json 2>/dev/null` is parseable as-is.
 
 ### v0.1.22 — AUR package tracks 0.1.21
 
