@@ -684,6 +684,19 @@ fn run_config(args: &ConfigArgs) -> ExitCode {
 fn print_check(config: &Config, path: &str) {
     println!("{} {path}", "ok:".green().bold());
     println!("  host              {}", config.host);
+    // A check that did not run must say so. Passing silently here would report a clean
+    // bill of health for a machine whose rustic profile this process has never seen.
+    if config.simulating_another_host {
+        println!(
+            "  {}         simulated — `filter-hosts` was NOT checked",
+            "note:".yellow().bold()
+        );
+        println!(
+            "                    that check reads this machine's rustic profile, and \
+             `{}` has its own",
+            config.host
+        );
+    }
     println!("  rustic binary     {}", config.rustic_binary);
     println!("  rustic config     {}", config.rustic_config_dir.display());
 

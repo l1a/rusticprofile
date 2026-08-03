@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.11)
+## Current State (v0.1.12)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,45 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.12 — `--as-host` stops reporting a defect it cannot see
+
+`0.1.4` added a refusal for a `filter-hosts` that cannot match the host which will run the
+job. Correct on the real host, and a **false alarm on every other one**: the check reads
+*this* machine's `rustic.toml`, and §5.9 requires that file to differ per host. Under
+`--as-host` it therefore compares a profile from one disk against a hostname from another,
+and they disagree precisely when the simulation is doing its job.
+
+```
+$ rusticprofile config --check --as-host gimli      # before
+error: 2 configuration errors:
+  jobs.dot-files.profile: …/dot-files.toml scopes `forget` to `arrakis`, which does not
+  include this host (`gimli`) …
+```
+
+Nothing was wrong: on that host, chezmoi renders its own profile naming its own hostname.
+But the noise made `--as-host` useless for the per-host gate inspection it exists for.
+
+The check is now skipped while simulating — **and the skip is stated**, because passing
+silently would report a clean bill of health for a machine whose rustic profile this process
+has never seen:
+
+```
+$ rusticprofile config --check --as-host gimli      # after
+ok: …/jobs.yaml
+  host              gimli
+  note:         simulated — `filter-hosts` was NOT checked
+                    that check reads this machine's rustic profile, and `gimli` has its own
+```
+
+Two tests hold the line: one that simulating another host exits 0 *and* says the check was
+skipped, and one that on the real host a non-matching `filter-hosts` is still an error. The
+skip is scoped to simulation; the silent-retention bug it guards against has not come back.
+
+Also removed from the live fleet config, though not from this repository: the
+`dot-files-backup` and `dot-files-forget` jobs. They existed so ladder rungs 7 and 8 could
+be taken separately, both are done, and a job named `dot-files-backup` that silently skips
+retention is the exact failure this tool was written to prevent.
 
 ### v0.1.11 — prune returns to the prune host
 
