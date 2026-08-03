@@ -339,6 +339,86 @@ pub fn check_sources_are_expanded(raw: &RawConfig, rustic_config_dir: &Path) -> 
     out
 }
 
+/// Refuse a `filter-hosts` that cannot match the machine it will run on.
+///
+/// A scoping filter that is *present* is not the same as one that *works*. `filter-hosts`
+/// is matched by rustic against the hostname recorded in each snapshot, **exactly** — so a
+/// filter naming any other string selects nothing, `forget` deletes nothing, and retention
+/// silently never runs. The repository then grows without limit while every command reports
+/// success. That is bug #1 from `PLAN.md` §2.1, which went unnoticed for months.
+///
+/// **The trap that motivated this check** is a generated config. `chezmoi`'s
+/// `.chezmoi.hostname` is the hostname *up to the first `.`*, so templating it into
+/// `filter-hosts` produces `["foo"]` on a machine whose snapshots are recorded as
+/// `foo.local`. On a host with no domain suffix the two are identical, so the template
+/// looks correct everywhere it is tested and fails only on the machines nobody checked.
+///
+/// **Matching here is deliberately exact, not the lenient short-form match
+/// [`hosts::host_matches`] uses for `enabled-on-hosts`.** Being generous would defeat the
+/// purpose: rustic is the one doing the matching, and it is not generous. A filter this
+/// check accepts must be one rustic will also accept.
+///
+/// Only jobs that `forget` are checked — that is the operation whose scope this decides,
+/// and a filter that matches nothing is harmless to a backup.
+pub fn check_filter_hosts_can_match(
+    raw: &RawConfig,
+    rustic_config_dir: &Path,
+    host: &str,
+) -> Vec<Violation> {
+    let mut out = Vec::new();
+
+    for (name, job) in &raw.jobs {
+        if !job.operations.contains(&Operation::Forget) || !is_valid_name(&job.profile) {
+            continue;
+        }
+
+        let path = paths::profile_toml(rustic_config_dir, &job.profile);
+        // An unreadable profile is already reported by the checks that own that failure.
+        let Ok(profile) = rustic_toml::read_profile(&path) else {
+            continue;
+        };
+
+        // Absent is a different question, and `check_forget_is_scoped` asks it. Here the
+        // filter exists; the only question is whether it can ever select anything.
+        if profile.filter_hosts.is_empty() || profile.filter_hosts.iter().any(|h| h == host) {
+            continue;
+        }
+
+        let listed = profile
+            .filter_hosts
+            .iter()
+            .map(|h| format!("`{h}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let hint = if profile
+            .filter_hosts
+            .iter()
+            .any(|h| host.starts_with(&format!("{h}.")))
+        {
+            // Name the actual cause rather than leaving it to be worked out. This is the
+            // shape a templated short hostname produces.
+            " — that looks like a short hostname where the full one is needed; rustic \
+             matches the recorded name exactly, so `chezmoi`'s `.chezmoi.hostname` must \
+             become `.chezmoi.fqdnHostname` here"
+        } else {
+            ""
+        };
+
+        out.push(Violation::new(
+            format!("jobs.{name}.profile"),
+            format!(
+                "{} scopes `forget` to {listed}, which does not include this host \
+                 (`{host}`){hint}. rustic matches `filter-hosts` against the hostname in \
+                 each snapshot exactly, so this selects nothing: `forget` would delete \
+                 nothing and retention would silently never run",
+                path.display()
+            ),
+        ));
+    }
+
+    out
+}
+
 /// Refuse a `forget` that is not restricted to some subset of snapshots.
 ///
 /// `forget` is irreversible and the repository is shared by every machine in the fleet.
@@ -807,6 +887,88 @@ jobs:
             check_sources_are_expanded(&parse(FORGET_JOB), dir.path()).len(),
             1
         );
+    }
+
+    // --- filter-hosts must be able to match -------------------------------------------
+    //
+    // A filter that is present is not the same as one that works. rustic matches
+    // filter-hosts against each snapshot's recorded hostname exactly, so a filter naming
+    // anything else selects nothing and retention silently never runs.
+
+    #[test]
+    fn a_filter_naming_this_host_is_accepted() {
+        let dir = profile_with(
+            "[snapshot-filter]\nfilter-hosts = [\"host-a\"]\n\n[forget]\ngroup-by = \"host\"\n",
+        );
+        assert!(check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a").is_empty());
+    }
+
+    #[test]
+    fn a_filter_naming_only_other_hosts_is_refused() {
+        let dir = profile_with(
+            "[snapshot-filter]\nfilter-hosts = [\"host-b\"]\n\n[forget]\ngroup-by = \"host\"\n",
+        );
+        let v = check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a");
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(locations(&v).contains(&"jobs.j.profile"));
+    }
+
+    #[test]
+    fn a_filter_listing_this_host_among_others_is_accepted() {
+        // Scoping to several hosts deliberately is legitimate, as long as this one is in it.
+        let dir = profile_with(
+            "[snapshot-filter]\nfilter-hosts = [\"host-b\", \"host-a\"]\n\n[forget]\ngroup-by = \"host\"\n",
+        );
+        assert!(check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a").is_empty());
+    }
+
+    #[test]
+    fn a_short_hostname_against_a_dotted_host_is_refused_and_explained() {
+        // The exact shape `.chezmoi.hostname` produces: correct-looking, matches nothing.
+        let dir = profile_with(
+            "[snapshot-filter]\nfilter-hosts = [\"host-e\"]\n\n[forget]\ngroup-by = \"host\"\n",
+        );
+        let v = check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-e.local");
+        assert_eq!(v.len(), 1, "a short form must not be accepted: {v:?}");
+        let msg = format!("{:?}", v[0]);
+        assert!(
+            msg.contains("fqdnHostname"),
+            "the cause must be named: {msg}"
+        );
+    }
+
+    #[test]
+    fn the_short_form_hint_is_only_given_when_it_applies() {
+        // An unrelated hostname is a different mistake and must not be blamed on chezmoi.
+        let dir = profile_with(
+            "[snapshot-filter]\nfilter-hosts = [\"something-else\"]\n\n[forget]\ngroup-by = \"host\"\n",
+        );
+        let v = check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a");
+        let msg = format!("{:?}", v[0]);
+        assert!(!msg.contains("fqdnHostname"), "{msg}");
+    }
+
+    #[test]
+    fn an_absent_filter_is_left_to_the_scoping_check() {
+        // "no filter at all" is check_forget_is_scoped's error to report, not this one's.
+        let dir = profile_with("[forget]\ngroup-by = \"host\"\n");
+        assert!(check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a").is_empty());
+    }
+
+    #[test]
+    fn a_backup_only_job_is_not_checked() {
+        // filter-hosts scopes snapshot selection; a backup does not select snapshots.
+        let dir = profile_with(
+            "[snapshot-filter]\nfilter-hosts = [\"host-b\"]\n\n[forget]\ngroup-by = \"host\"\n",
+        );
+        let backup_only = "
+schema: 1
+jobs:
+  j:
+    profile: p
+    operations: [backup]
+";
+        assert!(check_filter_hosts_can_match(&parse(backup_only), dir.path(), "host-a").is_empty());
     }
 
     #[test]

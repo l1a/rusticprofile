@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.3)
+## Current State (v0.1.4)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -334,6 +334,49 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.4 — refuse a `filter-hosts` that cannot match this host (unreleased)
+
+**Found by asking whether the fleet rollout was ready. It was not, and the reason was a bug
+in the chezmoi template written the same day.**
+
+`.chezmoi.hostname` is the hostname *up to the first `.`*. Templated into `filter-hosts` it
+renders `["foo"]` on a machine whose snapshots rustic records as `foo.local` — and rustic
+matches that field **exactly**, so the filter selects nothing, `forget` deletes nothing, and
+retention silently never runs while every command reports success. That is bug #1 from
+`PLAN.md` §2.1, reintroduced.
+
+It was invisible on the host it was written on: `arrakis` has no domain suffix, so
+`.chezmoi.hostname` and `.chezmoi.fqdnHostname` are identical there. Two of the seven hosts
+are `*.local`, and neither is rolled out yet — the template would have failed only on the
+machines nobody was looking at.
+
+**The template is fixed** (`.chezmoi.fqdnHostname`, with a comment saying why). **More
+importantly, so is the reason it was possible.** `check_filter_hosts_can_match` refuses at
+load time any profile whose `filter-hosts` does not include the host that will run it:
+
+```
+jobs.j.profile: …/p.toml scopes `forget` to `chani`, which does not include this host
+  (`chani.local`) — that looks like a short hostname where the full one is needed; rustic
+  matches the recorded name exactly, so `chezmoi`'s `.chezmoi.hostname` must become
+  `.chezmoi.fqdnHostname` here. …retention would silently never run
+```
+
+The short-form hint is only emitted when the configured name is genuinely a prefix, so an
+unrelated hostname is not misdiagnosed as a chezmoi problem.
+
+**Matching here is deliberately exact, unlike `enabled-on-hosts`.** rusticprofile's own host
+gate accepts a short name for a dotted host; `filter-hosts` is matched by *rustic*, which is
+not lenient. Being generous would defeat the check. That asymmetry is now asserted by a test
+and spelled out in the fixture that exposed it.
+
+**A previously green check was hiding this class entirely.** `check_forget_is_scoped` asks
+whether a scoping filter is *present*. It never asked whether it could *match*. A filter
+naming a host that does not exist passed validation with exit 0.
+
+**Two test fixtures had to learn the difference**, which is itself the evidence the rule
+bites: `schedule` and `run` resolve the hostname themselves and have no `--as-host`, so their
+integration fixture now substitutes the real hostname into `filter-hosts`.
 
 ### v0.1.3 — correct the lock finding: rustic is not deficient, the mixture is (unreleased)
 
