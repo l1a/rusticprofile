@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.23)
+## Current State (v0.1.24)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,44 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.24 — name the version skew, and refresh a stale README
+
+**Two loose ends from the gimli incident.**
+
+**The error now names the running version.** Unknown keys and variables stay hard errors —
+that rule caught a config block in the predecessor which had silently never taken effect
+(§2.2). But there is a second cause the message could not distinguish: `jobs.yaml` is
+designed to be byte-identical across a fleet, which makes it **only ever as new as the
+oldest binary reading it**. Pushing a config using a newer key stops backups on every host
+still on an older build, at its next scheduled run, with nothing to say why.
+
+That happened on 2026-08-03: `${state_dir}` reached a host three versions behind, and its
+hourly backup failed from then on. The failure was correct; the **diagnosis** was missing.
+
+```
+unknown variable `${state_dir}`; valid names are … If this configuration is shared between
+machines, it may use a variable added after rusticprofile 0.1.23 — compare
+`rusticprofile --version` across hosts
+```
+
+Applied to both shapes a skew takes: an unknown `${variable}`, and serde's `unknown field`
+for a key. No check is weakened — one line is added to an error that already fired.
+
+**The README had gone stale**, and the audit was done by comparing it against the binary
+rather than against memory:
+
+- Status said "Milestones 1 and 2 complete". **M5 is complete too**, and observability —
+  the whole of it — appeared nowhere.
+- *What it does* listed nothing about the run log, the status file, or `--json`.
+- The configuration sketch predated `default-job` and still showed no `log:` at all.
+- Nothing warned that a shared `jobs.yaml` is as new as the oldest binary — now an
+  `[!IMPORTANT]` block, since that is the failure most likely to bite someone else.
+- `just install` promised "completions for six shells" without mentioning that **zsh
+  usually will not load them** without an `fpath` entry.
+
+Every command in the README was checked against `--help` output; all seven exist and the
+block now shows `run --json` and the `default-job` fallback.
 
 ### v0.1.23 — M5 complete: `--json`
 

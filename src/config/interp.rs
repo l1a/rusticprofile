@@ -97,12 +97,16 @@ impl fmt::Display for InterpError {
         match self {
             InterpError::UnknownVariable(name) => write!(
                 f,
-                "unknown variable `${{{name}}}`; valid names are {}, ${{env:NAME}} and ${{date:FORMAT}}",
+                "unknown variable `${{{name}}}`; valid names are {}, ${{env:NAME}} and \
+                 ${{date:FORMAT}}. If this configuration is shared between machines, it may \
+                 use a variable added after rusticprofile {} — compare `rusticprofile \
+                 --version` across hosts",
                 SIMPLE_VARIABLES
                     .iter()
                     .map(|v| format!("${{{v}}}"))
                     .collect::<Vec<_>>()
-                    .join(", ")
+                    .join(", "),
+                env!("CARGO_PKG_VERSION")
             ),
             InterpError::UnsetEnv(name) => write!(
                 f,

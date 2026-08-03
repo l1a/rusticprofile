@@ -8,7 +8,7 @@ A local, per-machine scheduler and orchestrator for [rustic](https://rustic.cli.
 
 ## Status
 
-**Milestones 1 and 2 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — and schedule itself with systemd.
+**Milestones 1, 2 and 5 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — schedule itself with systemd, and **report what it has been doing**: a per-run log, a status file recording when each job last *succeeded*, and `--json` for anything automated.
 
 **Linux only in practice.** Everything but `schedule` works anywhere; scheduling needs systemd, and macOS launchd is the next milestone. See *What it does not do yet* below, which you should read before pointing several machines at one repository.
 
@@ -24,15 +24,16 @@ rusticprofile plan -n dot-files                      # the exact rustic argv, wi
 rusticprofile plan                                   # ...or omit -n to use defaults.default-job
 rusticprofile plan -n dot-files --format lines       # one argv element per line
 rusticprofile plan -n dot-files --show-env           # ...plus the environment, secrets masked
-rusticprofile run -n dot-files --dry-run            # what a run would do, writing nothing
-rusticprofile run -n dot-files                      # actually run it
+rusticprofile run -n dot-files --dry-run             # what a run would do, writing nothing
+rusticprofile run -n dot-files                       # actually run it
+rusticprofile run -n dot-files --json                # ...reporting as JSON, for a wrapper
 
-rusticprofile schedule -n dot-files                 # install and arm a systemd timer
-rusticprofile schedule -n dot-files --write-only    # install it inert, to read first
-rusticprofile status                                # what is scheduled here, plus last run / last success
-rusticprofile status --json                         # ...for a monitor; alert on last_success
-rusticprofile snapshots -n dot-files                # list snapshots (read-only passthrough to rustic)
-rusticprofile unschedule -n dot-files               # remove the units
+rusticprofile schedule -n dot-files                  # install and arm a systemd timer
+rusticprofile schedule -n dot-files --write-only     # install it inert, to read first
+rusticprofile status                                 # what is scheduled here, plus last run / last success
+rusticprofile status --json                          # ...for a monitor; alert on last_success
+rusticprofile snapshots -n dot-files                 # list snapshots (read-only passthrough to rustic)
+rusticprofile unschedule -n dot-files                # remove the units
 ```
 
 `schedule` and `unschedule` are each a single step, and each fully undoes the other. A job becomes **two** systemd units — a `.timer` and the `.service` it activates — because systemd has no way for a timer to run a command directly; that is true of every tool that schedules with systemd. Only the timer is enable-able: the service is `static`, so it cannot be armed on its own and run outside its schedule.
@@ -48,6 +49,10 @@ rusticprofile owns **when** backups run, **which** jobs exist, and **on which ho
 - operation sequencing within a job (backup, then forget)
 - exit classification, including telling a partial backup apart from a failed one
 - refusing configurations that would quietly do less than they say
+- **recording what happened**: a per-run log, and a status file whose `last_success`
+  survives a failed run — the one field that reveals a job which has quietly stopped
+  working, since a schedule can be armed and green while every run fails
+- **`--json`** on `run` and `status`, so a monitor never has to match English
 
 ## What it does not do *yet*
 
@@ -140,6 +145,9 @@ Placeholders (`host-a`, `/home/user`) are static and deliberately not filled in 
 # ~/.config/rusticprofile/jobs.yaml
 schema: 1
 
+defaults:
+  default-job: dot-files            # used when a command is given no -n
+
 jobs:
   dot-files:
     profile: dot-files              # -> rustic -P dot-files
@@ -152,9 +160,17 @@ jobs:
       at: hourly
       permission: user
       priority: background
+    log: "${state_dir}/${job}-${date:%Y-%m-%d}.log"
 ```
 
 Note what is *not* in there: no source paths, no excludes, no retention numbers, no repository. Those live in `rustic.toml`.
+
+`${state_dir}` is `$XDG_STATE_HOME/rusticprofile` — logs are state, not configuration. Pointing them at `${config_dir}` is also self-defeating if `~/.config` is one of your backup sources: the job then appends to a directory it is busy backing up.
+
+**`default-job` is honoured by `run`, `plan`, `snapshots` and `config --show`** — not by `unschedule`, where removal is always named explicitly, nor by `schedule`, where omitting `-n` already means "every job that declares a schedule".
+
+> [!IMPORTANT]
+> `jobs.yaml` is designed to be **byte-identical across a fleet**, which makes it only ever as new as the *oldest binary* reading it. Unknown keys and variables are hard errors by design, so a config using `${state_dir}` (0.1.15+) or `default-job` (0.1.20+) will not load on an older build — and that host stops backing up at its next scheduled run. **Upgrade the binaries before pushing the config.**
 
 ## Installation
 
@@ -165,6 +181,8 @@ just install       # binary + man page + completions for six shells
 ```
 
 Requires [just](https://github.com/casey/just) and, for the man page, [mandown](https://crates.io/crates/mandown).
+
+`install-completions` tells you whether each shell will actually load them. **zsh is the one that usually will not**: unlike fish and bash-completion, it reads no user directory unless `fpath` names it, so the recipe checks and prints the `fpath+=(…)` line to add rather than claiming success.
 
 ## Development
 
