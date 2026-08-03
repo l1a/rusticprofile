@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.15)
+## Current State (v0.1.16)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -346,6 +346,35 @@ and were renumbered in place. No tags existed, so nothing had to be unwound — 
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
 
+### v0.1.16 — correct the log-path claim
+
+`v0.1.15` moved logs to `$XDG_STATE_HOME` and justified it with a hazard stated in the past
+tense: that the job "appended to a directory it was in the middle of backing up". **It never
+did.**
+
+`rusticprofile` writes no log file. `job.log` is parsed, validated and *displayed* by
+`config --show`; nothing opens it. Log targets are **M5**, unimplemented. The proof is that
+`~/.config/rusticprofile/logs` does not exist and never did.
+
+The exclusion cited as evidence —
+
+```toml
+"!**/.config/rusticprofile/logs",
+"!**/.config/resticprofile/logs",
+```
+
+— is real, but the line that was *earning its keep* is the **predecessor's**. resticprofile
+does write logs, 904 KB of them. The rusticprofile line was pre-emptive.
+
+**The change itself was right and stays.** The declared path was in the wrong XDG category
+and would have written into a live backup source the moment M5 landed. Fixing it before any
+log exists cost nothing and left nothing to migrate — which is the useful part of the error,
+not a defence of it.
+
+Corrected here rather than edited away, per the `v0.0.12` precedent: the mistake was reading
+a config file's *intent* as evidence of behaviour, without checking whether the code that
+would produce that behaviour had been written.
+
 ### v0.1.15 — logs are state, not configuration
 
 **`${state_dir}` is new, and the shipped example's `log:` now uses it.**
@@ -355,9 +384,17 @@ XDG Base Directory specification names logs as the example of what **`XDG_STATE_
 for — "data that should persist between restarts but is not important enough to be in
 `XDG_DATA_HOME`". Config is for configuration.
 
-**It was not merely untidy.** On this fleet `~/.config` is a backup source, so the job
-appended to a directory it was in the middle of backing up — and the rustic profile carried
-an exclusion to compensate:
+**Part of this entry was wrong; see `v0.1.16`.** The hazard below was *prospective*, not
+observed: rusticprofile writes no log file at all yet (that is M5), so it had never appended
+to anything. The exclusion quoted is the **predecessor's** doing — resticprofile does write
+logs, 904 KB of them, into `~/.config/resticprofile/logs`.
+
+The path was still in the wrong XDG category and would have bitten the moment M5 landed, so
+the change stands. Only the claim that it had already happened was untrue.
+
+**Why it would have mattered.** On this fleet `~/.config` is a backup source, so a job
+logging there appends to a directory it is in the middle of backing up — and the rustic
+profile carries an exclusion for exactly that reason:
 
 ```toml
 # Scheduled-run logs are written into .config while .config is being backed up.
