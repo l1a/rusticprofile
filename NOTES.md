@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.12)
+## Current State (v0.1.13)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,48 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.13 — help where help belongs, and completions that actually load
+
+Three complaints, three different causes.
+
+**A bare `rusticprofile` printed a two-line error instead of help** — and the error had gone
+false: *"rusticprofile cannot run jobs yet"*, written during M1 and still there long after
+it could. `arg_required_else_help` now prints help at parse time, like every other CLI.
+It still exits **2**, not 0: a silent success from a bare invocation is exactly what a
+systemd unit or wrapper script would believe.
+
+**`config` with no mode printed grammar rather than guidance:**
+
+```
+error: the following required arguments were not provided:
+  <--check|--show|--example <WHAT>>
+```
+
+That names the *shape of the constraint*. It now prints the subcommand's own help, which
+answers the question actually being asked — "what can `config` do?" The `ArgGroup` is kept,
+so `--check --show` together is still rejected.
+
+**Tab completion never worked in zsh, for a reason that had nothing to do with the
+completion.** `just install-completions` wrote `_rusticprofile` into
+`~/.local/share/zsh/site-functions` and printed *"zsh auto-loaded from …"*. **zsh reads no
+user directory unless `fpath` names it**, and that one is not on `fpath` by default on any
+distribution. The file was written, never read, and the recipe claimed success — so
+`rusticprofile config --<tab>` produced nothing, with no indication why.
+
+zsh is the odd one out: fish auto-loads `~/.config/fish/completions` and bash-completion 2.x
+auto-loads `~/.local/share/bash-completion/completions`. zsh has **no standard user path**,
+only conventions — `site-functions`, `~/.zfunc`, `~/.zsh/completions` — none of them
+privileged.
+
+`install-completions` now **checks `fpath` and says so** when the directory is not on it,
+printing the exact `fpath+=(…)` line needed. It also notes that shell aliases do not inherit
+completions, with the one-liner per shell (`compdef rp=rusticprofile` and friends) — the
+`rp` alias was the reported symptom, though not the cause.
+
+Two tests pin the new behaviour at parse time rather than by scraping output: a bare
+invocation and a bare `config` both produce
+`ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand`.
 
 ### v0.1.12 — `--as-host` stops reporting a defect it cannot see
 

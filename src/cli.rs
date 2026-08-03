@@ -28,7 +28,16 @@ pub enum CompletionShell {
 
 /// A local, per-machine scheduler and orchestrator for rustic backups.
 #[derive(Parser, Debug)]
-#[command(name = "rusticprofile", version, about, long_about = None)]
+#[command(
+    name = "rusticprofile",
+    version,
+    about,
+    long_about = None,
+    // A bare invocation prints help, like every other CLI. It used to print a two-line
+    // error that told the reader almost nothing and, by the end, was actively false — it
+    // claimed the tool "cannot run jobs yet" long after it could.
+    arg_required_else_help = true
+)]
 pub struct Cli {
     /// Generate a shell completion script and write it to stdout
     #[arg(long, value_name = "SHELL", value_enum, global = true)]
@@ -193,9 +202,16 @@ pub struct PlanArgs {
 }
 
 #[derive(Args, Debug)]
-#[command(group(
-    clap::ArgGroup::new("mode").required(true).args(["check", "show", "example"])
-))]
+#[command(
+    // `config` alone printed clap's group error:
+    //     error: the following required arguments were not provided:
+    //       <--check|--show|--example <WHAT>>
+    // That is grammar, not guidance — it names the shape of the constraint rather than
+    // what to do. Showing the subcommand's help answers the question the user actually
+    // asked, which is "what can config do?".
+    arg_required_else_help = true,
+    group(clap::ArgGroup::new("mode").required(true).args(["check", "show", "example"]))
+)]
 pub struct ConfigArgs {
     /// Validate the configuration, reporting every problem at once
     #[arg(long)]
@@ -261,10 +277,30 @@ mod tests {
     }
 
     #[test]
-    fn no_arguments_is_valid() {
-        let cli = Cli::try_parse_from(["rusticprofile"]).expect("bare invocation should parse");
-        assert!(cli.completions.is_none());
-        assert!(cli.command.is_none());
+    fn a_bare_invocation_asks_clap_for_help() {
+        // `arg_required_else_help` makes this a parse-time outcome rather than something
+        // dispatch has to handle. It must still not look like success: clap reports
+        // `DisplayHelpOnMissingArgumentOrSubcommand`, which exits 2.
+        let err = Cli::try_parse_from(["rusticprofile"])
+            .expect_err("a bare invocation should not parse to a runnable command");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+        assert!(err.to_string().contains("Usage:"), "{err}");
+    }
+
+    #[test]
+    fn config_without_a_mode_shows_its_own_help() {
+        // Previously clap's group error: "the following required arguments were not
+        // provided: <--check|--show|--example <WHAT>>". That is grammar, not guidance.
+        let err = Cli::try_parse_from(["rusticprofile", "config"])
+            .expect_err("`config` alone should not parse");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+        assert!(err.to_string().contains("--check"), "{err}");
     }
 
     #[test]
