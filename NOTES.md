@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.16)
+## Current State (v0.1.17)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,56 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.17 — M5 begins: `log:` finally writes something
+
+**`log:` was the tool's own failure mode.** It was parsed, interpolated and validated — a
+relative path rejected, a malformed `${date:…}` rejected — then *displayed by*
+`config --show` as though it were in use, while nothing ever opened it. `cli.rs` opens by
+declaring that "a flag that parses and then does nothing is the same silent no-op this
+project is built to avoid". This was one, in the configuration surface, for fifteen versions.
+
+`run` now appends a record per run. Verified end to end against real rustic:
+
+```
+2026-08-03T14:34:41-07:00 partial j on host-a
+  backup   partial  backup saved 1 of 2 snapshot sets and then failed (exit 1); continuing
+                    so retention still runs (0.308s)
+    -> rustic -P …/p.toml backup --json --name good --name broken
+  forget   success  forget succeeded (0.300s)
+    -> rustic -P …/p.toml forget
+```
+
+and, on a backup that saved nothing:
+
+```
+  backup   failure  backup saved nothing (exit 1) (0.302s)
+  forget   skipped  did not run, because an earlier operation stopped the job
+```
+
+**That second block is the point.** "Retention did not run" is the single most important
+thing to be able to find afterwards, and an absence in a list does not say it. The log
+states it, the same way the terminal report does.
+
+Four decisions, each with a test:
+
+- **Append, never truncate** (`O_APPEND`), so two runs racing on one file interleave whole
+  writes. Rotation is `${date:…}` in the path, which is why it resolves per run.
+- **`run` supplies a clock; nothing else does.** One `Zoned::now()` for the whole run, so
+  the file `${date:…}` selects and the timestamp inside it cannot disagree across midnight.
+  Inspection commands still leave `${date:…}` unresolved — baking today's date into a
+  generated unit would freeze it at install time.
+- **Plain text, no ANSI.** `report.rs` writes for a terminal; escape sequences are noise to
+  `grep`. Rendered separately rather than stripped back out.
+- **A failed write never changes the exit code.** The backup already happened; failing it
+  over a log line would be a lie in the more dangerous direction, and a systemd unit would
+  act on it. The warning goes to stderr, where the journal catches it.
+
+The parent directory is created on demand, since `$XDG_STATE_HOME/rusticprofile` does not
+exist on a fresh machine and failing a first scheduled run over a directory nobody was told
+to create is a poor introduction.
+
+Still to come in M5: a status file and `--json`.
 
 ### v0.1.16 — correct the log-path claim
 

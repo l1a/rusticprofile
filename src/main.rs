@@ -105,6 +105,20 @@ fn load_config(
     as_host: Option<String>,
     rustic_binary: Option<String>,
 ) -> Result<(Config, std::path::PathBuf), ExitCode> {
+    load_config_at(path, as_host, rustic_binary, None)
+}
+
+/// As [`load_config`], with a clock for `${date:…}`.
+///
+/// Only `run` supplies one. Everything else inspects what is *stored*, and the stored form
+/// is what a generated unit carries — baking today's date into a unit file would freeze it
+/// at install time, which is the whole reason resolution is deferred.
+fn load_config_at(
+    path: Option<std::path::PathBuf>,
+    as_host: Option<String>,
+    rustic_binary: Option<String>,
+    now: Option<jiff::Zoned>,
+) -> Result<(Config, std::path::PathBuf), ExitCode> {
     let path = match path {
         Some(p) => p,
         None => config::paths::default_jobs_file().map_err(|e| {
@@ -116,7 +130,7 @@ fn load_config(
     let mut config = config::load(&LoadOptions {
         path: path.clone(),
         as_host,
-        now: None,
+        now,
     })
     .map_err(|errors| {
         eprint!("{} {errors}", "error:".red().bold());
@@ -580,10 +594,14 @@ fn show_status(args: &StatusArgs) -> ExitCode {
 }
 
 fn run_job(args: &RunArgs) -> ExitCode {
-    let (config, _path) = match load_config(
+    // One clock for the whole run, so the file `${date:…}` selects and the timestamp
+    // written inside it cannot disagree across midnight.
+    let now = jiff::Zoned::now();
+    let (config, _path) = match load_config_at(
         args.config.clone(),
         args.as_host.clone(),
         args.rustic_binary.clone(),
+        Some(now.clone()),
     ) {
         Ok(v) => v,
         Err(code) => return code,
@@ -612,7 +630,29 @@ fn run_job(args: &RunArgs) -> ExitCode {
         &lock,
     );
     rusticprofile::report::print_job(&report);
+    write_run_log(job, &report, &now);
     ExitCode::from(report.exit_code())
+}
+
+/// Append this run to the job's log, if it declares one.
+///
+/// **A failed write never changes the exit code.** The backup already happened; reporting
+/// it as failed because a log line could not be written would be a lie in the more
+/// dangerous direction, and a systemd unit would act on it. The warning goes to stderr,
+/// where the journal catches it.
+fn write_run_log(
+    job: &rusticprofile::config::job::Job,
+    report: &rusticprofile::run::steps::JobReport,
+    now: &jiff::Zoned,
+) {
+    let Some(path) = &job.log else { return };
+    let record = rusticprofile::run::log::render(report, now);
+    if let Err(e) = rusticprofile::run::log::append(std::path::Path::new(path), &record) {
+        eprintln!(
+            "{} {e}. The run itself is unaffected — see the summary above.",
+            "warning:".yellow().bold()
+        );
+    }
 }
 
 /// Print the rustic-related environment the run would inherit.
