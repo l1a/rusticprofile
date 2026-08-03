@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.6" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.7" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -14,7 +14,7 @@ rusticprofile \- a local, per\-machine scheduler and orchestrator for rustic bac
 .PP
 \fBrusticprofile run\fP \fB\-n\fP \fIJOB\fP [\fB\-\-dry\-run\fP] [\fB\-\-rustic\-binary\fP \fIPATH\fP] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
 .PP
-\fBrusticprofile schedule\fP [\fB\-n\fP \fIJOB\fP] [\fB\-\-enable\fP] [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
+\fBrusticprofile schedule\fP [\fB\-n\fP \fIJOB\fP] [\fB\-\-write\-only\fP] [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
 .PP
 \fBrusticprofile unschedule\fP \fB\-n\fP \fIJOB\fP [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
 .PP
@@ -107,17 +107,22 @@ Exit status is \fB0\fP for success or partial, \fB1\fP for failure, \fB130\fP fo
 
 .SH "SCHEDULE"
 .PP
-\fBschedule\fP writes a systemd service and timer for a job; \fBunschedule\fP removes them; \fBstatus\fP reports what is installed on this host and what is deliberately not\.
+\fBschedule\fP writes a systemd service and timer for a job and arms the timer; \fBunschedule\fP disables and removes them\. Each is a single step and each fully undoes the other\. \fBstatus\fP reports what is installed on this host and what is deliberately not\.
 \fB\-n\fP \fIJOB\fP
 .RS
+.PP
 The job to act on\. Optional for \fBschedule\fP, where omitting it installs units for every job declaring a `\f[CR]schedule:\fP` block\. Required for \fBunschedule\fP \-\- removal is always named explicitly\.
 .RE
-\fB\-\-enable\fP
+\fB\-\-write\-only\fP
 .RS
-Also enable and start the timer\. \fBWriting units and activating them are deliberately separate\.\fP Installing a unit is inert; starting a timer adds another writer to a repository that may be shared with other machines, and that should be something you asked for rather than a side effect\.
+.PP
+Write the units without arming the timer\. `\f[CR]schedule\fP` arms it by default \-\- that is what the verb means, and \fBunschedule\fP is a single step that fully undoes it\. Use this to inspect the generated units before anything can fire\.
+.PP
+A scheduled job is \fBtwo\fP units: a `\f[CR]\.timer\fP` and the `\f[CR]\.service\fP` it activates\. systemd offers no way for a timer to run a command directly, so this is not a choice rusticprofile makes\. Only the timer carries an `\f[CR][Install]\fP` section; the service is reported by systemd as `\f[CR]static\fP`, meaning it can be started by its timer and not enabled independently \-\- a service that could be enabled on its own would run the backup at every login, with no schedule to explain it\.
 .RE
 \fB\-\-unit\-dir\fP \fIDIR\fP
 .RS
+.PP
 Write or read units in \fIDIR\fP instead of the systemd user directory\. Intended for inspecting generated units without installing them; `\f[CR]systemctl\fP` is not invoked when this is given\.
 .RE
 .PP

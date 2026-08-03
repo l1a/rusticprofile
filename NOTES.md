@@ -72,13 +72,21 @@ costs real complexity in the publish recipes.
   installed by `just install-hooks`, runs `just check` before every push regardless of what
   invoked it. Prefer this pattern over anything under `.claude/`, which only binds one
   vendor's tool and is invisible to everyone else.
-- **Version bump on every PR**, and **stay in the `0.0.x` series until Milestone 1 delivers a
-  working tool.** `v0.1.0` is reserved for that milestone — the first version that can actually
-  run a backup end to end. Until then every bump is a patch bump regardless of how much it
-  adds, so `0.0.3`, `0.0.4` and so on; the sibling repos' "minor for features" rule resumes
-  only after `v0.1.0`. Publishing a `0.1.0` that cannot back anything up would misrepresent
-  what the tool does to anyone reading the version alone. Tag `v$VERSION` from a clean `main`;
-  never `cargo publish --allow-dirty`.
+- **Version bump on every PR, and it is a patch bump.** `0.0.x` ran until Milestone 1
+  delivered a tool that could actually run a backup; `v0.1.0` was reserved for that and is
+  now released. **From `v0.1.0` until `v1.0.0`, every PR is a patch bump** — `0.1.7`,
+  `0.1.8`, and so on — regardless of how much it adds or changes. This supersedes the
+  sibling repos' "minor for features" rule, which does not apply here.
+
+  **A minor bump means the library API broke, or a milestone landed.** Not a new feature, and
+  not a CLI change. The precedent is `0.1.7`: `schedule` flipped to arming the timer by
+  default and `--enable` was *removed* from a crate already published to crates.io, and that
+  is still a patch bump. Nothing links against rusticprofile, and a removed flag fails loudly
+  at parse time rather than quietly changing what a command does — so it costs a user a clear
+  error, not a silent surprise. The CLI is expected to move before 1.0; say so in the release
+  entry rather than in the version number.
+
+  Tag `v$VERSION` from a clean `main`; never `cargo publish --allow-dirty`.
 - **Deliberate absences.** No `rustfmt.toml`, `clippy.toml`, `deny.toml`,
   `rust-toolchain.toml`, MSRV declaration, `[lints]` table, `#![deny(...)]` or
   `CHANGELOG.md`. Their absence is the convention — do not add them.
@@ -94,7 +102,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.6)
+## Current State (v0.1.7)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -361,6 +369,49 @@ class that matters had shipped one in its own packaging recipes.
 Lowercase rather than dropping the flag: this repository is public, and on a machine without
 an fcontext rule pinning the tree to `container_file_t`, `$HOME` is `user_home_t`, which
 `container_t` cannot read at all. `z` is correct everywhere; no flag is correct only here.
+
+### v0.1.7 — `schedule` is one step, and the service unit is `static` (unreleased)
+
+**`--enable` is gone and `schedule` now arms the timer by default.** Both changes came from
+a question about why rusticprofile needs a timer *and* a service.
+
+**It does not — and neither does the predecessor.** systemd has no way for a `.timer` to run
+a command; a timer exists only to activate a `.service`. Every tool that schedules with
+systemd installs two units per job, resticprofile included — `resticprofile-backup@profile-*.service`
+and `.timer` sit side by side on the same machines. That part was a misconception, not a
+defect.
+
+But asking the question surfaced two real things.
+
+**Our service unit was wrong, and the predecessor's was right.** Ours carried
+`[Install] WantedBy=default.target`, so systemd reported it as `disabled` rather than
+`static` — which reads as an invitation. `systemctl --user enable rusticprofile-<job>.service`
+would have run a backup at every login, forever, with no timer involved and no schedule to
+explain it. The `[Install]` section is gone; only the timer has one now, and systemd reports
+the service as `static`: activatable by its timer and by nothing else.
+
+**`schedule` was two steps while `unschedule` was one.** `unschedule` already disables,
+removes and reloads in a single command. `schedule` wrote inert units unless given
+`--enable`. That asymmetry was a migration guard — "don't quietly add a second writer to a
+shared repository" — and the reasoning does not survive: running `schedule` *is* deliberate,
+it is not a side effect, and **a command that reports success while scheduling nothing is the
+silent no-op this project exists to prevent.**
+
+So `schedule` arms the timer, and `--write-only` keeps the inspect-first path. `--enable` is
+removed rather than accepted-and-ignored: clap's `unexpected argument` is loud, and a flag
+that silently does nothing is exactly the failure mode being fixed. Writing to a custom
+`--unit-dir` still never arms anything — that is an inspection target, not a place systemd
+reads.
+
+Stays in the `0.1.x` chain, and **§3's versioning rule is rewritten to say so.** It claimed
+the sibling repos' "minor for features" convention resumed after `v0.1.0`, which would have
+made this `0.2.0`. It does not apply here: every PR from `v0.1.0` to `v1.0.0` is a patch
+bump, and a minor bump is reserved for a broken library API or a landed milestone. This
+release is the precedent — a flag *removed* from a published crate, still a patch — because
+nothing links against rusticprofile and a removed flag fails loudly at parse time rather
+than quietly changing what a command does.
+
+202 tests, up from 198.
 
 ### v0.1.5 — fix a fixture that lied on CI, and stop `merge-pr` merging red (unreleased)
 

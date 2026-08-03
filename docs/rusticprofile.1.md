@@ -12,7 +12,7 @@ rusticprofile - a local, per-machine scheduler and orchestrator for rustic backu
 
 **rusticprofile run** **-n** *JOB* [**--dry-run**] [**--rustic-binary** *PATH*] [**--as-host** *HOST*] [**--config** *PATH*]
 
-**rusticprofile schedule** [**-n** *JOB*] [**--enable**] [**--config** *PATH*] [**--unit-dir** *DIR*]
+**rusticprofile schedule** [**-n** *JOB*] [**--write-only**] [**--config** *PATH*] [**--unit-dir** *DIR*]
 
 **rusticprofile unschedule** **-n** *JOB* [**--config** *PATH*] [**--unit-dir** *DIR*]
 
@@ -89,13 +89,15 @@ Exit status is **0** for success or partial, **1** for failure, **130** for inte
 
 # SCHEDULE
 
-**schedule** writes a systemd service and timer for a job; **unschedule** removes them; **status** reports what is installed on this host and what is deliberately not.
+**schedule** writes a systemd service and timer for a job and arms the timer; **unschedule** disables and removes them. Each is a single step and each fully undoes the other. **status** reports what is installed on this host and what is deliberately not.
 
 **-n** *JOB*
 :   The job to act on. Optional for **schedule**, where omitting it installs units for every job declaring a `schedule:` block. Required for **unschedule** — removal is always named explicitly.
 
-**--enable**
-:   Also enable and start the timer. **Writing units and activating them are deliberately separate.** Installing a unit is inert; starting a timer adds another writer to a repository that may be shared with other machines, and that should be something you asked for rather than a side effect.
+**--write-only**
+:   Write the units without arming the timer. `schedule` arms it by default — that is what the verb means, and **unschedule** is a single step that fully undoes it. Use this to inspect the generated units before anything can fire.
+
+    A scheduled job is **two** units: a `.timer` and the `.service` it activates. systemd offers no way for a timer to run a command directly, so this is not a choice rusticprofile makes. Only the timer carries an `[Install]` section; the service is reported by systemd as `static`, meaning it can be started by its timer and not enabled independently — a service that could be enabled on its own would run the backup at every login, with no schedule to explain it.
 
 **--unit-dir** *DIR*
 :   Write or read units in *DIR* instead of the systemd user directory. Intended for inspecting generated units without installing them; `systemctl` is not invoked when this is given.

@@ -349,7 +349,11 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
         );
     }
 
-    if args.enable {
+    // Arming is the default: `schedule` means "make this run on a schedule", and
+    // `unschedule` is a single step that fully undoes it. `--write-only` keeps the
+    // inspect-first path. Skipped entirely when writing to a custom `--unit-dir`, which is
+    // an inspection target rather than a place systemd reads.
+    if !args.write_only && args.unit_dir.is_none() {
         for job in &selected {
             let permission = job
                 .schedule
@@ -380,7 +384,7 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
             "  {} units are installed but not enabled. Run `rusticprofile status` to confirm,",
             "note:".dimmed()
         );
-        println!("        then `schedule --enable` to start the timer when you want it running.");
+        println!("        then `schedule` without `--write-only` to arm the timer.");
     }
 
     let _ = any_written;
