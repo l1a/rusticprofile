@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.5)
+## Current State (v0.1.6)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -334,6 +334,33 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.6 — the AUR recipes were breaking Syncthing (unreleased)
+
+**Tooling only; no code changed. The bug was outside the repository, which is why nothing
+here could have caught it.**
+
+`aur-verify` and `aur-srcinfo` mounted `packaging/aur` with podman's **`:Z`**. Uppercase `Z`
+assigns a *fresh private MCS category pair per container run* and relabels the mount in
+place, so after `just aur-verify` the directory and its three files were left as
+`container_file_t:s0:c238,c656` — categories no other container holds.
+
+This repository lives under a Syncthing folder. Syncthing's own container runs as
+`container_t:s0:c337,c880`, so it could no longer read that directory: `scan: open
+…/packaging/aur: permission denied`, one permanently unsyncable subtree, re-created on every
+run of the recipe. Unix permissions were untouched and looked perfectly normal
+(`drwxr-xr-x`), so only `ls -Z` showed anything.
+
+**The way it presented is the part worth keeping.** The folder reported `state: idle` and
+`needBytes: 0` — indistinguishable from healthy. The failure appeared only as
+`"errors": 1, "pullErrors": 1` in `/rest/db/status`, and the *reason* only at
+`/rest/folder/errors`. A tool built around the idea that silent degradation is the failure
+class that matters had shipped one in its own packaging recipes.
+
+**Fixed to lowercase `:z`** — the shared `container_file_t:s0` label, no categories.
+Lowercase rather than dropping the flag: this repository is public, and on a machine without
+an fcontext rule pinning the tree to `container_file_t`, `$HOME` is `user_home_t`, which
+`container_t` cannot read at all. `z` is correct everywhere; no flag is correct only here.
 
 ### v0.1.5 — fix a fixture that lied on CI, and stop `merge-pr` merging red (unreleased)
 
