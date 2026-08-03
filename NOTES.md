@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.14)
+## Current State (v0.1.15)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,37 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.15 — logs are state, not configuration
+
+**`${state_dir}` is new, and the shipped example's `log:` now uses it.**
+
+Logs were written to `${config_dir}/logs/`, i.e. `$XDG_CONFIG_HOME/rusticprofile/logs`. The
+XDG Base Directory specification names logs as the example of what **`XDG_STATE_HOME`** is
+for — "data that should persist between restarts but is not important enough to be in
+`XDG_DATA_HOME`". Config is for configuration.
+
+**It was not merely untidy.** On this fleet `~/.config` is a backup source, so the job
+appended to a directory it was in the middle of backing up — and the rustic profile carried
+an exclusion to compensate:
+
+```toml
+# Scheduled-run logs are written into .config while .config is being backed up.
+"!**/.config/rusticprofile/logs",
+```
+
+That exclusion existed only because of the wrong location. `~/.local/state` is not a backup
+source, so with the default log path the hazard does not arise and the exclusion is
+unnecessary. It stays in the shipped rustic example as an illustration of the trap rather
+than as a requirement.
+
+`paths::user_state_dir()` resolves `$XDG_STATE_HOME/rusticprofile`, falling back to the local
+data directory on platforms with no state directory — `dirs::state_dir()` is `None` on macOS
+and Windows, which have no equivalent concept.
+
+**Existing configurations are unaffected.** `${config_dir}` still resolves, and a `log:`
+already pointing there keeps working; this changes what the *example* recommends and adds
+the variable that makes the correct choice expressible.
 
 ### v0.1.14 — the completion check was interrogating the wrong shell
 

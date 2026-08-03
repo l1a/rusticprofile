@@ -28,6 +28,7 @@ const SIMPLE_VARIABLES: &[&str] = &[
     "job",
     "profile",
     "config_dir",
+    "state_dir",
     "temp_dir",
     "os",
     "arch",
@@ -61,6 +62,9 @@ pub struct Ctx<'a> {
     /// `None` outside a job, for the same reason as [`Ctx::job`].
     pub profile: Option<&'a str>,
     pub config_dir: &'a Path,
+    /// `$XDG_STATE_HOME/rusticprofile` — where logs belong. Logs are state, not
+    /// configuration; see [`super::paths::user_state_dir`].
+    pub state_dir: &'a Path,
     pub temp_dir: &'a Path,
     pub env: Env<'a>,
     /// Clock for `${date:…}`.
@@ -209,6 +213,7 @@ fn resolve(name: &str, ctx: &Ctx) -> Result<String, InterpError> {
             .map(str::to_string)
             .ok_or_else(|| InterpError::NotAvailableHere("profile".to_string())),
         "config_dir" => Ok(ctx.config_dir.to_string_lossy().into_owned()),
+        "state_dir" => Ok(ctx.state_dir.to_string_lossy().into_owned()),
         "temp_dir" => Ok(ctx.temp_dir.to_string_lossy().into_owned()),
         "os" => Ok(std::env::consts::OS.to_string()),
         "arch" => Ok(std::env::consts::ARCH.to_string()),
@@ -234,6 +239,7 @@ mod tests {
             job: Some("dot-files"),
             profile: Some("dot-files-profile"),
             config_dir: Path::new("/cfg"),
+            state_dir: Path::new("/state"),
             temp_dir: Path::new("/tmp"),
             env: Env::Fixed(env),
             now,
@@ -249,6 +255,7 @@ mod tests {
         assert_eq!(interpolate("${job}", &c).unwrap(), "dot-files");
         assert_eq!(interpolate("${profile}", &c).unwrap(), "dot-files-profile");
         assert_eq!(interpolate("${config_dir}", &c).unwrap(), "/cfg");
+        assert_eq!(interpolate("${state_dir}", &c).unwrap(), "/state");
         assert_eq!(interpolate("${temp_dir}", &c).unwrap(), "/tmp");
         assert_eq!(
             interpolate("${os}", &c).unwrap(),

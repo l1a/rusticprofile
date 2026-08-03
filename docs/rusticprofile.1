@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.14" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.15" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -174,7 +174,7 @@ Anything rusticprofile prints is masked as a backstop\. Masking is by variable n
 .PP
 Strings in the configuration may contain `\f[CR]${\.\.\.}\fP` references\. This is a closed set, not a template language: there are no conditionals, functions, pipelines or loops\. An unrecognised name is an error naming the offending key, never an empty string\.
 .PP
-`\f[CR]${host}\fP`, `\f[CR]${host_short}\fP`, `\f[CR]${job}\fP`, `\f[CR]${profile}\fP`, `\f[CR]${config_dir}\fP`, `\f[CR]${temp_dir}\fP`, `\f[CR]${os}\fP`, `\f[CR]${arch}\fP`, `\f[CR]${env:NAME}\fP` and `\f[CR]${date:FORMAT}\fP` are recognised\. `\f[CR]$${\fP` produces a literal `\f[CR]${\fP`\.
+`\f[CR]${host}\fP`, `\f[CR]${host_short}\fP`, `\f[CR]${job}\fP`, `\f[CR]${profile}\fP`, `\f[CR]${config_dir}\fP`, `\f[CR]${state_dir}\fP`, `\f[CR]${temp_dir}\fP`, `\f[CR]${os}\fP`, `\f[CR]${arch}\fP`, `\f[CR]${env:NAME}\fP` and `\f[CR]${date:FORMAT}\fP` are recognised\. `\f[CR]$${\fP` produces a literal `\f[CR]${\fP`\.
 .PP
 `\f[CR]${job}\fP` and `\f[CR]${profile}\fP` have no value outside a job and are errors there\. `\f[CR]${env:NAME}\fP` is an error when the variable is unset\. `\f[CR]${date:FORMAT}\fP` is validated when the configuration loads but resolved when the job runs, so that a generated unit file carries the reference rather than one day's date\.
 
@@ -206,6 +206,10 @@ Job definitions: which jobs exist, their operations, host gating and schedule\.
 \fB$XDG_CONFIG_HOME/rustic/PROFILE\.toml\fP
 .RS
 rustic's own configuration, which owns all backup detail\. rusticprofile reads it read\-only, to verify that every snapshot\-set name it is about to pass actually exists\.
+.RE
+\fB$XDG_STATE_HOME/rusticprofile/\fP
+.RS
+Where `\f[CR]${state_dir}\fP` points, and where run logs belong\. Logs are \fBstate, not configuration\fP \-\- the XDG Base Directory specification names them as the example of what `\f[CR]XDG_STATE_HOME\fP` is for\. Pointing a `\f[CR]log:\fP` at `\f[CR]${config_dir}\fP` instead is also self\-defeating when `\f[CR]~/\.config\fP` is one of your backup sources: the job then appends to a directory it is in the middle of backing up, and the rustic profile needs an exclusion to compensate\.
 .RE
 
 .SH "SEE ALSO"
