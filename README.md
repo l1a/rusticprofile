@@ -21,6 +21,7 @@ rusticprofile config --check                         # validate; every problem a
 rusticprofile config --check --as-host host-a.local  # another machine's view of the gates
 rusticprofile config --show -n dot-files             # the resolved form of one job
 rusticprofile plan -n dot-files                      # the exact rustic argv, without running it
+rusticprofile plan                                   # ...or omit -n to use defaults.default-job
 rusticprofile plan -n dot-files --format lines       # one argv element per line
 rusticprofile plan -n dot-files --show-env           # ...plus the environment, secrets masked
 rusticprofile run -n dot-files --dry-run            # what a run would do, writing nothing

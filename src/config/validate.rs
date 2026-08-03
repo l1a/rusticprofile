@@ -339,6 +339,37 @@ pub fn check_sources_are_expanded(raw: &RawConfig, rustic_config_dir: &Path) -> 
     out
 }
 
+/// Refuse a `default-job` that names no job.
+///
+/// Checked against the **declared** jobs, not the ones surviving host gating — the same
+/// reasoning as snapshot-set names. A default gated off on this machine is legitimate and
+/// reported as a gate when used; a default that is a *typo* is a mistake on every machine,
+/// and catching it only where the job happens to run would be catching it in the wrong
+/// place.
+pub fn check_default_job_exists(raw: &RawConfig) -> Vec<Violation> {
+    let Some(name) = &raw.defaults.default_job else {
+        return Vec::new();
+    };
+
+    if raw.jobs.contains_key(name) {
+        return Vec::new();
+    }
+
+    let known: Vec<&str> = raw.jobs.keys().map(String::as_str).collect();
+    vec![Violation::new(
+        "defaults.default-job",
+        format!(
+            "`{name}` is not a job in this configuration, so every command that falls back \
+             to it would fail. Defined jobs are {}",
+            if known.is_empty() {
+                "(none)".to_string()
+            } else {
+                known.join(", ")
+            }
+        ),
+    )]
+}
+
 /// Refuse a `filter-hosts` that cannot match the machine it will run on.
 ///
 /// A scoping filter that is *present* is not the same as one that *works*. `filter-hosts`

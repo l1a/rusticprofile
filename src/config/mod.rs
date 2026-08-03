@@ -63,6 +63,11 @@ pub struct Config {
     /// invisible. A job that vanished without trace is indistinguishable from a job that
     /// was never written.
     pub gated_out: Vec<GatedOut>,
+    /// Job to use when a command is given no `-n`, if the configuration names one.
+    ///
+    /// Carried resolved rather than raw so every caller reaches the same answer; validation
+    /// has already confirmed it names a declared job.
+    pub default_job: Option<String>,
     /// True when `--as-host` named a machine other than this one.
     ///
     /// Some checks cannot be answered for another host from here, and this is what lets
@@ -108,6 +113,7 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
     let temp_dir = std::env::temp_dir();
 
     let mut violations = validate::check_declared(&raw);
+    violations.extend(validate::check_default_job_exists(&raw));
 
     // `defaults` is resolved outside any job, so `${job}` and `${profile}` are errors
     // there rather than empty strings.
@@ -273,6 +279,7 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         rustic_config_dir,
         jobs,
         gated_out,
+        default_job: raw.defaults.default_job.clone(),
         simulating_another_host,
     })
 }

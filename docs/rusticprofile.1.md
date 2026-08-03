@@ -65,6 +65,10 @@ The **run** subcommand executes a job, and **schedule** installs the systemd uni
 **--as-host** *HOST*
 :   Evaluate as though running on *HOST* instead of the real hostname. This is the only way to check another machine's view of a per-host gate without logging into it.
 
+A configuration may set **defaults.default-job**, which is the job used by **run**, **plan**, **snapshots** and **config --show** when `-n` is omitted. It is validated at load time against the *declared* jobs, so a typo is an error on every machine rather than only where that job happens to run.
+
+Two commands deliberately ignore it. **unschedule** always requires an explicit name — removing a schedule because a configuration file named a default, rather than because someone typed it, is the one action that should never happen by default. **schedule** already treats a missing `-n` as "every job that declares a schedule", which is useful in its own right and would be lost.
+
 **--config** *PATH*
 :   Read *PATH* instead of the default `jobs.yaml`.
 

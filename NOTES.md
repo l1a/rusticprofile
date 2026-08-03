@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.19)
+## Current State (v0.1.20)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,44 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.20 — `defaults.default-job`
+
+```yaml
+defaults:
+  default-job: dot-files
+```
+
+`run`, `plan`, `snapshots` and `config --show` use it when `-n` is omitted. An explicit
+`-n` always wins.
+
+**Two commands deliberately ignore it, and that is the part worth reading:**
+
+- **`unschedule`** still requires an explicit name. Removing a schedule because a
+  configuration file named a default, rather than because someone typed it, is the one
+  action that should never happen by default. Its own doc comment already said "removal is
+  always named explicitly"; this keeps that true.
+- **`schedule`** already treats a missing `-n` as *"every job that declares a schedule"* —
+  useful in its own right, and a default would silently replace it with something narrower.
+
+Both exclusions are stated in the man page, the shipped `config --example jobs`, and the
+CLI help, because a fallback that applies to four commands out of six is exactly the kind of
+thing a reader will otherwise assume is uniform.
+
+**Validated against the *declared* jobs**, not the ones surviving host gating — the same
+reasoning as snapshot-set names. A default gated off on this machine is legitimate and
+reports the gate when used; a default that is a *typo* is wrong on every machine, and
+catching it only where that job happens to run would be catching it in the wrong place:
+
+```
+defaults.default-job: `dot-filez` is not a job in this configuration, so every command
+  that falls back to it would fail. Defined jobs are dot-files, other
+```
+
+**The "no job and no default" error names the config file** and shows the two lines to add.
+That check moved out of clap to make this possible — clap cannot mention a file it has never
+read, and "the following required arguments were not provided: --name <JOB>" tells a reader
+nothing about where a default would go.
 
 ### v0.1.19 — `snapshots`, a read-only passthrough
 

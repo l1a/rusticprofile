@@ -58,6 +58,13 @@ pub struct RawConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct RawDefaults {
+    /// Job to act on when a command is given no `-n`.
+    ///
+    /// Applies to `run`, `plan`, `snapshots` and `config --show` — the commands that act on
+    /// one job and previously required naming it every time. Deliberately **not**
+    /// `unschedule`, where removal stays explicitly named, nor `schedule`, where omitting
+    /// `-n` already means "every job that declares a schedule" and would lose that meaning.
+    pub default_job: Option<String>,
     /// The rustic executable. A bare name is resolved on `PATH` by the runner.
     pub rustic_binary: Option<String>,
     /// Directory holding rustic's own `<profile>.toml` files.

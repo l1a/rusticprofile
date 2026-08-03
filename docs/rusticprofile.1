@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.19" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.20" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -77,9 +77,12 @@ Placeholders (`\f[CR]host\-a\fP`, `\f[CR]/home/user\fP`) are \fBstatic\fP\. Your
 .PP
 Evaluate as though running on \fIHOST\fP instead of the real hostname\. This is the only way to check another machine's view of a per\-host gate without logging into it\.
 .RE
+.PP
+A configuration may set \fBdefaults\.default\-job\fP, which is the job used by \fBrun\fP, \fBplan\fP, \fBsnapshots\fP and \fBconfig \-\-show\fP when `\f[CR]\-n\fP` is omitted\. It is validated at load time against the \fIdeclared\fP jobs, so a typo is an error on every machine rather than only where that job happens to run\.
+.PP
+Two commands deliberately ignore it\. \fBunschedule\fP always requires an explicit name \-\- removing a schedule because a configuration file named a default, rather than because someone typed it, is the one action that should never happen by default\. \fBschedule\fP already treats a missing `\f[CR]\-n\fP` as "every job that declares a schedule", which is useful in its own right and would be lost\.
 \fB\-\-config\fP \fIPATH\fP
 .RS
-.PP
 Read \fIPATH\fP instead of the default `\f[CR]jobs\.yaml\fP`\.
 .RE
 .PP
