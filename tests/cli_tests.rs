@@ -1186,3 +1186,64 @@ fn schedule_refuses_when_rustic_cannot_be_resolved() {
         "no unit may be written when it could not be written correctly"
     );
 }
+
+#[test]
+fn as_host_does_not_check_a_profile_it_cannot_see() {
+    // `filter-hosts` lives in *this* machine's rustic profile, and §5.9 requires that file
+    // to differ per host. Under `--as-host` the check would compare a profile from one disk
+    // against a hostname from another and report a defect on every host but this one —
+    // making `--as-host` useless for the gate inspection it exists for.
+    let (_dir, path) = fixture(GOOD_CONFIG); // filter-hosts names host-a/b/c and THIS_HOST
+    let (stdout, stderr, code) = run_code(&[
+        "config",
+        "--check",
+        "--config",
+        &path,
+        "--as-host",
+        "host-a",
+    ]);
+    assert_eq!(
+        code, 0,
+        "simulating another host must not error.\nstderr:\n{stderr}"
+    );
+    // ...but a skipped check has to be visible, or this is just a silent pass.
+    assert!(
+        stdout.contains("NOT checked"),
+        "the skip must be reported: {stdout}"
+    );
+}
+
+#[test]
+fn checking_this_host_still_validates_filter_hosts() {
+    // The skip is scoped to simulation. On the real host the check must still run, or the
+    // silent-retention bug it exists for comes back.
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        dir.path().join("p.toml"),
+        "[snapshot-filter]\nfilter-hosts = [\"a-host-that-is-not-this-one\"]\n\n\
+         [forget]\ngroup-by = \"host,label\"\n\n\
+         [[backup.snapshots]]\nname = \"core\"\nsources = [\"/etc\"]\n",
+    )
+    .unwrap();
+    let jobs = dir.path().join("jobs.yaml");
+    std::fs::write(
+        &jobs,
+        format!(
+            "schema: 1\n\
+             defaults:\n\
+             \x20 rustic-config-dir: {}\n\
+             jobs:\n\
+             \x20 j:\n\
+             \x20   profile: p\n\
+             \x20   operations: [backup, forget]\n\
+             \x20   snapshot-sets: [{{name: core}}]\n",
+            dir.path().display()
+        ),
+    )
+    .unwrap();
+
+    let (_stdout, stderr, code) =
+        run_code(&["config", "--check", "--config", &jobs.display().to_string()]);
+    assert_eq!(code, 2, "stderr:\n{stderr}");
+    assert!(stderr.contains("filter-hosts"), "{stderr}");
+}

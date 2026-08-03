@@ -63,6 +63,12 @@ pub struct Config {
     /// invisible. A job that vanished without trace is indistinguishable from a job that
     /// was never written.
     pub gated_out: Vec<GatedOut>,
+    /// True when `--as-host` named a machine other than this one.
+    ///
+    /// Some checks cannot be answered for another host from here, and this is what lets
+    /// the report **say which** rather than quietly passing. See
+    /// [`validate::check_filter_hosts_can_match`].
+    pub simulating_another_host: bool,
 }
 
 impl Config {
@@ -90,11 +96,11 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         )])
     })?;
 
-    let host = match &opts.as_host {
-        Some(h) => h.clone(),
-        None => hosts::current_hostname()
-            .map_err(|e| ValidationErrors(vec![Violation::new("host", format!("{e:#}"))]))?,
-    };
+    // Resolved even when `--as-host` overrides it: telling "this machine" from "the one
+    // being simulated" is what lets a check that cannot cross that boundary say so.
+    let real_host = hosts::current_hostname()
+        .map_err(|e| ValidationErrors(vec![Violation::new("host", format!("{e:#}"))]))?;
+    let host = opts.as_host.clone().unwrap_or_else(|| real_host.clone());
     let host_short = hosts::short(&host).to_string();
 
     let config_dir = paths::user_config_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -151,11 +157,22 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         &raw,
         &rustic_config_dir,
     ));
-    violations.extend(validate::check_filter_hosts_can_match(
-        &raw,
-        &rustic_config_dir,
-        &host,
-    ));
+    // Skipped when simulating another machine, and reported rather than dropped.
+    //
+    // The check compares `filter-hosts` in *this* machine's `rustic.toml` against the host
+    // that will run the job. Under `--as-host` those are, by construction, a profile from
+    // one disk and a hostname from another — and §5.9 requires that profile to differ per
+    // host, so they will disagree whenever the simulation is doing its job. Running it
+    // anyway reports a defect on every host but this one, which is a false alarm loud
+    // enough to make `--as-host` useless for the gate inspection it exists for.
+    let simulating_another_host = opts.as_host.as_deref().is_some_and(|h| h != real_host);
+    if !simulating_another_host {
+        violations.extend(validate::check_filter_hosts_can_match(
+            &raw,
+            &rustic_config_dir,
+            &host,
+        ));
+    }
 
     let mut jobs = Vec::new();
     let mut gated_out = Vec::new();
@@ -253,6 +270,7 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         rustic_config_dir,
         jobs,
         gated_out,
+        simulating_another_host,
     })
 }
 
