@@ -19,6 +19,7 @@
 //! that distinction safe to act on here.
 
 pub mod lock;
+pub mod log;
 pub mod steps;
 
 pub use steps::{JobReport, StepReport, run_job};
