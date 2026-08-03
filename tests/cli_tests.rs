@@ -120,12 +120,11 @@ fn fixture(jobs_yaml: &str) -> (tempfile::TempDir, String) {
     // (`schedule`, `run`) have no `--as-host`, so a profile whose `filter-hosts` cannot
     // match the running machine is now a load-time error — correctly, since that is the
     // silent-retention bug. A fixture for those commands therefore has to name this host.
-    let host = std::process::Command::new("hostname")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|h| h.trim().to_string())
-        .unwrap_or_else(|| "localhost".to_string());
+    // Ask the same source of truth the binary will. Shelling out to `hostname(1)` looked
+    // equivalent and is not: the Fedora CI container has no such binary, so the fallback
+    // was used while the binary itself resolved the container id — and the fixture then
+    // disagreed with the program under test on every containerised runner.
+    let host = rusticprofile::config::hosts::current_hostname().expect("hostname");
     std::fs::write(
         dir.path().join("p.toml"),
         PROFILE_TOML.replace("THIS_HOST", &host),

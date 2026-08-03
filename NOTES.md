@@ -94,7 +94,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.4)
+## Current State (v0.1.5)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -334,6 +334,32 @@ published, so no version here has ever left this repository.
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.5 — fix a fixture that lied on CI, and stop `merge-pr` merging red (unreleased)
+
+**Two failures, and the second one is why the first reached `main`.**
+
+**The fixture.** v0.1.4 made the integration fixture substitute the real hostname into
+`filter-hosts`, because `schedule` and `run` resolve the host themselves and have no
+`--as-host`. It did that by shelling out to `hostname(1)` with a `"localhost"` fallback.
+The Fedora CI container **has no `hostname` binary**, so the fallback was used while the
+binary under test resolved the container id — and the fixture then disagreed with the
+program it was testing on every containerised runner. It now calls
+`config::hosts::current_hostname()`, the same function the binary uses. Asking a different
+oracle than the code under test is the whole defect; the test only passed locally because
+both happened to agree there.
+
+**`merge-pr` merged over a red check.** `gh pr merge` will merge a failing PR when the
+repository has no branch protection, and #19 went in with `build (fedora-x64)` red. The
+proximate cause was mine — "wait for the checks to settle" is not "wait for them to pass",
+and I checked the result after merging rather than before. But nothing in the tooling
+stopped it, and `merge-pr` is the one recipe that merges, so that is where the gate belongs
+— the same argument that puts the pre-PR gate in `open-pr`.
+
+`just merge-pr` now refuses on any `FAILURE`/`TIMED_OUT`/`CANCELLED`/`ACTION_REQUIRED`, and
+refuses while checks are still running rather than racing them. It names the failing legs.
+Merging a red PR deliberately still works — via `gh` directly, which is the right amount of
+friction for something that should be a conscious act.
 
 ### v0.1.4 — refuse a `filter-hosts` that cannot match this host (unreleased)
 
