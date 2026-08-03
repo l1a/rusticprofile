@@ -20,6 +20,7 @@
 
 pub mod lock;
 pub mod log;
+pub mod status;
 pub mod steps;
 
 pub use steps::{JobReport, StepReport, run_job};

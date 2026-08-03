@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.17" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.18" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -206,6 +206,10 @@ Job definitions: which jobs exist, their operations, host gating and schedule\.
 \fB$XDG_CONFIG_HOME/rustic/PROFILE\.toml\fP
 .RS
 rustic's own configuration, which owns all backup detail\. rusticprofile reads it read\-only, to verify that every snapshot\-set name it is about to pass actually exists\.
+.RE
+\fB$XDG_STATE_HOME/rusticprofile/status/\fBJOB\fP\.json\fP
+.RS
+When \fIJOB\fP last ran, and when it last \fBsucceeded\fP\. Written after every run, atomically\. `\f[CR]last_success\fP` is carried forward across a failed run on purpose: the useful question is not "did the last attempt work?" but "when did this last actually work?", and only that field can reveal a job which has quietly stopped working \-\- a failing run is loud, a run that never happens is not\. \fBstatus\fP displays both\.
 .RE
 \fB$XDG_STATE_HOME/rusticprofile/\fP
 .RS
