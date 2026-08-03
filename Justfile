@@ -321,6 +321,29 @@ merge-pr:
         echo "Error: You are already on main."
         exit 1
     fi
+    # Refuse to merge over a failing check.
+    #
+    # `gh pr merge` happily merges a red PR when the repository has no branch protection,
+    # and "wait for the checks to settle" is not the same as "wait for them to pass" — a
+    # merge went in over a failing fedora-x64 leg on #19 for exactly that reason. The gate
+    # belongs here, in the one recipe that merges, for the same reason `open-pr` is the one
+    # recipe that opens.
+    echo "Checking CI on this branch..."
+    STATES=$(gh pr view --json statusCheckRollup \
+        --jq '[.statusCheckRollup[]? | select(.conclusion != "SKIPPED") | .conclusion]' 2>/dev/null || echo '[]')
+    if echo "$STATES" | grep -q '""'; then
+        echo "Error: checks are still running. Wait for them, or merge deliberately with gh."
+        exit 1
+    fi
+    if echo "$STATES" | grep -qE 'FAILURE|TIMED_OUT|CANCELLED|ACTION_REQUIRED'; then
+        echo "Error: CI is not green on this branch:"
+        gh pr view --json statusCheckRollup \
+            --jq '.statusCheckRollup[]? | select(.conclusion != "SKIPPED" and .conclusion != "SUCCESS") | "  \(.conclusion)  \(.name)"'
+        echo "Fix it, or merge deliberately with gh if you have a reason."
+        exit 1
+    fi
+    echo "CI is green."
+
     echo "Merging PR for branch $BRANCH..."
     gh pr merge --squash --delete-branch
     echo "Switching to main and pulling..."
