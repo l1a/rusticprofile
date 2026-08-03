@@ -66,6 +66,46 @@ pub enum Command {
 
     /// Show what is scheduled on this host, and what is deliberately not
     Status(StatusArgs),
+
+    /// List the repository's snapshots, via rustic
+    Snapshots(SnapshotsArgs),
+}
+
+/// A **read-only passthrough** to `rustic snapshots`.
+///
+/// The only thing this adds is profile resolution — the path rusticprofile already
+/// resolves and validates, which the user would otherwise have to remember and type. Every
+/// flag beyond `-P` comes from the caller; rusticprofile still constructs none.
+///
+/// Deliberately *not* an [`crate::config::job::Operation`]: that enum is what a **job** may
+/// schedule, and a query is not schedulable work. Read-only is what makes a passthrough
+/// defensible here and would not make one defensible for `forget` or `prune`. `PLAN.md`
+/// §7.8 states the line so the next request for one can be answered.
+#[derive(Args, Debug)]
+pub struct SnapshotsArgs {
+    /// Job whose profile to query
+    #[arg(short = 'n', long, value_name = "JOB")]
+    pub name: String,
+
+    /// Path to jobs.yaml (defaults to $XDG_CONFIG_HOME/rusticprofile/jobs.yaml)
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Evaluate as though running on this host, instead of the real hostname
+    #[arg(long, value_name = "HOST")]
+    pub as_host: Option<String>,
+
+    /// Use this rustic executable instead of the one the configuration names
+    #[arg(long, value_name = "PATH")]
+    pub rustic_binary: Option<String>,
+
+    /// Arguments passed to `rustic snapshots` unchanged, e.g. `-- --filter-label core`
+    ///
+    /// Everything here is the caller's. Keeping them in a trailing group is what lets this
+    /// stay a passthrough rather than becoming a wrapper with opinions about rustic's
+    /// flags.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub args: Vec<String>,
 }
 
 #[derive(Args, Debug)]

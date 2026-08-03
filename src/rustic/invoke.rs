@@ -135,6 +135,39 @@ pub fn build_argv(
 }
 
 /// Build every invocation a job will run, in order.
+/// Build the argv for a **read-only query** against a job's profile.
+///
+/// rusticprofile contributes exactly two things: the resolved `-P <profile>` and the
+/// operation word. Everything in `extra` is the caller's, appended verbatim — which is what
+/// keeps this a passthrough rather than a wrapper with opinions about rustic's flags.
+///
+/// Separate from [`build_argv`] on purpose. That function serves scheduled work and is
+/// guarded by a test asserting the only flags it emits are `-P`, `--json` and `--name`;
+/// folding a passthrough into it would weaken exactly the guarantee worth keeping.
+/// `PLAN.md` §7.8 has the reasoning and the limits.
+#[must_use]
+pub fn query_argv(binary: &str, profile: &str, query: &str, extra: &[String]) -> Vec<OsString> {
+    let mut argv: Vec<OsString> = vec![
+        OsString::from(binary),
+        OsString::from("-P"),
+        OsString::from(profile),
+        OsString::from(query),
+    ];
+    argv.extend(extra.iter().map(OsString::from));
+    argv
+}
+
+/// The resolved profile path for `job`, as rustic will receive it.
+///
+/// Absolute, because a bare name makes rustic search its own paths — which need not include
+/// the directory rusticprofile just validated against.
+#[must_use]
+pub fn profile_path(config: &Config, job: &Job) -> String {
+    crate::config::paths::profile_toml(&config.rustic_config_dir, &job.profile)
+        .to_string_lossy()
+        .into_owned()
+}
+
 pub fn plan_job(config: &Config, job: &Job, options: Options) -> Vec<Invocation> {
     // The resolved path, not the bare name — see `build_argv`.
     let profile = crate::config::paths::profile_toml(&config.rustic_config_dir, &job.profile);
@@ -265,6 +298,40 @@ mod tests {
             );
             assert_eq!(find_secret_bearing_flag(&argv), None);
         }
+    }
+
+    #[test]
+    fn a_query_adds_only_the_profile_and_the_operation() {
+        // The passthrough's whole justification: rusticprofile supplies path resolution and
+        // nothing else. If this grows a flag, it has become a wrapper — see PLAN.md §7.8.
+        let argv = query_argv("rustic", "/cfg/p.toml", "snapshots", &[]);
+        let rendered: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(rendered, vec!["rustic", "-P", "/cfg/p.toml", "snapshots"]);
+    }
+
+    #[test]
+    fn caller_arguments_pass_through_verbatim_and_last() {
+        // Appended unchanged and after the operation, so rustic sees them exactly as typed.
+        let extra = vec!["--filter-label".to_string(), "core".to_string()];
+        let argv = query_argv("rustic", "/cfg/p.toml", "snapshots", &extra);
+        let rendered: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            rendered,
+            vec![
+                "rustic",
+                "-P",
+                "/cfg/p.toml",
+                "snapshots",
+                "--filter-label",
+                "core"
+            ]
+        );
     }
 
     #[test]

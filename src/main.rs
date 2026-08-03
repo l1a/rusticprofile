@@ -13,7 +13,7 @@ use clap_complete::generate;
 use owo_colors::OwoColorize;
 use rusticprofile::cli::{
     Cli, Command, CompletionShell, ConfigArgs, PlanArgs, PlanFormat, RunArgs, ScheduleArgs,
-    StatusArgs, UnscheduleArgs,
+    SnapshotsArgs, StatusArgs, UnscheduleArgs,
 };
 use rusticprofile::config::schedule::Permission;
 use rusticprofile::config::{self, Config, LoadOptions};
@@ -41,6 +41,7 @@ fn main() -> ExitCode {
         Some(Command::Schedule(args)) => schedule_jobs(&args),
         Some(Command::Unschedule(args)) => unschedule_job(&args),
         Some(Command::Status(args)) => show_status(&args),
+        Some(Command::Snapshots(args)) => list_snapshots(&args),
         // Reachable only via a global flag that consumed the invocation without naming a
         // subcommand — `--completions` is handled above and returns, so in practice this
         // does not happen. `arg_required_else_help` makes a bare invocation print help
@@ -716,6 +717,53 @@ fn write_run_log(
 /// rusticprofile does not manage the environment — the child inherits this process's,
 /// unmodified. This exists so a person can see what rustic will actually receive, which is
 /// where repository access and credentials come from.
+/// List the repository's snapshots by handing the query to rustic.
+///
+/// **A read-only passthrough, and the only thing it contributes is the resolved profile
+/// path.** Everything the caller appended goes to rustic verbatim; rusticprofile constructs
+/// no flags here either. `PLAN.md` §7.8 records why this is acceptable where a `forget` or
+/// `restore` passthrough would not be — and states the line, so the next such request has an
+/// answer.
+///
+/// stdout is inherited rather than captured: this exists to be read by a person, and
+/// rustic's own table is better than anything reprinted from a parse.
+fn list_snapshots(args: &SnapshotsArgs) -> ExitCode {
+    let (config, _path) = match load_config(
+        args.config.clone(),
+        args.as_host.clone(),
+        args.rustic_binary.clone(),
+    ) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+
+    let Some(job) = config.job(&args.name) else {
+        return report_missing_job(&config, &args.name);
+    };
+
+    let argv = invoke::query_argv(
+        &config.rustic_binary,
+        &invoke::profile_path(&config, job),
+        "snapshots",
+        &args.args,
+    );
+
+    match rusticprofile::exec::run(&argv, rusticprofile::exec::Stdout::Inherit) {
+        // rustic's exit code is passed straight through: this command reports what rustic
+        // said, and inventing a verdict of our own would be a second opinion nobody asked
+        // for.
+        Ok(outcome) => ExitCode::from(u8::try_from(outcome.code.unwrap_or(1)).unwrap_or(1)),
+        Err(e) => {
+            eprintln!(
+                "{} could not run `{}`: {e}",
+                "error:".red().bold(),
+                config.rustic_binary
+            );
+            ExitCode::from(EXIT_RUN_FAILED)
+        }
+    }
+}
+
 fn print_env(show_secrets: bool) {
     if show_secrets {
         // Warn before printing, not after: on a shared terminal or a session being

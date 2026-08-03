@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.18" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.19" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -19,6 +19,8 @@ rusticprofile \- a local, per\-machine scheduler and orchestrator for rustic bac
 \fBrusticprofile unschedule\fP \fB\-n\fP \fIJOB\fP [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
 .PP
 \fBrusticprofile status\fP [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-unit\-dir\fP \fIDIR\fP]
+.PP
+\fBrusticprofile snapshots\fP \fB\-n\fP \fIJOB\fP [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-rustic\-binary\fP \fIPATH\fP] [\fB\-\-\fP \fIRUSTIC ARGS\fP]
 .PP
 \fBrusticprofile plan\fP \fB\-n\fP \fIJOB\fP [\fB\-\-format\fP \fIFORMAT\fP] [\fB\-\-show\-env\fP [\fB\-\-show\-secrets\fP]] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
 
@@ -161,6 +163,24 @@ rustic \-P RESOLVED\-PROFILE\-PATH OPERATION [\-\-dry\-run] [\-\-json] [\-\-name
 .RE
 .PP
 `\f[CR]\-P\fP` is given a resolved absolute path rather than a bare profile name, because rustic's own search for a bare name need not include the directory rusticprofile validated against\. `\f[CR]\-\-name\fP` appears only for \fBbackup\fP, once per snapshot set enabled on the current host, as does `\f[CR]\-\-json\fP`\. Those three flags plus `\f[CR]\-P\fP` are the only ones rusticprofile ever emits; everything else a backup needs comes from rustic's own configuration\. `\f[CR]\-\-json\fP` is requested because rustic exits 1 for both a partial and a failed backup, and the count of snapshot objects it writes to standard output is the only reliable way to tell them apart\. Progress and diagnostics are unaffected \-\- rustic writes those to standard error\.
+
+.SH "SNAPSHOTS"
+\fBsnapshots \-n\fP \fIJOB\fP
+.RS
+.PP
+List the repository's snapshots by handing the query to \fBrustic\fP(1)\.
+.PP
+\fBThis is a read\-only passthrough, and the only thing rusticprofile contributes is the resolved profile path\fP \-\- the value you would otherwise have to remember and type\. Arguments after `\f[CR]\-\-\fP` are given to rustic unchanged; rusticprofile constructs none of them, and rustic's exit code is passed straight through rather than replaced with a verdict of our own\.
+.RS
+.PP
+.nf
+rusticprofile snapshots \-n dot\-files
+rusticprofile snapshots \-n dot\-files \-\- \-\-filter\-label core
+.fi
+.RE
+.PP
+Read\-only is what makes this defensible\. There is deliberately no passthrough for \fBforget\fP or \fBprune\fP, which are destructive and whose scoping belongs in the rustic profile where a flag typed at a prompt cannot contradict it, nor for \fBrestore\fP \-\- putting a restore path behind a scheduler adds a layer between you and your data at the moment you least want one\. `\f[CR]snapshots\fP` is also \fBnot\fP an operation a job may schedule; that set remains \fBbackup\fP, \fBforget\fP and \fBprune\fP\.
+.RE
 
 .SH "SECRETS"
 .PP
