@@ -23,7 +23,8 @@ use std::process::Command;
 use crate::config::job::Job;
 use crate::config::schedule::{Permission, Schedule};
 
-use super::systemd::{self, UnitContext};
+use super::UnitContext;
+use super::systemd;
 
 /// What an install did.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.25)
+## Current State (v0.1.26)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,87 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.26 — M3 begins: launchd agent generation
+
+`schedule/launchd.rs`, and the same split M2 used: **pure functions here, nothing written,
+`launchctl` never consulted**, so an agent can be read before it exists anywhere. `schedule`
+still refuses on macOS — deliberately, since flipping the guard before anything can install
+would write plists nothing bootstraps, which is the silent success the guard exists to stop.
+Wiring is the next version.
+
+**`permission` and `priority` already meant the same things, so this is a second backend
+rather than a second design.** Four differences are real, and each was measured on macOS 26.6
+rather than reasoned about:
+
+**One agent, not two units.** systemd cannot run a command from a timer, so a job there is a
+`.service` plus a `.timer`. launchd puts the schedule and the program in one job, so a job
+here is one plist. The two-file shape was never a design choice, and its absence is not a gap.
+
+**No `RandomizedDelaySec`.** `StartCalendarInterval` names an instant with no tolerance, so
+the fleet spread cannot be a separate directive — it has to be part of the calendar
+specification, which puts the offset in the plist itself. `calendar::Offset` is bounded by
+the **same window** systemd gets, derived from `randomized_delay` rather than written out
+again: two numbers that must agree are two numbers that can drift, and drift here would make
+`at: hourly` mean something different on macOS than on Linux from the same line of the same
+byte-identical `jobs.yaml`. Base instants match too — hourly `:00`, daily `00:00`, weekly
+Monday, monthly the 1st.
+
+**Missed runs: half of `Persistent=true` comes free, half does not, and they are different
+cases.** For sleep, `launchd.plist(5)` is explicit — *"Unlike cron which skips job
+invocations when the computer is asleep, launchd will start the job the next time the computer
+wakes up. If multiple intervals transpire before the computer is woken, those events will be
+coalesced into one event upon wake"* — which is what `Persistent=true` exists for, including
+the one-catch-up-run behaviour measured on Linux (`WIP.md` §12: one run on resume, not
+eleven). But a calendar time that passes while the agent is **not loaded** is *not* caught up:
+measured by bootstrapping an agent whose minute had already gone by, which reported
+`runs = 0`. So the first run after `schedule` is at the next occurrence, never immediately.
+
+**No `linger` equivalent, and this one is a real limitation.** A systemd user manager can be
+told to run with nobody logged in; launchd cannot. A `gui/$UID` agent runs while the user is
+logged in, so **a Mac sitting at the login window does not back up.** `permission: system`
+installs a LaunchDaemon instead, which runs regardless and carries the same trade a systemd
+system unit does — it runs as root, which needs its own answer for credentials. Stated in the
+module docs now and surfaced by `status` in the next version, because a schedule that only
+works while someone is logged in is exactly the kind of thing that looks fine for months.
+
+**Two measurements that confirmed the design rather than changing it**, both from a throwaway
+agent bootstrapped into `gui/501` and then torn down:
+
+| measured | consequence |
+|---|---|
+| `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, `PWD=/` | the v0.1.10 absolute-path rule carries over exactly — a Homebrew `/opt/homebrew/bin/rustic` is invisible to a launchd agent, and a relative path resolves against `/` |
+| `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `SSH_AUTH_SOCK` all arrive | no `EnvironmentVariables` block is needed; the environment stays inherited unmodified, as everywhere else in this tool. The predecessor's plist sets `HOME` and a full `PATH`, and neither is necessary |
+
+`UnitContext` moved from `systemd.rs` to `schedule/mod.rs`, since both backends need the same
+three absolute paths for the same reason — one doc comment now carries both platforms'
+evidence instead of one platform's.
+
+**Four things are deliberately absent from the plist**, each recorded where someone changing
+it will read them: **`RunAtLoad`**, which would take a backup the instant `schedule` installed
+the agent — adding a writer to a shared repository as a side effect, which is what §7.5
+forbids; **`KeepAlive`**, which would restart a one-shot backup on exit; **`WorkingDirectory`**,
+unnecessary once every path is absolute; and **`StandardOutPath`/`StandardErrorPath`**, which
+looks like the questionable one. launchd discards both streams and macOS has no journald, so
+nothing captures them — but a fixed path would be an unrotated file growing forever, which is
+what left 904 KB behind in the predecessor's setup. The per-run record is the `log:` file and
+the status file, `launchctl print` reports `runs` and `last exit code`, and `last_success` is
+the field that answers whether a job still works.
+
+**A plist is XML, so a value from configuration must not be able to change its structure.**
+Every interpolated value is escaped: a home directory containing `&` would otherwise produce
+a file launchd refuses to parse, and an agent that fails to load is a schedule that silently
+does not exist. Same reasoning as refusing a snapshot-set name that starts with `-`.
+
+**Tested through `plutil`, not only by substring.** Substring assertions prove the content;
+only a parser proves the file. `plutil -lint` is run over all eight interval/priority
+combinations, skipping with a printed notice off macOS — the convention the rustic-backed
+tests already use. Plus the invariants inherited from the systemd side: no agent contains a
+date, every path in an agent is absolute, generation is pure, `Standard` priority emits
+nothing rather than `Nice=0`, and Monday is `Weekday = 1` (`launchd.plist(5)`: "0 and 7 are
+Sunday") so a weekly backup cannot quietly move a day.
+
+249 unit tests, up from 228.
 
 ### v0.1.25 — on macOS, the tool could not find its own configuration
 
