@@ -32,7 +32,7 @@ pub mod validate;
 use std::path::{Path, PathBuf};
 
 use interp::{Ctx, Env};
-use job::{GatedOut, Job, RawConfig};
+use job::{GatedOut, HostnameMode, Job, RawConfig};
 use validate::{ValidationErrors, Violation};
 
 /// Default rustic executable when `defaults.rustic-binary` is absent.
@@ -55,6 +55,16 @@ pub struct LoadOptions {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub host: String,
+    /// The name rustic will record on snapshots and filter `forget`/`prune` by, or `None`
+    /// when `defaults.hostname: rustic` leaves it to rustic.
+    ///
+    /// Resolved once, here, rather than re-derived per call site — the `0.1.28` lesson: a
+    /// value three code paths each work out for themselves is a value they can disagree
+    /// about, and a reader disagreeing with a writer about a hostname means retention
+    /// silently selects nothing. `PLAN.md` §5.9.
+    pub recorded_host: Option<String>,
+    /// How [`Self::recorded_host`] was derived, kept so `config --check` can explain it.
+    pub hostname_mode: HostnameMode,
     pub rustic_binary: String,
     pub rustic_config_dir: PathBuf,
     /// Where run logs and the status file go, already resolved.
@@ -313,6 +323,9 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         return Err(ValidationErrors(violations));
     }
 
+    // Resolved before `host` is moved into the struct below.
+    let recorded_host = raw.defaults.hostname.resolve(&host);
+
     Ok(Config {
         host,
         rustic_binary,
@@ -320,6 +333,8 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         state_dir,
         jobs,
         gated_out,
+        recorded_host: recorded_host.clone(),
+        hostname_mode: raw.defaults.hostname,
         default_job: raw.defaults.default_job.clone(),
         simulating_another_host,
     })

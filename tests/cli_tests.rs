@@ -727,6 +727,7 @@ fn real_rustic_partial_backup_is_classified_as_partial() {
         &profile,
         Operation::Backup,
         &["good".to_string(), "broken".to_string()],
+        None,
         invoke::Options::default(),
     );
 
@@ -765,6 +766,7 @@ fn real_rustic_clean_backup_is_classified_as_success() {
         &profile,
         Operation::Backup,
         &["good".to_string()],
+        None,
         invoke::Options::default(),
     );
     let outcome = rusticprofile::exec::run(&argv, rusticprofile::exec::Stdout::Capture)
@@ -793,6 +795,7 @@ fn real_rustic_total_failure_is_classified_as_failure() {
         &profile,
         Operation::Backup,
         &["broken".to_string()],
+        None,
         invoke::Options::default(),
     );
     let outcome = rusticprofile::exec::run(&argv, rusticprofile::exec::Stdout::Capture)
@@ -1486,6 +1489,11 @@ fn as_host_does_not_check_a_profile_it_cannot_see() {
 fn checking_this_host_still_validates_filter_hosts() {
     // The skip is scoped to simulation. On the real host the check must still run, or the
     // silent-retention bug it exists for comes back.
+    //
+    // `hostname: rustic` is required from 0.1.34 for this rule to exist at all: under the
+    // default `short` rusticprofile passes its own `--filter-host` and the CLI overrides
+    // the file, so a wrong `filter-hosts` cannot cause the failure this guards. The rule
+    // applies exactly where the profile is the only scope there is.
     let dir = tempfile::tempdir().expect("temp dir");
     std::fs::write(
         dir.path().join("p.toml"),
@@ -1500,6 +1508,7 @@ fn checking_this_host_still_validates_filter_hosts() {
         format!(
             "schema: 1\n\
              defaults:\n\
+             \x20 hostname: rustic\n\
              \x20 rustic-config-dir: {}\n\
              jobs:\n\
              \x20 j:\n\

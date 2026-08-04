@@ -6,3 +6,8 @@ TRANSCRIPT.md
 memory/
 __pycache__/
 *.pyc
+
+# Syncthing in-progress transfer files. They appear anywhere in the tree, are
+# byte-identical to the file they shadow, and are pure noise in `git status` — one
+# was accidentally committed to PR #49 by a `git add -A <dir>`.
+.syncthing.*

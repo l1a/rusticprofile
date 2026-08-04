@@ -25,6 +25,34 @@ use rusticprofile::schedule::{self, Backend, install, launchd, systemd};
 /// "the backup did not work".
 const EXIT_CONFIG_ERROR: u8 = 2;
 
+/// The `recorded as` line for `config --check` / `--show`.
+///
+/// **A behaviour change that can strand snapshots must be visible without reading the
+/// source.** rusticprofile hands rustic a hostname (`PLAN.md` §5.9), and on macOS that name
+/// differs from what the OS reports — so the difference is printed whenever there is one,
+/// rather than left to be discovered from a snapshot listing months later.
+fn recorded_host_line(config: &rusticprofile::config::Config) -> Option<String> {
+    use rusticprofile::config::job::HostnameMode;
+    match (&config.recorded_host, config.hostname_mode) {
+        // Same name either way: saying so would be noise on every Linux host.
+        (Some(name), _) if *name == config.host => None,
+        (Some(name), mode) => Some(format!(
+            "{name}  (the OS reports `{}`; `hostname: {}`)",
+            config.host,
+            match mode {
+                HostnameMode::Short => "short",
+                HostnameMode::Full => "full",
+                HostnameMode::Rustic => "rustic",
+            }
+        )),
+        (None, _) => Some(format!(
+            "left to rustic (`hostname: rustic`), which will use the OS name `{}` unless \
+             the profile sets `[backup] host`",
+            config.host
+        )),
+    }
+}
+
 fn main() -> ExitCode {
     restore_default_sigpipe();
     let cli = Cli::parse();
@@ -1050,6 +1078,9 @@ fn run_config(args: &ConfigArgs) -> ExitCode {
 fn print_check(config: &Config, path: &str) {
     println!("{} {path}", "ok:".green().bold());
     println!("  host              {}", config.host);
+    if let Some(line) = recorded_host_line(config) {
+        println!("  recorded as       {line}");
+    }
     // A check that did not run must say so. Passing silently here would report a clean
     // bill of health for a machine whose rustic profile this process has never seen.
     if config.simulating_another_host {
@@ -1092,6 +1123,9 @@ fn print_check(config: &Config, path: &str) {
 fn print_job(config: &Config, job: &rusticprofile::config::job::Job) {
     println!("{} {}", "job:".bold(), job.name);
     println!("  host           {}", config.host);
+    if let Some(line) = recorded_host_line(config) {
+        println!("  recorded as    {line}");
+    }
     println!("  profile        {}", job.profile);
     println!(
         "  operations     {}",

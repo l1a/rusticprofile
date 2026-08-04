@@ -844,7 +844,77 @@ pair, from one byte-identical line. rusticprofile now applies the XDG rules on e
 (0.1.25). This is not a preference for XDG over Apple's conventions; it is the requirement
 that one line of one file mean one thing across the fleet.
 
-**Rejected: emitting `--filter-host <hostname>` from rusticprofile.** It would solve the
+### REVERSED 2026-08-04 — rusticprofile now owns the hostname (`0.1.34`)
+
+**The rejection below stood for four days and was wrong. It is kept in full because the
+reason it was wrong is not that the reasoning was sloppy — it is that the reasoning answered
+a question nobody was asking.**
+
+It rejected emitting `--filter-host` on the grounds that *"the home path would still need
+templating regardless, so it buys nothing."* That is true and irrelevant. It measures the
+change against **saving a chezmoi template**, when the thing that actually matters is what a
+user gets **with no configuration at all**:
+
+| | recorded host, no config |
+|---|---|
+| Linux | `foo` |
+| **macOS** | **`foo.local`** |
+
+One fleet, two naming conventions, forever — and every filter, query and census has to know
+which hosts are which. It produced a real false alarm on 2026-08-04, and it is the direct
+cause of `0.1.4`'s `.chezmoi.hostname` / `.chezmoi.fqdnHostname` bug. A user not using
+chezmoi has to hand-write the right hostname into two places and has no way to know that
+`.local` will bite them.
+
+**Measured 2026-08-04, and it is what makes the fix possible: for these flags the CLI
+overrides the config file.** `--host from-cli` beat `host = "from-config"`, and
+`--filter-host` beat `[snapshot-filter] filter-hosts`. (Note this contradicts Part 2's
+"env > config > CLI" summary, which is wrong at least here.) So rusticprofile can supply
+both and the answer stops depending on what any file says.
+
+**Decision: rusticprofile emits the hostname.**
+
+| operation | flag |
+|---|---|
+| `backup` | `--host <name>` — the only operation that accepts it |
+| `forget`, `prune` | `--filter-host <name>` — scopes the destructive operations |
+| `snapshots` passthrough | **nothing.** §7.8's rule holds: read-only, adds no flags |
+
+`defaults.hostname` chooses the name: **`short`** (default — the OS hostname up to the first
+dot), `full` (as the OS reports it), or `rustic` (emit neither and defer entirely, which is
+the pre-`0.1.34` behaviour).
+
+**Why an escape hatch, when this project's instinct is closed sets with no escape hatches:**
+because the two cases it covers are data-integrity cases, not preferences.
+
+1. **Changing the recorded name splits an existing repository.** Stored snapshots keep their
+   old name; under `group-by = "host,label"` old and new are different groups, so the old one
+   stops being selected and is never retained down again. It accumulates silently — this
+   project's own failure class. `hostname: rustic` is the migration path.
+2. **Short names collide across domains.** `web1.prod` and `web1.staging` both become `web1`,
+   sharing one retention group and forgetting each other's snapshots — §7.5 breached by
+   default. `hostname: full` is the answer there.
+
+**What stops the change being invisible:** `config --check` states the name that will be
+recorded and flags it when it differs from what the OS reports. A behaviour change that can
+strand snapshots must be visible without reading the source.
+
+**Consequences accepted deliberately:**
+
+- **The delegation boundary moves, and the flag inventory grows** from `-P`/operation/`--json`/
+  `--name` to include `--host`/`--filter-host`. The test asserting it is updated *after* this
+  section, per its own instruction.
+- **`check_forget_is_scoped` no longer requires `filter-hosts` in the profile** under `short`
+  or `full`, because rusticprofile now supplies the scoping and a config that omits it is
+  correct. Under `rustic` it still refuses, unchanged.
+- **The `snapshots` passthrough becomes unscoped** if a profile drops `filter-hosts`. That is
+  the honest cost of taking scoping out of the file: the fleet-wide view becomes the default
+  and a per-host view needs `-- --filter-host <name>`. Not emitting it there is deliberate —
+  `--filter-host` is repeatable and unions rather than overrides, so a flag we added would
+  silently widen a caller's own filter rather than yield to it.
+
+**Superseded by the above, kept as the record:** *"Rejected: emitting `--filter-host
+<hostname>` from rusticprofile."* It would solve the
 hostname half without templating, and it is the wrong trade. `-P`, the operation, `--name`
 and `--json` are the only flags this tool emits, a test asserts exactly that, and the
 delegation boundary is the thing that keeps this project from becoming the wrapper it was

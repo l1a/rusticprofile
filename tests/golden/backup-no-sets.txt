@@ -2,4 +2,6 @@ rustic
 -P
 RUSTIC_DIR/p.toml
 backup
+--host
+host-a
 --json

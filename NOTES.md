@@ -228,7 +228,7 @@ the validator.
 
 ---
 
-## Current State (v0.1.33)
+## Current State (v0.1.34)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -472,6 +472,95 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.34 — rusticprofile owns the hostname
+
+**Behaviour change, and the widest one this project has made.** rusticprofile now passes
+`--host` on `backup` and `--filter-host` on `forget`/`prune`. The delegation boundary moved
+deliberately; `PLAN.md` §5.9 records the reversal and the reasoning, and the flag-inventory
+test was updated only after that, per its own instruction.
+
+#### The problem was the default, not the configuration
+
+Left to itself rustic asks the OS for a hostname. **Linux answers `foo`; macOS answers
+`foo.local`.** One fleet therefore carries two naming conventions in one repository's
+history forever, and every filter, query and census has to know which hosts are which. It
+caused `0.1.4`'s `.chezmoi.hostname`/`.chezmoi.fqdnHostname` bug and a false alarm on
+2026-08-04, and a user without chezmoi had to hand-write the right name into two places with
+nothing telling them `.local` would bite.
+
+An earlier attempt shipped as a *pin* the user could set in `rustic.toml`. That was rejected
+before merge for the obvious reason: **it was still opt-in, so a new macOS user got `.local`
+anyway.** Making the default correct is the whole requirement.
+
+**What makes it possible, measured against rustic 0.11.3: for these flags the CLI overrides
+the config file.** `--host from-cli` beat `host = "from-config"`, and `--filter-host` beat
+`[snapshot-filter] filter-hosts`. So the answer no longer depends on what any file says.
+(Part 2 of `PLAN.md` summarises rustic's precedence as "env > config > CLI", which is wrong
+at least here.)
+
+#### `defaults.hostname`
+
+```yaml
+defaults:
+  hostname: short    # short | full | rustic
+```
+
+- **`short`** (default) — the OS hostname up to the first dot. Identical to the OS name on
+  Linux; drops `.local` on macOS.
+- **`full`** — exactly as the OS reports it.
+- **`rustic`** — emit neither flag and defer entirely. The pre-`0.1.34` behaviour.
+
+**The escape hatch exists for two data-integrity cases, not for taste** — which is why this
+project, whose instinct is closed sets with no escape hatches, has one here:
+
+1. **Changing the recorded name splits an existing repository.** Stored snapshots keep the
+   old name; under `group-by = "host,label"` old and new are different groups, so the old one
+   stops being selected and is never retained down again — it accumulates, silently. This
+   project's own failure class, which is exactly why it gets a documented way out rather than
+   a note. `hostname: rustic` is the migration path.
+2. **Short names collide across domains.** `web1.prod` and `web1.staging` both shorten to
+   `web1`, putting two machines in one retention group where they forget each other's
+   snapshots — the §3a invariant 2 rule broken by default rather than by misconfiguration.
+   `hostname: full`.
+
+#### What stops it being silent
+
+**`config --check` and `config --show` print the name that will be recorded whenever it
+differs from what the OS reports**, and say which mode produced it:
+
+```
+  host              mac-host.local
+  recorded as       mac-host  (the OS reports `mac-host.local`; `hostname: short`)
+```
+
+Nothing is printed when the two agree, so Linux hosts gain no noise. A behaviour change that
+can strand snapshots has to be visible without reading the source.
+
+#### Two validation rules narrow, on purpose
+
+- **`check_forget_is_scoped` no longer requires `filter-hosts` in the profile** under `short`
+  or `full` — rusticprofile supplies the scope, so a profile without one is *correct*, and
+  demanding it would refuse a right configuration. Under `rustic` it still refuses,
+  unchanged, because there the profile is the only scope there is.
+- **`check_filter_hosts_can_match` only applies under `rustic`.** Elsewhere our flag wins, so
+  a stale `filter-hosts` is harmless leftover rather than the silent-retention bug.
+
+Both are covered by tests asserting the *pair* of behaviours, not just the new one.
+
+#### Not changed: the `snapshots` passthrough
+
+It still adds nothing but `-P` and the operation (§7.8). `--filter-host` is **repeatable and
+unions** rather than overriding, so a flag we injected would silently widen a caller's own
+filter instead of yielding to it. The honest cost: a profile that drops `filter-hosts` gets a
+fleet-wide `rusticprofile snapshots`, and a per-host view needs `-- --filter-host <name>`.
+
+The `[backup] host` reader from the superseded attempt stays — under `hostname: rustic` a
+user may legitimately pin it, and the validator has to judge `filter-hosts` against that
+rather than the OS name.
+
+Goldens regenerated; they use `--as-host host-a` placeholders, so no real hostname enters a
+tracked file. 324 tests, up from 313.
 
 ### v0.1.33 — two tests were signalling each other's child
 

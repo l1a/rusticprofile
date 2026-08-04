@@ -65,6 +65,31 @@ const JOBS_YAML: &str = r##"# ~/.config/rusticprofile/jobs.yaml
 schema: 1
 
 defaults:
+  # WHICH HOSTNAME RUSTIC RECORDS, and scopes forget/prune to.
+  #
+  #   short   (default) the OS hostname up to the first dot -- `foo.local` becomes `foo`
+  #   full              the OS hostname exactly as reported
+  #   rustic            emit nothing; rustic decides, from the OS or `[backup] host`
+  #
+  # THIS MATTERS MOST ON macOS. Left to itself, rustic asks the OS, and macOS answers
+  # `foo.local` where Linux answers `foo`. One repository then carries two naming
+  # conventions forever and every filter, query and census has to know which hosts are
+  # which. `short` makes every machine record the same shape of name.
+  #
+  # TWO REASONS TO CHANGE IT, both about data rather than taste:
+  #
+  #   * MIGRATING AN EXISTING REPOSITORY. Changing the recorded name splits the retention
+  #     group -- stored snapshots keep the old name, and under `group-by = "host,label"`
+  #     the old group stops being selected and is never retained down again. It just
+  #     accumulates, silently. Use `rustic` to keep whatever your repository already uses.
+  #   * SHORT NAMES THAT COLLIDE. `web1.prod` and `web1.staging` both shorten to `web1`,
+  #     putting two machines in one retention group where they forget each other's
+  #     snapshots. Use `full` there.
+  #
+  # `config --check` prints the name that will be recorded whenever it differs from what
+  # the OS reports, so this is never a silent decision.
+  hostname: short
+
   # The job to act on when a command is given no `-n`.
   #
   # Applies to `run`, `plan`, `snapshots` and `config --show`.
@@ -213,6 +238,16 @@ credential_path = "/home/user/.config/example-credentials.json"
 # survivable.
 # ---------------------------------------------------------------------------------------
 [snapshot-filter]
+# OPTIONAL as of 0.1.34, and left here because it still scopes INTERACTIVE rustic use and
+# the `rusticprofile snapshots` passthrough, neither of which gets our `--filter-host`.
+#
+# It no longer scopes the scheduled forget/prune: rusticprofile passes `--filter-host`
+# itself and the CLI wins. Under `hostname: rustic` it goes back to being the only scope
+# there is, and rusticprofile refuses a forget without it.
+#
+# If you do set it, it must name what rustic RECORDS, matched EXACTLY. Naming anything else
+# selects zero snapshots, so `forget` deletes nothing and retention silently never runs,
+# forever, while every command reports success.
 filter-hosts = ["host-a"]
 
 [forget]
@@ -235,6 +270,10 @@ keep-monthly = 12
 keep-yearly = 2
 
 [backup]
+# NOTE: rusticprofile passes `--host` here and `--filter-host` to forget/prune, and for
+# those flags the CLI overrides this file. So a `host = "..."` set here is IGNORED unless
+# `jobs.yaml` says `hostname: rustic`. Set it in jobs.yaml instead — one place, one answer.
+
 # Options shared by every snapshot set below.
 exclude-if-present = ["CACHEDIR.TAG"]
 one-file-system = false
