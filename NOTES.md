@@ -228,7 +228,7 @@ the validator.
 
 ---
 
-## Current State (v0.1.32)
+## Current State (v0.1.33)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -472,6 +472,74 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.33 — two tests were signalling each other's child
+
+**Test-only change. `run` is untouched, and that is the point.**
+
+The post-merge CI run for `0.1.32` went red on `build (ubuntu-arm)` with two failures, on a
+commit that had passed the same leg eighty minutes earlier and changed no source at all:
+
+```
+exec::tests::a_failing_child_reports_its_code_rather_than_erroring   left: None  right: Some(1)
+exec::tests::a_forwarded_signal_reaches_the_child                    left: None  right: Some(15)
+```
+
+**Reproduced locally at 2 failures in 40 runs**, so a race rather than a runner artefact.
+
+#### The mechanism
+
+`CHILD_PID` is a process-global — it has to be, because a signal handler takes no arguments.
+`run` stores its child's pid there and clears it after the wait; the signal test stores its
+own child's pid and calls `signal_child`. **Cargo runs unit tests as threads in one process**,
+so all eight shared that one global.
+
+When `run(["false"])` overwrote `CHILD_PID` inside the window where the signal test fired its
+`SIGTERM`, the signal landed on the wrong child: `false` died of a signal, so `code()` was
+`None` instead of `Some(1)`; the `sleep` it was aimed at exited normally, so `signal()` was
+`None` instead of `Some(SIGTERM)`. **They always failed as a pair** — the fingerprint of one
+signal delivered to the wrong process.
+
+#### The tests were breaking the contract, not the code
+
+`run`'s own documentation has always said it is **not reentrant — one child at a time** — and
+production honours it: two call sites, `run/steps.rs`'s sequential operation loop and the
+`snapshots` passthrough, neither ever with two children alive at once. The suite was doing the
+one thing production never does.
+
+**So the lock went in the test module, not in `run`.** Making production reentrant to satisfy
+a test that violates its documented contract would be fixing the wrong thing — the same call
+`v0.0.7` made, where two tests contending on the run lock were fixed by giving each its own
+job name rather than weakening the lock. Production carries no mutex, no new atomic and no
+`cfg` branch.
+
+Three details decide whether the fix actually holds:
+
+- **A choke point, not a `lock()` per test.** All spawning goes through one `run_locked`
+  helper, so a test added later cannot forget something it would have to go out of its way to
+  avoid. Same reasoning as `0.1.28`, where a `--state-dir` flag was written and then removed
+  in favour of one harness helper: a guarantee every future author must remember is not one.
+- **Poisoning is recovered, deliberately.** A panic holding the lock would otherwise make
+  every later test fail with `PoisonError` instead of its own assertion — one real failure
+  becoming seven, with the true one hidden. The guarded data is `()`; no invariant can have
+  been corrupted.
+- **The guard's whole effect is its lifetime**, and `let _ = exclusive();` drops it instantly
+  while looking correct — silently restoring the race. `#[must_use]` turns that into a clippy
+  error under `-D warnings`, and `a_dropped_guard_would_not_serialise_anything` asserts the
+  lock is genuinely exclusive and genuinely released.
+
+The signal test now holds the guard across the whole store/signal/wait sequence rather than
+just the store, since the bug was a concurrent `run` landing *between* them.
+
+#### Why a flake was worth a release
+
+`v0.1.5` added the CI gate to `just merge-pr` because a red check had been merged over, and
+the argument was that a check nobody believes trains you to merge anyway. **A test that fails
+~5% of the time erodes that from the other side.** It also made tagging risky: `full-test`
+runs five platforms per tag, so each release had several independent chances to trip it, and
+`v0.1.21` is the precedent for a bad tag having to be deleted.
+
+313 tests, up from 312 — the new one is the guard-lifetime assertion.
 
 ### v0.1.32 — split `PLAN.md` and `NOTES.md` along the line they always intended
 
