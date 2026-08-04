@@ -12,6 +12,25 @@ on:
       - '**/Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/rust.yml'
+  # Weekly, so `full-test` runs BEFORE a release instead of only as part of one.
+  #
+  # This closes a real gap rather than adding routine noise. `full-test` is the only job that
+  # runs the release-shaped environments — all five platforms, and the Ubuntu and Fedora legs
+  # inside bare containers rather than on host runners — and until now it ran only on tags.
+  # That is exactly how the v0.1.21 time-zone-database failure passed every pull request and
+  # then broke the release: the first thing to exercise those containers was the tag itself,
+  # and the bad tag had to be deleted. A suite that is green on every PR and red at tag time
+  # has not been run in the environment it ships from.
+  #
+  # Mondays 06:37 UTC: off the hour, because GitHub queues scheduled workflows submitted at
+  # popular times, and a different day from security.yml's Sunday 00:00 audit so that a red
+  # week points at one workflow rather than two. A failed scheduled run notifies the repository
+  # owner, which is the point — nobody watches a schedule they have to remember to check.
+  #
+  # Scheduled runs only ever execute on the default branch, so this tests what a release would
+  # actually be cut from.
+  schedule:
+    - cron: '37 6 * * 1'
   workflow_dispatch:
     inputs:
       ref:
@@ -33,8 +52,10 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
-    # Skip this job on version tags (full-test will run instead)
-    if: github.ref_type != 'tag'
+    # Skipped on version tags AND on the weekly schedule — `full-test` covers both, and on a
+    # schedule event `github.ref_type` is 'branch', so without the second clause this job would
+    # run alongside it and test the same commit twice.
+    if: github.ref_type != 'tag' && github.event_name != 'schedule'
     # Two platforms are deliberately absent from this matrix and present in `full-test`, so
     # every one of them still runs on every tag and manual dispatch. Both removals follow the
     # same rule: **drop a leg only when it is the intersection of two things each already
@@ -61,12 +82,16 @@ jobs:
     # generated plist, and the launchd branches of `schedule`/`unschedule`/`status`. None of it
     # can run on Linux.
     #
-    # **What this buys, honestly: runner minutes, not wall clock.** Measured on the #44 run,
-    # `ubuntu-x64` was 37s while `fedora-x64` at 66s set the critical path either way. It also
-    # widens the gap that let the v0.1.21 time-zone-database failure pass every pull request
-    # and break the release: `full-test` runs only on tags, in leaner containers. If that bites
-    # again, the fix is to run `full-test` on a schedule or before a release — not to restore a
-    # leg whose coverage is already duplicated.
+    # **What this buys, honestly: less duplicated work, not wall clock and not money.** Measured
+    # on the #44 run, `ubuntu-x64` was 37s while `fedora-x64` at 66s set the critical path either
+    # way — and Actions minutes are free on a public repository, so v0.1.30's "runner minutes"
+    # framing overstated it. What is actually saved is one redundant job per pull request: less
+    # queue contention, one less line in the checks list, and less energy for no lost coverage.
+    #
+    # It did widen the gap that let the v0.1.21 time-zone-database failure pass every pull
+    # request and break the release, since `full-test` runs the leaner release-shaped containers.
+    # **That gap is now closed from the other side: `full-test` runs weekly (see the `on:`
+    # block).** Restoring a duplicated leg is still not the answer if a release goes red.
     strategy:
       matrix:
         platform: [ubuntu-arm, fedora-x64, macos]
@@ -122,8 +147,12 @@ jobs:
   full-test:
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
-    # Run on version tags or manual workflow_dispatch
-    if: (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+    # Version tags, the weekly schedule, or a manual dispatch.
+    #
+    # The schedule is what makes this job worth having before a release rather than during one;
+    # see the `on:` block. `build-release` and `release` stay tag-only, so a weekly run tests
+    # and publishes nothing.
+    if: (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
 
     strategy:
       matrix:
