@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.24)
+## Current State (v0.1.25)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,54 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.25 — on macOS, the tool could not find its own configuration
+
+**Every command exited 2 on a Mac**, and the reason was one line of platform courtesy:
+
+```
+$ rusticprofile config --check
+error: 1 configuration error:
+  /Users/u/Library/Application Support/rusticprofile/jobs.yaml: could not be read:
+    No such file or directory (os error 2)
+```
+
+`dirs::config_dir()` returns each platform's own convention, which on macOS is
+`~/Library/Application Support`. Meanwhile the man page's FILES section, the README and the
+shipped `config --example` all documented `$XDG_CONFIG_HOME/rusticprofile/jobs.yaml`, and
+chezmoi — which generates this fleet's configuration — writes it to `~/.config`. **The
+documented contract was already the XDG one; only the code disagreed.**
+
+`user_config_dir`, `default_rustic_config_dir` and `user_state_dir` now apply the XDG rules
+on macOS as well as Linux. **Nothing changes on Linux**: `dirs` implements exactly these
+rules there, so the resolved paths are identical.
+
+**The reason is not tidiness, and not "XDG is better".** `jobs.yaml` is designed to be
+byte-identical across a fleet — that is why it needs no templating while `rustic.toml` must
+be generated (§5.9). A config location that varies by operating system makes one line of one
+file resolve to two different places, and `${state_dir}` in the shipped `log:` would have
+pointed under `~/.local/state` on five hosts and `~/Library/Application Support` on two. A
+variable that means something different depending on which machine reads it is the
+fleet-wide version of the failure this project keeps finding.
+
+**This is a behaviour change on macOS, stated rather than hidden:** a Mac that had a config
+under `~/Library/Application Support/rusticprofile` must move it to `~/.config/rusticprofile`.
+No fallback probe was added — a location that depends on which directory happens to exist is
+how the same command comes to read different files on two machines, and the error already
+names the exact path it tried.
+
+Two details from the specification are honoured and tested, because both bite here
+specifically: **a relative `XDG_CONFIG_HOME` is ignored**, since a scheduled run's working
+directory is whatever launchd or systemd chose and honouring it would make the config a job
+loads depend on that; and an **empty** variable is the same as unset. The rules are a pure
+function taking the variable and `$HOME` as arguments — `std::env::set_var` is `unsafe` in
+edition 2024 and races every other test in the binary, so testing them through the process
+environment was not an option.
+
+Verified against the fleet's real generated config on the macOS host rather than a fixture:
+`config --check` passes, `plan --format lines` emits the expected argv, and 228 unit plus 45
+integration tests pass — **including the three rustic-backed integration tests**, which ran
+for the first time on macOS because rustic 0.11.3 is now installed there.
 
 ### v0.1.24 — name the version skew, and refresh a stale README
 

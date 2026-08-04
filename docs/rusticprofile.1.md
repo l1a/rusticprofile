@@ -205,6 +205,8 @@ The contract the implemented commands follow:
 **$XDG_STATE_HOME/rusticprofile/**
 :   Where `${state_dir}` points, and where run logs belong. Logs are **state, not configuration** — the XDG Base Directory specification names them as the example of what `XDG_STATE_HOME` is for. Pointing a `log:` at `${config_dir}` instead is also self-defeating when `~/.config` is one of your backup sources: the job then appends to a directory it is in the middle of backing up, and the rustic profile needs an exclusion to compensate.
 
+The variables are honoured where they are set and fall back to `~/.config` and `~/.local/state` where they are not — **on macOS as well as Linux**, rather than `~/Library/Application Support`. A relative value is ignored, as the specification requires. This is deliberate rather than unidiomatic: `jobs.yaml` is meant to be byte-identical across a fleet, and a location that varied by operating system would make one line of one file resolve to two different places.
+
 # SEE ALSO
 
 **rustic**(1), **systemd.timer**(5), **launchd.plist**(5)
