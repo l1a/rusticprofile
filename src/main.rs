@@ -385,7 +385,7 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
         };
 
         let dir = resolve_unit_dir(args.unit_dir.clone(), schedule.permission);
-        let ctx = systemd::UnitContext {
+        let ctx = schedule::UnitContext {
             binary: &binary,
             config: &path,
             rustic_binary: &rustic_binary,

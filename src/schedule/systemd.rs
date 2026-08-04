@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use crate::config::job::Job;
 use crate::config::schedule::{Permission, Priority, Schedule};
 
+use super::UnitContext;
 use super::calendar;
 
 /// Where a unit is installed.
@@ -47,35 +48,6 @@ pub fn service_name(job: &str) -> String {
 /// The timer unit's file name for `job`.
 pub fn timer_name(job: &str) -> String {
     format!("rusticprofile-{job}.timer")
-}
-
-/// Inputs a unit needs beyond the job itself.
-pub struct UnitContext<'a> {
-    /// Absolute path to the rusticprofile executable. systemd requires `ExecStart` to be
-    /// absolute; a bare name is not resolved against `PATH`.
-    pub binary: &'a Path,
-    /// Absolute path to `jobs.yaml`, passed explicitly so a unit does not depend on which
-    /// `XDG_CONFIG_HOME` the service manager happens to hand the process.
-    pub config: &'a Path,
-    /// Absolute path to the **rustic** executable, for the same reason as [`Self::binary`]
-    /// and one that is easy to miss.
-    ///
-    /// The unit invokes rusticprofile by absolute path, and rusticprofile then spawns
-    /// `rustic`. If that second name is bare it is resolved against the *service manager's*
-    /// `PATH` — which is not the shell's. With `linger` enabled (and it must be, or backups
-    /// only run while someone is logged in) the user manager starts at **boot** with the
-    /// system default `PATH=/usr/local/bin:/usr/bin`: no login shell, no `~/.zprofile`, no
-    /// `~/.cargo/bin`. A cargo-installed rustic is then invisible to it.
-    ///
-    /// Measured across two hosts with byte-identical units and no `PATH` line in either:
-    /// one had `~/.cargo/bin` on the manager's `PATH` because its manager happened to be
-    /// restarted from a login session, the other did not and every run failed with
-    /// `could not run rustic: No such file or directory`. The working host was the
-    /// accident, and a reboot would have taken it too.
-    ///
-    /// Resolving it here makes the unit say what it means, and moves the failure to
-    /// `schedule` time where a human is watching.
-    pub rustic_binary: &'a Path,
 }
 
 /// The `[Service]` lines implementing a priority.
