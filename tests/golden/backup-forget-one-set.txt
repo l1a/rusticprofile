@@ -2,6 +2,8 @@ rustic
 -P
 RUSTIC_DIR/p.toml
 backup
+--host
+host-c
 --json
 --name
 core
@@ -10,3 +12,5 @@ rustic
 -P
 RUSTIC_DIR/p.toml
 forget
+--filter-host
+host-c

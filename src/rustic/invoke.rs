@@ -99,11 +99,16 @@ impl Invocation {
 /// leading dash would make it indistinguishable from a flag — argument injection by config.
 /// This function does not re-check, because a load-time error naming the offending key is
 /// far more useful than a silent substitution here.
+///
+/// `hostname` is the name rustic should record and filter on, or `None` to let rustic
+/// decide (`defaults.hostname: rustic`). See [`HostnameMode`](crate::config::job::HostnameMode)
+/// and `PLAN.md` §5.9 for why this tool supplies it at all.
 pub fn build_argv(
     binary: &str,
     profile: &str,
     operation: Operation,
     snapshot_sets: &[String],
+    hostname: Option<&str>,
     options: Options,
 ) -> Vec<OsString> {
     let mut argv: Vec<OsString> = vec![
@@ -115,6 +120,29 @@ pub fn build_argv(
 
     if options.dry_run {
         argv.push(OsString::from("--dry-run"));
+    }
+
+    // The hostname rusticprofile owns (`PLAN.md` §5.9). Without this, rustic asks the OS
+    // and macOS answers `foo.local` while Linux answers `foo`, so one repository ends up
+    // with two naming conventions and every filter has to know which hosts are which.
+    //
+    // `--host` sets what a backup RECORDS; `--filter-host` scopes what forget and prune
+    // SELECT. They are different flags for the same name, and only `backup` accepts the
+    // former. Measured: for both, the CLI overrides the config file, which is what makes
+    // the answer independent of what any profile says.
+    //
+    // Deliberately not emitted for the `snapshots` passthrough — see `query_argv`.
+    if let Some(host) = hostname {
+        match operation {
+            Operation::Backup => {
+                argv.push(OsString::from("--host"));
+                argv.push(OsString::from(host));
+            }
+            Operation::Forget | Operation::Prune => {
+                argv.push(OsString::from("--filter-host"));
+                argv.push(OsString::from(host));
+            }
+        }
     }
 
     if operation == Operation::Backup {
@@ -182,6 +210,7 @@ pub fn plan_job(config: &Config, job: &Job, options: Options) -> Vec<Invocation>
                 &profile,
                 operation,
                 &job.snapshot_sets,
+                config.recorded_host.as_deref(),
                 options,
             ),
         })
@@ -219,6 +248,7 @@ mod tests {
             "dot-files",
             Operation::Backup,
             &sets(&["core", "gnupg"]),
+            None,
             Options::default(),
         );
         assert_eq!(
@@ -241,7 +271,14 @@ mod tests {
     fn backup_without_sets_passes_no_name_at_all() {
         // Meaningfully different from passing none that resolved: rustic then uses every
         // entry the profile defines.
-        let argv = build_argv("rustic", "p", Operation::Backup, &[], Options::default());
+        let argv = build_argv(
+            "rustic",
+            "p",
+            Operation::Backup,
+            &[],
+            None,
+            Options::default(),
+        );
         assert_eq!(
             as_strings(&argv),
             vec!["rustic", "-P", "p", "backup", "--json"]
@@ -258,6 +295,7 @@ mod tests {
                 "p",
                 op,
                 &sets(&["core", "gnupg"]),
+                None,
                 Options::default(),
             );
             assert_eq!(
@@ -274,6 +312,7 @@ mod tests {
             "p",
             Operation::Backup,
             &[],
+            None,
             Options::default(),
         );
         assert_eq!(argv[0], OsString::from("/opt/bin/rustic"));
@@ -294,6 +333,7 @@ mod tests {
                 "p",
                 op,
                 &sets(&["core", "gnupg", "nushell"]),
+                None,
                 Options::default(),
             );
             assert_eq!(find_secret_bearing_flag(&argv), None);
@@ -335,23 +375,99 @@ mod tests {
     }
 
     #[test]
-    fn the_only_flags_emitted_are_the_three_this_tool_owns() {
+    fn the_only_flags_emitted_are_the_ones_this_tool_owns() {
         // A stronger statement than "no secrets": rusticprofile constructs no rustic flags
         // at all beyond these. If this test needs changing, the delegation boundary is
         // moving and that belongs in PLAN.md first.
-        let argv = build_argv(
+        //
+        // It moved once, deliberately, and PLAN.md §5.9 records the reversal: `--host` and
+        // `--filter-host` joined the list in 0.1.34, because leaving the hostname to rustic
+        // meant macOS recorded `foo.local` while Linux recorded `foo` — one repository,
+        // two naming conventions, and no way for a user without chezmoi to get it right.
+        // Nothing else may join them without the same treatment.
+        let deferred = build_argv(
             "rustic",
             "p",
             Operation::Backup,
             &sets(&["core"]),
+            None,
             Options::default(),
         );
-        let flags: Vec<String> = argv
-            .iter()
+        assert_eq!(flags_in(&deferred), vec!["-P", "--json", "--name"]);
+
+        let owned = build_argv(
+            "rustic",
+            "p",
+            Operation::Backup,
+            &sets(&["core"]),
+            Some("host-a"),
+            Options::default(),
+        );
+        assert_eq!(flags_in(&owned), vec!["-P", "--host", "--json", "--name"]);
+
+        for op in [Operation::Forget, Operation::Prune] {
+            let argv = build_argv("rustic", "p", op, &[], Some("host-a"), Options::default());
+            assert_eq!(
+                flags_in(&argv),
+                vec!["-P", "--filter-host"],
+                "{op} scopes by host and takes no --name or --json"
+            );
+        }
+    }
+
+    #[test]
+    fn the_recorded_host_is_a_backup_flag_and_a_filter_everywhere_else() {
+        // `--host` sets what a snapshot RECORDS; `--filter-host` scopes what an operation
+        // SELECTS. Only backup accepts the former, and confusing them would either fail to
+        // set the name or fail to scope a destructive operation.
+        let backup = as_strings(&build_argv(
+            "rustic",
+            "p",
+            Operation::Backup,
+            &[],
+            Some("host-a"),
+            Options::default(),
+        ));
+        assert!(backup.contains(&"--host".to_string()));
+        assert!(!backup.contains(&"--filter-host".to_string()));
+
+        let forget = as_strings(&build_argv(
+            "rustic",
+            "p",
+            Operation::Forget,
+            &[],
+            Some("host-a"),
+            Options::default(),
+        ));
+        assert!(forget.contains(&"--filter-host".to_string()));
+        assert!(!forget.contains(&"--host".to_string()));
+    }
+
+    #[test]
+    fn deferring_to_rustic_emits_no_hostname_flag_at_all() {
+        // `defaults.hostname: rustic` is the migration path for a repository whose history
+        // is under a different name. It must emit NOTHING, not an empty value: an empty
+        // `--host ""` would record the empty string and split the group anyway.
+        for op in [Operation::Backup, Operation::Forget, Operation::Prune] {
+            let argv = as_strings(&build_argv(
+                "rustic",
+                "p",
+                op,
+                &[],
+                None,
+                Options::default(),
+            ));
+            assert!(!argv.iter().any(|a| a == "--host" || a == "--filter-host"));
+            assert!(!argv.iter().any(|a| a.is_empty()));
+        }
+    }
+
+    /// Flags, in argv order — the shared helper the inventory assertions read from.
+    fn flags_in(argv: &[OsString]) -> Vec<String> {
+        argv.iter()
             .map(|a| a.to_string_lossy().into_owned())
             .filter(|a| a.starts_with('-'))
-            .collect();
-        assert_eq!(flags, vec!["-P", "--json", "--name"]);
+            .collect()
     }
 
     #[test]
@@ -363,6 +479,7 @@ mod tests {
             "p",
             Operation::Backup,
             &sets(&["a b 'c' **/d"]),
+            None,
             Options::default(),
         );
         assert_eq!(argv.last().unwrap(), &OsString::from("a b 'c' **/d"));
@@ -378,6 +495,8 @@ mod tests {
             jobs: Vec::new(),
             gated_out: Vec::new(),
             default_job: None,
+            recorded_host: None,
+            hostname_mode: crate::config::job::HostnameMode::Rustic,
             simulating_another_host: false,
         }
     }
@@ -443,6 +562,7 @@ mod tests {
                 "p",
                 Operation::Backup,
                 &sets(&["core"]),
+                None,
                 Options::default(),
             ),
         };

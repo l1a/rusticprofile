@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 
-use super::job::{Operation, RawConfig, SCHEMA_VERSION};
+use super::job::{HostnameMode, Operation, RawConfig, SCHEMA_VERSION};
 use super::paths;
 use super::rustic_toml::{self, ReadError};
 
@@ -417,6 +417,14 @@ pub fn check_filter_hosts_can_match(
             continue;
         };
 
+        // rusticprofile emits `--filter-host` itself unless told to defer, and the CLI
+        // overrides the config file — so under `short`/`full` the profile's `filter-hosts`
+        // cannot cause the silent-retention failure this check exists to catch. Checking it
+        // would only refuse a harmless leftover. `PLAN.md` §5.9.
+        if raw.defaults.hostname != HostnameMode::Rustic {
+            continue;
+        }
+
         // What rustic will WRITE on the snapshot — the pinned name if there is one. This
         // is the only value `filter-hosts` can usefully be compared against.
         let recorded = profile.recorded_host(host);
@@ -543,7 +551,15 @@ pub fn check_forget_is_scoped(raw: &RawConfig, rustic_config_dir: &Path) -> Vec<
             ));
         }
 
-        if !profile.forget_is_scoped() {
+        // rusticprofile supplies `--filter-host` itself unless told to defer, and the CLI
+        // overrides the config file (measured). So under `short`/`full` a profile with no
+        // scoping filter is *correct* — the forget is scoped by the flag we emit — and
+        // demanding one here would refuse a config that is right. Under `rustic` nothing is
+        // emitted, so the profile is the only scope there is and the rule stands.
+        // `PLAN.md` §5.9.
+        let scoped_by_us = raw.defaults.hostname != HostnameMode::Rustic;
+
+        if !profile.forget_is_scoped() && !scoped_by_us {
             out.push(Violation::new(
                 format!("jobs.{name}.operations"),
                 format!(
@@ -839,6 +855,23 @@ jobs:
     operations: [backup, forget]
 ";
 
+    /// The same job with `hostname: rustic`.
+    ///
+    /// The host-scoping checks only apply when rusticprofile is *not* emitting
+    /// `--filter-host` itself — under the default `short` it supplies the scope, so a
+    /// profile without `filter-hosts` is correct and the checks deliberately skip
+    /// (`PLAN.md` §5.9). Every test about what a *profile* must contain therefore has to
+    /// say so explicitly, or it is asserting against a mode where the rule does not exist.
+    const FORGET_JOB_DEFERRED: &str = "
+schema: 1
+defaults:
+  hostname: rustic
+jobs:
+  j:
+    profile: p
+    operations: [backup, forget]
+";
+
     // --- unexpandable sources ---------------------------------------------------------
     //
     // rustic expands neither `~` nor `$VAR`, and an unexpanded source produces a
@@ -940,6 +973,44 @@ jobs:
         );
     }
 
+    // --- rusticprofile owning the hostname changes what a PROFILE must contain --------
+    //
+    // Under the default `short` (and under `full`), rusticprofile emits `--filter-host`
+    // itself and the CLI overrides the config file. So a profile with no `filter-hosts` is
+    // correctly scoped, and one naming the wrong host is harmless leftover rather than the
+    // silent-retention bug. Both checks skip. Under `rustic` nothing is emitted and the
+    // profile is the only scope there is, so both apply exactly as before. `PLAN.md` §5.9.
+
+    #[test]
+    fn an_unscoped_forget_is_accepted_when_we_supply_the_scope() {
+        // The behaviour change with the widest blast radius: this exact config was a
+        // load-time error before 0.1.34 and is correct after it.
+        let dir = profile_with("[forget]\ngroup-by = \"host,label\"\n");
+        assert!(
+            check_forget_is_scoped(&parse(FORGET_JOB), dir.path()).is_empty(),
+            "rusticprofile emits --filter-host under the default mode, so the profile \
+             needs no filter of its own"
+        );
+    }
+
+    #[test]
+    fn an_unscoped_forget_is_still_refused_when_deferring_to_rustic() {
+        // The escape hatch must not become an escape from the safety rule.
+        let dir = profile_with("[forget]\ngroup-by = \"host,label\"\n");
+        let v = check_forget_is_scoped(&parse(FORGET_JOB_DEFERRED), dir.path());
+        assert_eq!(v.len(), 1, "{v:?}");
+    }
+
+    #[test]
+    fn a_wrong_filter_host_is_not_reported_when_we_override_it() {
+        // Leftover from a pre-0.1.34 config. Harmless -- our flag wins -- so refusing it
+        // would be refusing a configuration that behaves correctly.
+        let dir = profile_with(
+            "[snapshot-filter]\nfilter-hosts = [\"someone-else\"]\n\n[forget]\ngroup-by = \"host,label\"\n",
+        );
+        assert!(check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a").is_empty());
+    }
+
     // --- filter-hosts must be able to match -------------------------------------------
     //
     // A filter that is present is not the same as one that works. rustic matches
@@ -951,7 +1022,10 @@ jobs:
         let dir = profile_with(
             "[snapshot-filter]\nfilter-hosts = [\"host-a\"]\n\n[forget]\ngroup-by = \"host\"\n",
         );
-        assert!(check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a").is_empty());
+        assert!(
+            check_filter_hosts_can_match(&parse(FORGET_JOB_DEFERRED), dir.path(), "host-a")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -959,7 +1033,7 @@ jobs:
         let dir = profile_with(
             "[snapshot-filter]\nfilter-hosts = [\"host-b\"]\n\n[forget]\ngroup-by = \"host\"\n",
         );
-        let v = check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a");
+        let v = check_filter_hosts_can_match(&parse(FORGET_JOB_DEFERRED), dir.path(), "host-a");
         assert_eq!(v.len(), 1, "{v:?}");
         assert!(locations(&v).contains(&"jobs.j.profile"));
     }
@@ -970,7 +1044,10 @@ jobs:
         let dir = profile_with(
             "[snapshot-filter]\nfilter-hosts = [\"host-b\", \"host-a\"]\n\n[forget]\ngroup-by = \"host\"\n",
         );
-        assert!(check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a").is_empty());
+        assert!(
+            check_filter_hosts_can_match(&parse(FORGET_JOB_DEFERRED), dir.path(), "host-a")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -979,7 +1056,8 @@ jobs:
         let dir = profile_with(
             "[snapshot-filter]\nfilter-hosts = [\"host-e\"]\n\n[forget]\ngroup-by = \"host\"\n",
         );
-        let v = check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-e.local");
+        let v =
+            check_filter_hosts_can_match(&parse(FORGET_JOB_DEFERRED), dir.path(), "host-e.local");
         assert_eq!(v.len(), 1, "a short form must not be accepted: {v:?}");
         let msg = format!("{:?}", v[0]);
         assert!(
@@ -1004,7 +1082,8 @@ jobs:
             "[backup]\nhost = \"host-e\"\n\n[snapshot-filter]\nfilter-hosts = [\"host-e\"]\n\n[forget]\ngroup-by = \"host,label\"\n",
         );
         assert!(
-            check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-e.local").is_empty(),
+            check_filter_hosts_can_match(&parse(FORGET_JOB_DEFERRED), dir.path(), "host-e.local")
+                .is_empty(),
             "a filter matching the pinned host must be accepted on a dotted machine"
         );
     }
@@ -1018,7 +1097,8 @@ jobs:
         let dir = profile_with(
             "[backup]\nhost = \"host-e\"\n\n[snapshot-filter]\nfilter-hosts = [\"host-e.local\"]\n\n[forget]\ngroup-by = \"host,label\"\n",
         );
-        let v = check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-e.local");
+        let v =
+            check_filter_hosts_can_match(&parse(FORGET_JOB_DEFERRED), dir.path(), "host-e.local");
         assert_eq!(v.len(), 1, "{v:?}");
         let msg = format!("{:?}", v[0]);
         assert!(
@@ -1038,7 +1118,8 @@ jobs:
             "[snapshot-filter]\nfilter-hosts = [\"host-e.local\"]\n\n[forget]\ngroup-by = \"host\"\n",
         );
         assert!(
-            check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-e.local").is_empty()
+            check_filter_hosts_can_match(&parse(FORGET_JOB_DEFERRED), dir.path(), "host-e.local")
+                .is_empty()
         );
     }
 
@@ -1049,7 +1130,8 @@ jobs:
         let dir = profile_with(
             "[snapshot-filter]\nfilter-hosts = [\"host-e\"]\n\n[forget]\ngroup-by = \"host\"\n",
         );
-        let v = check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-e.local");
+        let v =
+            check_filter_hosts_can_match(&parse(FORGET_JOB_DEFERRED), dir.path(), "host-e.local");
         assert_eq!(v.len(), 1, "{v:?}");
         let msg = format!("{:?}", v[0]);
         assert!(msg.contains("fqdnHostname"), "{msg}");
@@ -1065,7 +1147,7 @@ jobs:
         let dir = profile_with(
             "[snapshot-filter]\nfilter-hosts = [\"something-else\"]\n\n[forget]\ngroup-by = \"host\"\n",
         );
-        let v = check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a");
+        let v = check_filter_hosts_can_match(&parse(FORGET_JOB_DEFERRED), dir.path(), "host-a");
         let msg = format!("{:?}", v[0]);
         assert!(!msg.contains("fqdnHostname"), "{msg}");
     }
@@ -1074,7 +1156,10 @@ jobs:
     fn an_absent_filter_is_left_to_the_scoping_check() {
         // "no filter at all" is check_forget_is_scoped's error to report, not this one's.
         let dir = profile_with("[forget]\ngroup-by = \"host\"\n");
-        assert!(check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-a").is_empty());
+        assert!(
+            check_filter_hosts_can_match(&parse(FORGET_JOB_DEFERRED), dir.path(), "host-a")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1098,7 +1183,7 @@ jobs:
         let dir = profile_with(
             "[snapshot-filter]\nfilter-hosts = [\"host-a\"]\n\n[forget]\ngroup-by = \"host\"\n",
         );
-        assert!(check_forget_is_scoped(&parse(FORGET_JOB), dir.path()).is_empty());
+        assert!(check_forget_is_scoped(&parse(FORGET_JOB_DEFERRED), dir.path()).is_empty());
     }
 
     #[test]
@@ -1106,7 +1191,7 @@ jobs:
         // It would apply to every snapshot from every machine in a shared repository, and
         // it cannot be undone.
         let dir = profile_with("[forget]\ngroup-by = \"host\"\n");
-        let v = check_forget_is_scoped(&parse(FORGET_JOB), dir.path());
+        let v = check_forget_is_scoped(&parse(FORGET_JOB_DEFERRED), dir.path());
         assert_eq!(v.len(), 1);
         assert!(v[0].message.contains("every snapshot from every host"));
     }
@@ -1116,7 +1201,7 @@ jobs:
         // Measured: rustic accepts them there and ignores them. Without this the config
         // reads as scoped, passes validation, and deletes across the whole fleet.
         let dir = profile_with("[forget]\ngroup-by = \"host\"\nfilter-hosts = [\"host-a\"]\n");
-        let v = check_forget_is_scoped(&parse(FORGET_JOB), dir.path());
+        let v = check_forget_is_scoped(&parse(FORGET_JOB_DEFERRED), dir.path());
         let text = v
             .iter()
             .map(|x| x.message.as_str())
@@ -1132,7 +1217,7 @@ jobs:
     #[test]
     fn an_implicit_group_by_is_refused() {
         let dir = profile_with("[snapshot-filter]\nfilter-hosts = [\"host-a\"]\n");
-        let v = check_forget_is_scoped(&parse(FORGET_JOB), dir.path());
+        let v = check_forget_is_scoped(&parse(FORGET_JOB_DEFERRED), dir.path());
         assert_eq!(v.len(), 1);
         assert!(v[0].message.contains("group-by"));
     }
@@ -1157,7 +1242,7 @@ jobs:
         // The scope cannot be confirmed, and an unconfirmed scope on an irreversible
         // operation is exactly what must not proceed.
         let dir = tempfile::tempdir().unwrap();
-        let v = check_forget_is_scoped(&parse(FORGET_JOB), dir.path());
+        let v = check_forget_is_scoped(&parse(FORGET_JOB_DEFERRED), dir.path());
         assert_eq!(v.len(), 1);
         assert!(v[0].message.contains("cannot be confirmed"));
     }

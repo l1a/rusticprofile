@@ -69,6 +69,66 @@ pub struct RawDefaults {
     pub rustic_binary: Option<String>,
     /// Directory holding rustic's own `<profile>.toml` files.
     pub rustic_config_dir: Option<String>,
+    /// Which name rustic records on a snapshot, and scopes `forget`/`prune` to.
+    ///
+    /// Defaults to [`HostnameMode::Short`]. See that type for why this exists at all.
+    #[serde(default)]
+    pub hostname: HostnameMode,
+}
+
+/// How the hostname rusticprofile hands to rustic is derived.
+///
+/// **This exists because rustic asks the OS, and the OS disagrees with itself across
+/// platforms.** Linux reports `foo`; macOS reports `foo.local`. A fleet with both then
+/// carries two naming conventions in one repository's history forever, and every filter,
+/// query and census has to know which hosts are which. `PLAN.md` §5.9 has the full
+/// reversal; the short version is that a user who writes no configuration at all should
+/// still get a sane, uniform name.
+///
+/// rusticprofile emits `--host` on `backup` and `--filter-host` on `forget`/`prune`, and
+/// **for these flags the CLI overrides the config file** (measured against rustic 0.11.3),
+/// so the answer stops depending on what any file happens to say.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HostnameMode {
+    /// The OS hostname up to the first `.` — `foo.local` becomes `foo`. **The default.**
+    ///
+    /// Identical to the OS name on Linux, so nothing changes there. On macOS it removes the
+    /// `.local` suffix, which **changes the recorded name** — see `full` and `rustic` for
+    /// when that is the wrong thing to do.
+    #[default]
+    Short,
+    /// The OS hostname exactly as reported, `.local` and all.
+    ///
+    /// The answer when short names **collide across domains**: `web1.prod` and
+    /// `web1.staging` both shorten to `web1`, which would put two machines in one retention
+    /// group where they would forget each other's snapshots — the `PLAN.md` §7.5 rule
+    /// broken by default rather than by misconfiguration.
+    Full,
+    /// Emit neither flag. rustic decides, from the OS or from `[backup] host`.
+    ///
+    /// **The migration path for an existing repository.** Changing the recorded name splits
+    /// the retention group: stored snapshots keep the old name, and under
+    /// `group-by = "host,label"` the old group stops being selected and is never retained
+    /// down again — it simply accumulates, silently. Staying on `rustic` keeps whatever a
+    /// repository already uses. This is the pre-0.1.34 behaviour.
+    Rustic,
+}
+
+impl HostnameMode {
+    /// The name to hand rustic, or `None` when rustic should decide.
+    pub fn resolve(self, os_hostname: &str) -> Option<String> {
+        match self {
+            Self::Short => Some(
+                os_hostname
+                    .split_once('.')
+                    .map_or(os_hostname, |(head, _)| head)
+                    .to_string(),
+            ),
+            Self::Full => Some(os_hostname.to_string()),
+            Self::Rustic => None,
+        }
+    }
 }
 
 /// One job, as written.
