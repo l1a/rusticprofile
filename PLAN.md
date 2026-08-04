@@ -506,8 +506,30 @@ four idle hosts are untouched during M1 — they are the control group.
   file**, which means in-process priority/ionice code is never written. Covers 5 Linux hosts.
   `status` must surface the `enabled-on-hosts` gate so "host-d has a prune timer and nobody else
   does" is inspectable.
-- **M3 — launchd.** `~/Library/LaunchAgents`, `StartCalendarInterval`, `launchctl bootstrap
-  gui/$UID`. Covers host-e.local and host-g.local. After M2 because 5 hosts > 2.
+- **M3 — launchd. Complete (0.1.26–0.1.27).** `~/Library/LaunchAgents`,
+  `StartCalendarInterval`, `launchctl bootstrap gui/$UID` — all three as sketched. Covers
+  host-e.local and host-g.local. Done after M2 because 5 hosts > 2.
+
+  **The vocabulary was shared, as predicted, and four platform differences were not.** Each
+  was measured on macOS 26.6 rather than reasoned about, and each is a property of launchd:
+
+  | | systemd | launchd |
+  |---|---|---|
+  | files per job | **2** — a timer cannot run a command | **1** — schedule and program in one job |
+  | fleet spread | `RandomizedDelaySec=` | no equivalent; the offset is a real minute inside `StartCalendarInterval`, chosen once and reused |
+  | missed run | `Persistent=true` | free for **sleep** (documented, coalesced into one run); **not** caught up if the agent was unloaded |
+  | runs with nobody logged in | `linger` | **no equivalent** — a user agent needs a login session; `permission: system` (LaunchDaemon) is the only way |
+  | next fire time | `NextElapseUSecRealtime` | **not reported at all**, so `next_run` is `null` |
+
+  The absolute-path requirement from `0.1.10` carries over unchanged and for the same reason:
+  a launchd agent gets `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and `PWD=/` (measured), so a
+  Homebrew rustic is as invisible to it as a cargo-installed one is to a systemd user manager
+  started at boot.
+
+  **The login limitation is the one that matters operationally**, and it is not a gap that can
+  be closed by more code: a Mac sitting at the login window takes no backups, nothing fails,
+  and the only evidence is an absence. That is why `schedule` and `status` both state it, and
+  why `last_success` is the field to alert on there even more than on Linux.
 - **M4 — lock coordination.** `LockBudget` implemented: wait budget, execution-time crediting,
   stale-lock handling. Only then is `prune` against the shared repo supported.
   **Reclassified 2026-08-02 from prospective to load-bearing** (§7.6): rustic takes no

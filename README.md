@@ -8,9 +8,9 @@ A local, per-machine scheduler and orchestrator for [rustic](https://rustic.cli.
 
 ## Status
 
-**Milestones 1, 2 and 5 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — schedule itself with systemd, and **report what it has been doing**: a per-run log, a status file recording when each job last *succeeded*, and `--json` for anything automated.
+**Milestones 1, 2, 3 and 5 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — schedule itself with **systemd on Linux or launchd on macOS**, and **report what it has been doing**: a per-run log, a status file recording when each job last *succeeded*, and `--json` for anything automated.
 
-**Linux only in practice.** Everything but `schedule` works anywhere; scheduling needs systemd, and macOS launchd is the next milestone. See *What it does not do yet* below, which you should read before pointing several machines at one repository.
+**Linux and macOS.** `schedule` refuses on any other platform rather than writing units nothing will run; `config`, `plan` and `run` work anywhere. One macOS limitation is worth knowing before you rely on it: a user LaunchAgent runs **only while you are logged in**, because launchd has no equivalent of systemd's `linger`. See *What it does not do yet* below, which you should read before pointing several machines at one repository.
 
 Today:
 
@@ -44,7 +44,7 @@ rusticprofile unschedule -n dot-files                # remove the units
 
 rusticprofile owns **when** backups run, **which** jobs exist, and **on which hosts**:
 
-- **systemd** units — install, remove, status
+- **systemd** units on Linux, **launchd** agents on macOS — install, remove, status
 - per-host job gating, so one machine runs the prune job and the others do not
 - operation sequencing within a job (backup, then forget)
 - exit classification, including telling a partial backup apart from a failed one
@@ -60,9 +60,14 @@ These are planned and not written. They are listed here rather than in the secti
 because a backup tool's README is a safety surface, and an aspirational feature list is a
 way to lose data.
 
-- **launchd (macOS).** Only systemd is implemented. `schedule` **refuses** on other
-  platforms rather than writing units nothing will run; `config`, `plan` and `run` work
-  everywhere, so a job can be driven by any scheduler you already have.
+- **Backups while nobody is logged in, on macOS.** launchd has no equivalent of systemd's
+  `linger`: a user LaunchAgent runs only inside a login session, so a Mac at the login
+  window takes no backups — nothing fails, and the only evidence is an absence. Watch
+  `last_success`, or use `permission: system` for a LaunchDaemon, which runs regardless of
+  login as root. `schedule` and `status` both state this.
+- **A next-fire time on macOS.** launchd does not report one, so `next_run` is `null` there
+  and `status` says why. `status --json` names the backend so a monitor can tell "launchd
+  never tells" from "could not read the timer".
 - **Repository lock coordination.** `run` takes a local per-job lock so two runs on *one*
   machine cannot overlap. There is **no cross-machine coordination**, and you should read
   the next paragraph before pointing several machines at one repository.

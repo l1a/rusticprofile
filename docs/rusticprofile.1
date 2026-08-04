@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.26" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.27" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -34,7 +34,7 @@ This separation is deliberate\. rustic already provides profiles, hooks, forget 
 .PP
 The \fBconfig\fP subcommand inspects and validates `\f[CR]jobs\.yaml\fP`, and the \fBplan\fP subcommand prints the exact command line a job would run without running it\. Neither ever invokes \fBrustic\fP(1), contacts a repository, or needs a network, so both are safe to run at any time\.
 .PP
-The \fBrun\fP subcommand executes a job, and \fBschedule\fP installs the systemd units that trigger it\. Invoking \fBrusticprofile\fP with no arguments exits non\-zero and says so rather than doing anything by default\.
+The \fBrun\fP subcommand executes a job, and \fBschedule\fP installs the systemd units (Linux) or launchd agent (macOS) that triggers it\. Invoking \fBrusticprofile\fP with no arguments exits non\-zero and says so rather than doing anything by default\.
 
 .SH "OPTIONS"
 \fB\-h, \-\-help\fP
@@ -112,30 +112,45 @@ Exit status is \fB0\fP for success or partial, \fB1\fP for failure, \fB130\fP fo
 
 .SH "SCHEDULE"
 .PP
-\fBschedule\fP writes a systemd service and timer for a job and arms the timer; \fBunschedule\fP disables and removes them\. Each is a single step and each fully undoes the other\. \fBstatus\fP reports what is installed on this host and what is deliberately not\.
+\fBschedule\fP installs a job's OS schedule and arms it; \fBunschedule\fP disarms and removes it\. Each is a single step and each fully undoes the other\. \fBstatus\fP reports what is installed on this host and what is deliberately not\.
+.PP
+On \fBLinux\fP that means systemd units driven by `\f[CR]systemctl\fP`; on \fBmacOS\fP, a launchd agent driven by `\f[CR]launchctl\fP`\. On a platform with neither, \fBschedule\fP refuses and writes nothing \-\- files on disk plus a success message are indistinguishable from a working install, so refusing is the only honest answer\. \fBstatus\fP reports the backend it found, and `\f[CR]status \-\-json\fP` names it in a `\f[CR]backend\fP` field\.
 \fB\-n\fP \fIJOB\fP
 .RS
-.PP
-The job to act on\. Optional for \fBschedule\fP, where omitting it installs units for every job declaring a `\f[CR]schedule:\fP` block\. Required for \fBunschedule\fP \-\- removal is always named explicitly\.
+The job to act on\. Optional for \fBschedule\fP, where omitting it installs every job declaring a `\f[CR]schedule:\fP` block\. Required for \fBunschedule\fP \-\- removal is always named explicitly\.
 .RE
 \fB\-\-write\-only\fP
 .RS
-.PP
-Write the units without arming the timer\. `\f[CR]schedule\fP` arms it by default \-\- that is what the verb means, and \fBunschedule\fP is a single step that fully undoes it\. Use this to inspect the generated units before anything can fire\.
-.PP
-A scheduled job is \fBtwo\fP units: a `\f[CR]\.timer\fP` and the `\f[CR]\.service\fP` it activates\. systemd offers no way for a timer to run a command directly, so this is not a choice rusticprofile makes\. Only the timer carries an `\f[CR][Install]\fP` section; the service is reported by systemd as `\f[CR]static\fP`, meaning it can be started by its timer and not enabled independently \-\- a service that could be enabled on its own would run the backup at every login, with no schedule to explain it\.
+Write the schedule without arming it\. `\f[CR]schedule\fP` arms by default \-\- that is what the verb means, and \fBunschedule\fP is a single step that fully undoes it\. Use this to inspect what was generated before anything can fire\.
 .RE
 \fB\-\-unit\-dir\fP \fIDIR\fP
 .RS
-.PP
-Write or read units in \fIDIR\fP instead of the systemd user directory\. Intended for inspecting generated units without installing them; `\f[CR]systemctl\fP` is not invoked when this is given\.
+Write or read units and agents in \fIDIR\fP instead of the platform's own directory\. Intended for inspecting what is generated without installing it; neither `\f[CR]systemctl\fP` nor `\f[CR]launchctl\fP` is invoked when this is given\.
 .RE
 .PP
-Units are named `\f[CR]rusticprofile\-\fP`\fIJOB\fP`\f[CR]\.service\fP` and `\f[CR]\.timer\fP`, and both commands are idempotent: identical content is not rewritten, and removing units that are not there is not an error\. Re\-running \fBschedule\fP reports `\f[CR]unchanged\fP` rather than implying work happened\.
+Both commands are idempotent on both platforms: identical content is not rewritten, and removing something that is not there is not an error\. Re\-running \fBschedule\fP reports `\f[CR]unchanged\fP` rather than implying work happened\.
 .PP
-The generated timer sets \fBPersistent=true\fP, so a run missed while the machine was asleep is caught up rather than silently skipped, and \fBRandomizedDelaySec\fP, so several machines sharing one repository do not all wake on the same instant\. Scheduling priority is expressed as `\f[CR]Nice=\fP` and `\f[CR]IOSchedulingClass=\fP` in the unit rather than applied in\-process\.
+Nothing generated contains a \fBlog path or a date\fP\. A unit or agent written today must not log to today's file forever, so `\f[CR]${date:\.\.\.}\fP` is resolved per run rather than at install time\.
+
+.SS "systemd (Linux)"
 .PP
-Units deliberately contain \fBno log path and no date\fP\. A unit written today must not log to today's file forever, so `\f[CR]${date:\.\.\.}\fP` is resolved per run rather than at install time\.
+A scheduled job is \fBtwo\fP units, `\f[CR]rusticprofile\-\fP`\fIJOB\fP`\f[CR]\.service\fP` and `\f[CR]\.timer\fP`\. systemd offers no way for a timer to run a command directly, so this is not a choice rusticprofile makes\. Only the timer carries an `\f[CR][Install]\fP` section; the service is reported as `\f[CR]static\fP`, meaning it can be started by its timer and not enabled independently \-\- a service that could be enabled on its own would run the backup at every login, with no schedule to explain it\.
+.PP
+The timer sets \fBPersistent=true\fP, so a run missed while the machine was asleep is caught up rather than silently skipped, and \fBRandomizedDelaySec\fP, so several machines sharing one repository do not all wake on the same instant\. Priority is expressed as `\f[CR]Nice=\fP` and `\f[CR]IOSchedulingClass=\fP` in the unit rather than applied in\-process\.
+
+.SS "launchd (macOS)"
+.PP
+A scheduled job is \fBone\fP agent, `\f[CR]~/Library/LaunchAgents/local\.rusticprofile\.\fP`\fIJOB\fP`\f[CR]\.plist\fP`, because launchd puts the schedule and the program in the same job\. `\f[CR]permission: system\fP` installs a LaunchDaemon under `\f[CR]/Library/LaunchDaemons\fP` instead\. Priority becomes `\f[CR]ProcessType=Background\fP`, `\f[CR]Nice\fP` and the `\f[CR]LowPriorityIO\fP` keys \-\- again in the agent, not applied in\-process\.
+.PP
+Four differences from systemd are worth knowing, because each is a property of launchd rather than of this tool:
+.PP
+\fBThe fleet spread is a real minute\.\fP launchd has no `\f[CR]RandomizedDelaySec\fP`, so the offset is part of `\f[CR]StartCalendarInterval\fP` and \fBschedule\fP prints it (`\f[CR]runs hourly at 7 past\fP`)\. It is chosen once, on first install, and reused afterwards \-\- so re\-running \fBschedule\fP neither moves your slot nor reports a change\. It is bounded by the same window systemd is given, so `\f[CR]at: hourly\fP` means the same thing on both platforms\.
+.PP
+\fBSleep is handled; an unloaded agent is not\.\fP `\f[CR]launchd\.plist\fP`(5) states that a job whose calendar time passes while the machine is asleep runs when it next wakes, with multiple missed intervals coalesced into one \-\- which is what systemd's `\f[CR]Persistent=true\fP` provides\. A calendar time that passes while the agent is \fInot loaded\fP is not caught up, so the first run after \fBschedule\fP is at the next occurrence rather than immediately\.
+.PP
+\fBA user agent runs only while you are logged in\.\fP launchd has no equivalent of systemd's `\f[CR]linger\fP`, so a Mac sitting at the login window takes no backups at all: nothing fails, nothing is logged, and the only evidence is an absence\. \fBschedule\fP and \fBstatus\fP both say so\. Watch `\f[CR]last success\fP` rather than the schedule, or use `\f[CR]permission: system\fP`, which runs regardless of login \-\- as root, which needs its own answer for repository credentials\.
+.PP
+\fBThere is no next\-fire time to report\.\fP `\f[CR]launchctl print\fP` gives the calendar descriptor and never a next firing, so `\f[CR]next run\fP` reads \fInot reported by launchd\fP and the JSON `\f[CR]next_run\fP` is `\f[CR]null\fP`\. Computing one and presenting it as launchd's would be inventing a fact about a schedule\.
 \fB\-\-json\fP
 .RS
 .PP
@@ -240,6 +255,10 @@ Job definitions: which jobs exist, their operations, host gating and schedule\.
 \fB$XDG_CONFIG_HOME/rustic/PROFILE\.toml\fP
 .RS
 rustic's own configuration, which owns all backup detail\. rusticprofile reads it read\-only, to verify that every snapshot\-set name it is about to pass actually exists\.
+.RE
+\fB~/Library/LaunchAgents/local\.rusticprofile\.\fBJOB\fP\.plist\fP
+.RS
+The launchd agent on macOS, written by \fBschedule\fP and removed by \fBunschedule\fP\. `\f[CR]permission: system\fP` uses `\f[CR]/Library/LaunchDaemons\fP` instead\. On Linux the equivalents are `\f[CR]~/\.config/systemd/user/rusticprofile\-\fP`\fIJOB\fP`\f[CR]\.{service,timer}\fP`\.
 .RE
 \fB$XDG_STATE_HOME/rusticprofile/status/\fBJOB\fP\.json\fP
 .RS

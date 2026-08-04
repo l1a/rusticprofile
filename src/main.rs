@@ -18,7 +18,7 @@ use rusticprofile::cli::{
 use rusticprofile::config::schedule::Permission;
 use rusticprofile::config::{self, Config, LoadOptions};
 use rusticprofile::rustic::invoke::{self, Options};
-use rusticprofile::schedule::{self, install, systemd};
+use rusticprofile::schedule::{self, Backend, install, launchd, systemd};
 
 /// Configuration is invalid. Distinct from a failed run (1) so that a monitoring system,
 /// or a person reading a unit's status, can tell "I wrote the config wrong" apart from
@@ -243,14 +243,18 @@ fn run_plan(args: &PlanArgs) -> ExitCode {
 /// A run failed. Distinct from a configuration error (2).
 const EXIT_RUN_FAILED: u8 = 1;
 
-/// Where units go, unless overridden.
+/// Where units or agents go, unless overridden.
 fn resolve_unit_dir(
     explicit: Option<std::path::PathBuf>,
     permission: Permission,
+    backend: Backend,
 ) -> std::path::PathBuf {
     explicit.unwrap_or_else(|| {
         let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-        systemd::unit_dir(permission, &home)
+        match backend {
+            Backend::Systemd => systemd::unit_dir(permission, &home),
+            Backend::Launchd => launchd::agent_dir(permission, &home),
+        }
     })
 }
 
@@ -324,17 +328,18 @@ fn resolve_rustic_binary(name: &str) -> Result<std::path::PathBuf, ExitCode> {
 }
 
 fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
-    // Refused before the config is even read. On a platform without systemd this command
-    // would write units nobody will ever run and exit 0, which is indistinguishable from
-    // working. `--unit-dir` does not change that: the units are systemd units either way.
-    if !schedule::backend_is_available() {
+    // Refused before the config is even read. On a platform with neither service manager
+    // this command would write files nobody will ever run and exit 0, which is
+    // indistinguishable from working. `--unit-dir` does not change that: the files are still
+    // units or agents for a manager that is not there.
+    let Some(backend) = schedule::current_backend() else {
         eprintln!(
             "{} {}",
             "error:".red().bold(),
             schedule::unsupported_platform_message()
         );
         return ExitCode::from(EXIT_CONFIG_ERROR);
-    }
+    };
 
     let (config, path) = match load_config(args.config.clone(), None, None) {
         Ok(v) => v,
@@ -384,19 +389,31 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
             return ExitCode::from(EXIT_CONFIG_ERROR);
         };
 
-        let dir = resolve_unit_dir(args.unit_dir.clone(), schedule.permission);
+        let dir = resolve_unit_dir(args.unit_dir.clone(), schedule.permission, backend);
         let ctx = schedule::UnitContext {
             binary: &binary,
             config: &path,
             rustic_binary: &rustic_binary,
         };
 
-        match install::write_units(job, &schedule, &ctx, &dir) {
-            Ok(done) => {
-                any_written |= done.changed;
+        // The two backends differ in shape here and nowhere else: systemd needs a service
+        // and a timer because a timer cannot run a command, launchd puts both in one agent.
+        let written = match backend {
+            Backend::Systemd => {
+                install::write_units(job, &schedule, &ctx, &dir).map(|done| (done.changed, None))
+            }
+            Backend::Launchd => {
+                install::write_agent(job, &schedule, &ctx, &dir, install::arbitrary_offset_seed())
+                    .map(|done| (done.changed, Some(done.offset)))
+            }
+        };
+
+        match written {
+            Ok((changed, offset)) => {
+                any_written |= changed;
                 println!(
                     "{} {}  {}",
-                    if done.changed {
+                    if changed {
                         "installed:".green().bold().to_string()
                     } else {
                         "unchanged:".dimmed().to_string()
@@ -404,10 +421,21 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
                     job.name.bold(),
                     dir.display().to_string().dimmed()
                 );
+                // launchd cannot be asked when a job next runs, so the offset chosen here is
+                // the only place that answer exists. Saying it makes the schedule legible —
+                // "hourly at 37 past" rather than "hourly, somewhere".
+                if let Some(offset) = offset {
+                    println!(
+                        "    {:<18} {} at {} past",
+                        "runs".dimmed(),
+                        schedule.at,
+                        offset.minutes()
+                    );
+                }
             }
             Err(e) => {
                 eprintln!(
-                    "{} could not write units for `{}`: {e}",
+                    "{} could not write the schedule for `{}`: {e}",
                     "error:".red().bold(),
                     job.name
                 );
@@ -416,13 +444,15 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
         }
     }
 
-    // Reload regardless of `changed`: a previous run may have written units and failed
-    // before reloading, and a reload is cheap and idempotent.
+    // systemd has to be told to re-read unit files; launchd reads the plist as it is
+    // bootstrapped, so there is nothing to reload. Done regardless of `changed`: a previous
+    // run may have written units and failed before reloading, and a reload is idempotent.
     let permission = selected[0]
         .schedule
         .map(|s| s.permission)
         .unwrap_or(Permission::User);
-    if args.unit_dir.is_none()
+    if backend == Backend::Systemd
+        && args.unit_dir.is_none()
         && let Err(e) = install::daemon_reload(permission)
     {
         eprintln!(
@@ -434,18 +464,31 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
     // Arming is the default: `schedule` means "make this run on a schedule", and
     // `unschedule` is a single step that fully undoes it. `--write-only` keeps the
     // inspect-first path. Skipped entirely when writing to a custom `--unit-dir`, which is
-    // an inspection target rather than a place systemd reads.
+    // an inspection target rather than a place a service manager reads.
     if !args.write_only && args.unit_dir.is_none() {
         for job in &selected {
             let permission = job
                 .schedule
                 .map(|s| s.permission)
                 .unwrap_or(Permission::User);
-            match install::enable_timer(&job.name, permission) {
-                Ok((true, _)) => println!("  {} {}", "enabled:".green().bold(), job.name),
+            let (verb, armed) = match backend {
+                Backend::Systemd => ("enabled", install::enable_timer(&job.name, permission)),
+                Backend::Launchd => {
+                    let dir = resolve_unit_dir(None, permission, backend);
+                    let plist = dir.join(schedule::launchd::plist_name(&job.name));
+                    (
+                        "loaded",
+                        install::bootstrap_agent(&job.name, permission, &plist),
+                    )
+                }
+            };
+            match armed {
+                Ok((true, _)) => {
+                    println!("  {} {}", format!("{verb}:").green().bold(), job.name)
+                }
                 Ok((false, out)) => {
                     eprintln!(
-                        "{} could not enable `{}`: {out}",
+                        "{} could not arm `{}`: {out}",
                         "error:".red().bold(),
                         job.name
                     );
@@ -453,7 +496,7 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!(
-                        "{} could not enable `{}`: {e}",
+                        "{} could not arm `{}`: {e}",
                         "error:".red().bold(),
                         job.name
                     );
@@ -461,12 +504,25 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
                 }
             }
         }
+
+        // Said at schedule time, not only in `status`: launchd has no `linger`, so a user
+        // agent runs only while somebody is logged in. A schedule that quietly does nothing
+        // while a Mac sits at the login window is exactly the silent non-event this project
+        // exists to surface.
+        if backend == Backend::Launchd {
+            println!(
+                "  {} {}",
+                "note:".yellow().bold(),
+                schedule::launchd_login_caveat()
+            );
+        }
     } else {
         println!(
-            "  {} units are installed but not enabled. Run `rusticprofile status` to confirm,",
+            "  {} the schedule is installed but not armed. Run `rusticprofile status` to \
+             confirm,",
             "note:".dimmed()
         );
-        println!("        then `schedule` without `--write-only` to arm the timer.");
+        println!("        then `schedule` without `--write-only` to arm it.");
     }
 
     let _ = any_written;
@@ -487,13 +543,31 @@ fn unschedule_job(args: &UnscheduleArgs) -> ExitCode {
         .and_then(|j| j.schedule)
         .map(|s| s.permission)
         .unwrap_or(Permission::User);
-    let dir = resolve_unit_dir(args.unit_dir.clone(), permission);
 
+    // Removal is best-effort on a platform with no backend: the files may still be there from
+    // a machine that could schedule, and refusing to clean them up would be unhelpful.
+    let backend = schedule::current_backend().unwrap_or(Backend::Systemd);
+    let dir = resolve_unit_dir(args.unit_dir.clone(), permission, backend);
+
+    // Disarm before deleting, and ignore the result: a job that was never armed is not an
+    // error — `unschedule` describes an end state, which is reached either way.
     if args.unit_dir.is_none() {
-        let _ = install::disable_timer(&args.name, permission);
+        match backend {
+            Backend::Systemd => {
+                let _ = install::disable_timer(&args.name, permission);
+            }
+            Backend::Launchd => {
+                let _ = install::bootout_agent(&args.name, permission);
+            }
+        }
     }
 
-    match install::remove_units(&args.name, &dir) {
+    let removed = match backend {
+        Backend::Systemd => install::remove_units(&args.name, &dir),
+        Backend::Launchd => install::remove_agent(&args.name, &dir),
+    };
+
+    match removed {
         Ok(removed) if removed.is_empty() => {
             println!(
                 "{} nothing to remove for `{}`",
@@ -506,7 +580,8 @@ fn unschedule_job(args: &UnscheduleArgs) -> ExitCode {
             for p in removed {
                 println!("  {}", p.display().to_string().dimmed());
             }
-            if args.unit_dir.is_none()
+            if backend == Backend::Systemd
+                && args.unit_dir.is_none()
                 && let Err(e) = install::daemon_reload(permission)
             {
                 eprintln!(
@@ -541,8 +616,8 @@ fn show_status(args: &StatusArgs) -> ExitCode {
 
     // Not an error: "nothing is scheduled here, and here is why" is a truthful answer to
     // the question `status` asks. Erroring would make an informational command fail on a
-    // platform where the information is simply "none, yet".
-    if !schedule::backend_is_available() {
+    // platform where the information is simply "none".
+    let Some(backend) = schedule::current_backend() else {
         println!();
         println!(
             "{} {}",
@@ -550,15 +625,19 @@ fn show_status(args: &StatusArgs) -> ExitCode {
             schedule::unsupported_platform_message()
         );
         return ExitCode::SUCCESS;
-    }
+    };
+    println!("{} {backend}", "backend:".bold());
 
     for job in &config.jobs {
         let permission = job
             .schedule
             .map(|s| s.permission)
             .unwrap_or(Permission::User);
-        let dir = resolve_unit_dir(args.unit_dir.clone(), permission);
-        let st = install::timer_status(job, permission, &dir);
+        let dir = resolve_unit_dir(args.unit_dir.clone(), permission, backend);
+        let st = match backend {
+            Backend::Systemd => install::timer_status(job, permission, &dir),
+            Backend::Launchd => install::agent_status(job, permission, &dir),
+        };
 
         let state = match (
             job.schedule.is_some(),
@@ -581,8 +660,18 @@ fn show_status(args: &StatusArgs) -> ExitCode {
                 "declared", s.at, s.permission, s.priority
             );
         }
-        if let Some(next) = &st.next_elapse {
-            println!("    {:<20} {next}", "next run");
+        match &st.next_elapse {
+            Some(next) => println!("    {:<20} {next}", "next run"),
+            // Said out loud rather than omitted, the same way `never recorded` is. launchd
+            // reports the calendar descriptor and no next fire time — measured — so a blank
+            // line here would read as "nothing is scheduled", which is a different claim.
+            None if backend == Backend::Launchd && st.units_present => println!(
+                "    {:<20} {}",
+                "next run",
+                "not reported by launchd; the agent's StartCalendarInterval has the schedule"
+                    .dimmed()
+            ),
+            None => {}
         }
 
         // "When did this last actually work?" is the question a schedule cannot answer.
@@ -627,6 +716,18 @@ fn show_status(args: &StatusArgs) -> ExitCode {
                 g.enabled_on_hosts.join(", ")
             );
         }
+    }
+
+    // Repeated here as well as at `schedule` time, because this is the command someone runs
+    // when they are wondering whether backups are happening — and "only while you are logged
+    // in" is the answer they need in front of them at that moment.
+    if backend == Backend::Launchd {
+        println!();
+        println!(
+            "  {} {}",
+            "note:".yellow().bold(),
+            schedule::launchd_login_caveat()
+        );
     }
 
     ExitCode::SUCCESS
@@ -827,6 +928,8 @@ fn status_as_json(config: &Config, args: &StatusArgs) -> ExitCode {
 
     let state_dir = config::paths::user_state_dir().ok();
 
+    let backend = schedule::current_backend();
+
     let jobs = config
         .jobs
         .iter()
@@ -835,8 +938,25 @@ fn status_as_json(config: &Config, args: &StatusArgs) -> ExitCode {
                 .schedule
                 .map(|s| s.permission)
                 .unwrap_or(Permission::User);
-            let dir = resolve_unit_dir(args.unit_dir.clone(), permission);
-            let timer = install::timer_status(job, permission, &dir);
+            // With no backend there is nothing to ask, and every field stays at its
+            // "could not tell" value — which is what `backend: null` in the output explains.
+            let timer = match backend {
+                Some(Backend::Systemd) => {
+                    let dir = resolve_unit_dir(args.unit_dir.clone(), permission, Backend::Systemd);
+                    install::timer_status(job, permission, &dir)
+                }
+                Some(Backend::Launchd) => {
+                    let dir = resolve_unit_dir(args.unit_dir.clone(), permission, Backend::Launchd);
+                    install::agent_status(job, permission, &dir)
+                }
+                None => install::TimerStatus {
+                    job: job.name.clone(),
+                    units_present: false,
+                    enabled: None,
+                    active: None,
+                    next_elapse: None,
+                },
+            };
             let recorded = state_dir.as_ref().and_then(|d| {
                 rusticprofile::run::status::read(&rusticprofile::run::status::path_for(
                     d, &job.name,
@@ -849,6 +969,7 @@ fn status_as_json(config: &Config, args: &StatusArgs) -> ExitCode {
     let report = StatusJson {
         schema: 1,
         host: config.host.clone(),
+        backend: backend.map(|b| b.to_string()),
         jobs,
         not_on_this_host: config
             .gated_out
@@ -1000,7 +1121,7 @@ fn print_job(config: &Config, job: &rusticprofile::config::job::Job) {
 
     match &job.schedule {
         Some(s) => println!(
-            "  schedule       {} ({}, {} priority) — not installed until M2",
+            "  schedule       {} ({}, {} priority) — `schedule` installs it",
             s.at, s.permission, s.priority
         ),
         None => println!("  schedule       (none — run by hand)"),

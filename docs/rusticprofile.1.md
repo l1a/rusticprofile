@@ -32,7 +32,7 @@ This separation is deliberate. rustic already provides profiles, hooks, forget p
 
 The **config** subcommand inspects and validates `jobs.yaml`, and the **plan** subcommand prints the exact command line a job would run without running it. Neither ever invokes **rustic**(1), contacts a repository, or needs a network, so both are safe to run at any time.
 
-The **run** subcommand executes a job, and **schedule** installs the systemd units that trigger it. Invoking **rusticprofile** with no arguments exits non-zero and says so rather than doing anything by default.
+The **run** subcommand executes a job, and **schedule** installs the systemd units (Linux) or launchd agent (macOS) that triggers it. Invoking **rusticprofile** with no arguments exits non-zero and says so rather than doing anything by default.
 
 # OPTIONS
 
@@ -95,24 +95,42 @@ Exit status is **0** for success or partial, **1** for failure, **130** for inte
 
 # SCHEDULE
 
-**schedule** writes a systemd service and timer for a job and arms the timer; **unschedule** disables and removes them. Each is a single step and each fully undoes the other. **status** reports what is installed on this host and what is deliberately not.
+**schedule** installs a job's OS schedule and arms it; **unschedule** disarms and removes it. Each is a single step and each fully undoes the other. **status** reports what is installed on this host and what is deliberately not.
+
+On **Linux** that means systemd units driven by `systemctl`; on **macOS**, a launchd agent driven by `launchctl`. On a platform with neither, **schedule** refuses and writes nothing — files on disk plus a success message are indistinguishable from a working install, so refusing is the only honest answer. **status** reports the backend it found, and `status --json` names it in a `backend` field.
 
 **-n** *JOB*
-:   The job to act on. Optional for **schedule**, where omitting it installs units for every job declaring a `schedule:` block. Required for **unschedule** — removal is always named explicitly.
+:   The job to act on. Optional for **schedule**, where omitting it installs every job declaring a `schedule:` block. Required for **unschedule** — removal is always named explicitly.
 
 **--write-only**
-:   Write the units without arming the timer. `schedule` arms it by default — that is what the verb means, and **unschedule** is a single step that fully undoes it. Use this to inspect the generated units before anything can fire.
-
-    A scheduled job is **two** units: a `.timer` and the `.service` it activates. systemd offers no way for a timer to run a command directly, so this is not a choice rusticprofile makes. Only the timer carries an `[Install]` section; the service is reported by systemd as `static`, meaning it can be started by its timer and not enabled independently — a service that could be enabled on its own would run the backup at every login, with no schedule to explain it.
+:   Write the schedule without arming it. `schedule` arms by default — that is what the verb means, and **unschedule** is a single step that fully undoes it. Use this to inspect what was generated before anything can fire.
 
 **--unit-dir** *DIR*
-:   Write or read units in *DIR* instead of the systemd user directory. Intended for inspecting generated units without installing them; `systemctl` is not invoked when this is given.
+:   Write or read units and agents in *DIR* instead of the platform's own directory. Intended for inspecting what is generated without installing it; neither `systemctl` nor `launchctl` is invoked when this is given.
 
-Units are named `rusticprofile-`*JOB*`.service` and `.timer`, and both commands are idempotent: identical content is not rewritten, and removing units that are not there is not an error. Re-running **schedule** reports `unchanged` rather than implying work happened.
+Both commands are idempotent on both platforms: identical content is not rewritten, and removing something that is not there is not an error. Re-running **schedule** reports `unchanged` rather than implying work happened.
 
-The generated timer sets **Persistent=true**, so a run missed while the machine was asleep is caught up rather than silently skipped, and **RandomizedDelaySec**, so several machines sharing one repository do not all wake on the same instant. Scheduling priority is expressed as `Nice=` and `IOSchedulingClass=` in the unit rather than applied in-process.
+Nothing generated contains a **log path or a date**. A unit or agent written today must not log to today's file forever, so `${date:...}` is resolved per run rather than at install time.
 
-Units deliberately contain **no log path and no date**. A unit written today must not log to today's file forever, so `${date:...}` is resolved per run rather than at install time.
+## systemd (Linux)
+
+A scheduled job is **two** units, `rusticprofile-`*JOB*`.service` and `.timer`. systemd offers no way for a timer to run a command directly, so this is not a choice rusticprofile makes. Only the timer carries an `[Install]` section; the service is reported as `static`, meaning it can be started by its timer and not enabled independently — a service that could be enabled on its own would run the backup at every login, with no schedule to explain it.
+
+The timer sets **Persistent=true**, so a run missed while the machine was asleep is caught up rather than silently skipped, and **RandomizedDelaySec**, so several machines sharing one repository do not all wake on the same instant. Priority is expressed as `Nice=` and `IOSchedulingClass=` in the unit rather than applied in-process.
+
+## launchd (macOS)
+
+A scheduled job is **one** agent, `~/Library/LaunchAgents/local.rusticprofile.`*JOB*`.plist`, because launchd puts the schedule and the program in the same job. `permission: system` installs a LaunchDaemon under `/Library/LaunchDaemons` instead. Priority becomes `ProcessType=Background`, `Nice` and the `LowPriorityIO` keys — again in the agent, not applied in-process.
+
+Four differences from systemd are worth knowing, because each is a property of launchd rather than of this tool:
+
+**The fleet spread is a real minute.** launchd has no `RandomizedDelaySec`, so the offset is part of `StartCalendarInterval` and **schedule** prints it (`runs hourly at 7 past`). It is chosen once, on first install, and reused afterwards — so re-running **schedule** neither moves your slot nor reports a change. It is bounded by the same window systemd is given, so `at: hourly` means the same thing on both platforms.
+
+**Sleep is handled; an unloaded agent is not.** `launchd.plist`(5) states that a job whose calendar time passes while the machine is asleep runs when it next wakes, with multiple missed intervals coalesced into one — which is what systemd's `Persistent=true` provides. A calendar time that passes while the agent is *not loaded* is not caught up, so the first run after **schedule** is at the next occurrence rather than immediately.
+
+**A user agent runs only while you are logged in.** launchd has no equivalent of systemd's `linger`, so a Mac sitting at the login window takes no backups at all: nothing fails, nothing is logged, and the only evidence is an absence. **schedule** and **status** both say so. Watch `last success` rather than the schedule, or use `permission: system`, which runs regardless of login — as root, which needs its own answer for repository credentials.
+
+**There is no next-fire time to report.** `launchctl print` gives the calendar descriptor and never a next firing, so `next run` reads *not reported by launchd* and the JSON `next_run` is `null`. Computing one and presenting it as launchd's would be inventing a fact about a schedule.
 
 **--json**
 :   Emit the report as JSON instead of the human summary, on **run** and **status**. For anything automated: matching the human summary would mean matching English, which is exactly what rusticprofile refuses to do to rustic's own output and for the same reason — a summary line is a message to a person and changes when the wording improves.
@@ -198,6 +216,9 @@ The contract the implemented commands follow:
 
 **$XDG_CONFIG_HOME/rustic/PROFILE.toml**
 :   rustic's own configuration, which owns all backup detail. rusticprofile reads it read-only, to verify that every snapshot-set name it is about to pass actually exists.
+
+**~/Library/LaunchAgents/local.rusticprofile.**JOB**.plist**
+:   The launchd agent on macOS, written by **schedule** and removed by **unschedule**. `permission: system` uses `/Library/LaunchDaemons` instead. On Linux the equivalents are `~/.config/systemd/user/rusticprofile-`*JOB*`.{service,timer}`.
 
 **$XDG_STATE_HOME/rusticprofile/status/**JOB**.json**
 :   When *JOB* last ran, and when it last **succeeded**. Written after every run, atomically. `last_success` is carried forward across a failed run on purpose: the useful question is not "did the last attempt work?" but "when did this last actually work?", and only that field can reveal a job which has quietly stopped working — a failing run is loud, a run that never happens is not. **status** displays both.

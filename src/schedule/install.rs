@@ -9,10 +9,18 @@
 //!
 //! ## Writing is not activating
 //!
-//! [`write_units`] installs files and reloads the manager. It does **not** enable or start
-//! anything. Activation is a separate, explicit call, because on this fleet the Go tool is
-//! still the one actually taking backups — quietly adding a second hourly writer to a shared
-//! repository is not something a command called `schedule` should do as a side effect.
+//! [`write_units`] and [`write_agent`] install files and nothing more. Arming is a separate,
+//! explicit call — [`enable_timer`] or [`bootstrap_agent`] — which is what lets `--write-only`
+//! exist and what keeps a custom `--unit-dir` an inspection target rather than something a
+//! service manager reads.
+//!
+//! ## Two backends, one shape
+//!
+//! systemd and launchd each get write / remove / inspect functions here. The asymmetry to
+//! know about is that a systemd job is **two units** and a launchd job is **one agent**:
+//! systemd cannot run a command from a timer, launchd can. Everything else — job gating, the
+//! `at:` vocabulary, the spread window, the absolute-path requirement — is shared above this
+//! module.
 
 use std::ffi::OsString;
 use std::fs;
@@ -24,7 +32,8 @@ use crate::config::job::Job;
 use crate::config::schedule::{Permission, Schedule};
 
 use super::UnitContext;
-use super::systemd;
+use super::calendar::Offset;
+use super::{launchd, systemd};
 
 /// What an install did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +147,231 @@ pub fn disable_timer(job_name: &str, permission: Permission) -> io::Result<(bool
         permission,
         &["disable", "--now", &systemd::timer_name(job_name)],
     )
+}
+
+// ---------------------------------------------------------------------------------------
+// launchd
+//
+// The same three jobs as above — write, remove, inspect — against `launchctl` instead of
+// `systemctl`. Kept in this module for the same reason: content generation stays pure in
+// `super::launchd`, and everything that touches the filesystem or a service manager lives
+// here where it can be seen at a glance.
+// ---------------------------------------------------------------------------------------
+
+/// What installing a launchd agent did.
+///
+/// **One path, where systemd has two.** launchd puts the schedule and the program in one
+/// job, so a scheduled job here is a single plist. Nothing is missing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledAgent {
+    pub plist: PathBuf,
+    /// Whether anything on disk actually changed.
+    pub changed: bool,
+    /// The offset this job's runs land on, past its interval's base time.
+    ///
+    /// Reported so `schedule` can say *when* it will run — launchd cannot be asked, so the
+    /// only place that answer exists is the plist that was just written.
+    pub offset: Offset,
+}
+
+/// An arbitrary number for [`write_agent`] to spread a first install across its window.
+///
+/// **launchd has no `RandomizedDelaySec`**, so the spread has to be a real minute baked into
+/// the plist, and something has to choose it. The requirement is *spread*, not
+/// unpredictability: seven machines must not wake on the same instant, and nobody is trying to
+/// guess when a backup runs.
+///
+/// `RandomState` is seeded by the operating system and re-keyed per call, which is exactly
+/// enough for that and costs no dependency.
+///
+/// **It deliberately does not read the clock, and that is the whole point of this function
+/// existing.** The first implementation took `Timestamp::now().subsec_nanosecond()` and
+/// reduced it modulo the window — and on macOS the clock has *microsecond* resolution, so that
+/// field is always a multiple of 1000. Since `1000 % 5 == 0`, every hourly job on every host
+/// landed on minute 0: a spread that reported a spread and produced none. Measured, 10 samples
+/// out of 10. A low-resolution clock is a bad source of arbitrariness whenever the consumer
+/// reduces it modulo a small number, and the failure is invisible unless you look at the
+/// value.
+#[must_use]
+pub fn arbitrary_offset_seed() -> u64 {
+    use std::hash::{BuildHasher, RandomState};
+    RandomState::new().hash_one(0u8)
+}
+
+/// Write the agent for `job`, creating the agent directory if needed.
+///
+/// **Idempotent, and that takes deliberate work here.** The fleet spread is chosen at
+/// schedule time (launchd has no `RandomizedDelaySec`, so it has to be baked into the
+/// calendar), which means a fresh choice on every run would rewrite an unchanged agent, move
+/// the spread for no reason, and report `installed` every time — turning the `unchanged`
+/// signal into noise.
+///
+/// So an offset already installed is **reused**: the plist is the record of what was chosen.
+/// `arbitrary` is only consulted when there is nothing to reuse — a first install, or a plist
+/// hand-edited into a shape [`super::launchd::installed_offset`] cannot read, in which case
+/// the file legitimately changes.
+pub fn write_agent(
+    job: &Job,
+    schedule: &Schedule,
+    ctx: &UnitContext,
+    dir: &Path,
+    arbitrary: u64,
+) -> io::Result<InstalledAgent> {
+    fs::create_dir_all(dir)?;
+    let plist = dir.join(launchd::plist_name(&job.name));
+
+    let offset = fs::read_to_string(&plist)
+        .ok()
+        .and_then(|existing| launchd::installed_offset(&existing, schedule.at))
+        .unwrap_or_else(|| Offset::within(schedule.at, arbitrary));
+
+    let changed = write_if_changed(&plist, &launchd::agent_plist(job, schedule, offset, ctx))?;
+    Ok(InstalledAgent {
+        plist,
+        changed,
+        offset,
+    })
+}
+
+/// Remove the agent for `job`. Returns the paths that existed and were deleted.
+///
+/// A plist that was not there is not an error, for the same reason as [`remove_units`]:
+/// `unschedule` must be safe to repeat and safe on a host where the job was never scheduled.
+pub fn remove_agent(job_name: &str, dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let path = dir.join(launchd::plist_name(job_name));
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(vec![path]),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
+}
+
+/// The launchd domain a permission scope maps to.
+///
+/// `gui/<uid>` rather than `user/<uid>`: the GUI domain is the one a LaunchAgent belongs to,
+/// and it is the domain that exists for a logged-in desktop user — which is also the reason
+/// for [`super::launchd_login_caveat`].
+///
+/// The uid comes from `getuid()`, the same source the process itself would use, rather than
+/// from `id -u`. Asking a different oracle than the code under test is the defect recorded in
+/// `NOTES.md` v0.1.5, where a fixture shelled out to `hostname(1)` and disagreed with the
+/// binary on every container.
+#[must_use]
+pub fn launchd_domain(permission: Permission) -> String {
+    match permission {
+        Permission::User => format!("gui/{}", nix::unistd::getuid()),
+        Permission::System => "system".to_string(),
+    }
+}
+
+/// The `launchctl` argv for a domain-scoped subcommand.
+///
+/// Pure and separate from running it, so the domain decision is testable without launchd.
+pub fn launchctl_argv(args: &[&str]) -> Vec<OsString> {
+    let mut argv = vec![OsString::from("launchctl")];
+    argv.extend(args.iter().map(OsString::from));
+    argv
+}
+
+/// Run `launchctl` and return (success, trimmed stdout).
+///
+/// Stdout is captured for the same reason as [`systemctl`]: the query forms answer through it
+/// and exit non-zero for ordinary states. `print` on an agent that is simply not loaded is a
+/// fact, not a failure.
+pub fn launchctl(args: &[&str]) -> io::Result<(bool, String)> {
+    let argv = launchctl_argv(args);
+    let output = Command::new(&argv[0]).args(&argv[1..]).output()?;
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
+}
+
+/// Load a job's agent and make sure launchd will actually run it.
+///
+/// Three steps, and each is there for a reason found by measurement:
+///
+/// 1. **`bootout` first, ignoring failure.** `bootstrap` fails outright when the service is
+///    already loaded, so re-arming an existing agent needs the old one gone. Failure here is
+///    the normal case on a first install and must not be reported.
+/// 2. **`enable`.** `bootout`/`bootstrap` do not clear a persistent `launchctl disable`.
+///    Without this, `schedule` on a job somebody once disabled would report success and
+///    schedule nothing — a silent no-op wearing a success message.
+/// 3. **`bootstrap`.** The modern replacement for `load`, and the step that actually
+///    registers the calendar trigger.
+pub fn bootstrap_agent(
+    job_name: &str,
+    permission: Permission,
+    plist: &Path,
+) -> io::Result<(bool, String)> {
+    let domain = launchd_domain(permission);
+    let service = format!("{domain}/{}", launchd::label(job_name));
+
+    // Step 1: ignore the result — "not loaded" is the expected state on a first install.
+    let _ = launchctl(&["bootout", &service]);
+    // Step 2: clear any persistent disable, which bootstrap alone would not.
+    let _ = launchctl(&["enable", &service]);
+    // Step 3: the one whose result matters.
+    launchctl(&["bootstrap", &domain, &plist.to_string_lossy()])
+}
+
+/// Unload a job's agent.
+///
+/// Not an error when the agent was never loaded — `unschedule` describes an end state, and
+/// that end state is reached either way.
+pub fn bootout_agent(job_name: &str, permission: Permission) -> io::Result<(bool, String)> {
+    let service = format!(
+        "{}/{}",
+        launchd_domain(permission),
+        launchd::label(job_name)
+    );
+    launchctl(&["bootout", &service])
+}
+
+/// Inspect one job's launchd agent, in the shape [`TimerStatus`] already describes.
+///
+/// **Deliberately reuses the systemd status type**, because it is what `status --json` emits
+/// and a monitor written against one platform should not break on the other. The mapping:
+///
+/// | field | launchd meaning |
+/// |---|---|
+/// | `units_present` | the plist exists on disk |
+/// | `enabled` | loaded into the domain **and** not persistently disabled |
+/// | `active` | loaded — for a calendar job, launchd's resting state, the counterpart of a systemd timer being `waiting` |
+/// | `next_elapse` | **always `None`** |
+///
+/// That last row is a measurement, not an omission: `launchctl print` reports the calendar
+/// *descriptor* (`"Minute" => 22`) and never a next fire time. `None` already means "could
+/// not tell" rather than `false` in this type and in the JSON, so the honest answer is
+/// available — computing one ourselves and presenting it as launchd's would be inventing a
+/// fact about a schedule, which is worse than admitting the gap.
+pub fn agent_status(job: &Job, permission: Permission, dir: &Path) -> TimerStatus {
+    let units_present = dir.join(launchd::plist_name(&job.name)).exists();
+
+    let domain = launchd_domain(permission);
+    let service = format!("{domain}/{}", launchd::label(&job.name));
+
+    let loaded = launchctl(&["print", &service]).ok().map(|(ok, _)| ok);
+
+    // A persistent `launchctl disable` survives bootout/bootstrap and suppresses the job, so
+    // a loaded-but-disabled agent must not read as enabled.
+    let label = launchd::label(&job.name);
+    let disabled = launchctl(&["print-disabled", &domain])
+        .ok()
+        .map(|(_, out)| {
+            out.lines()
+                .filter(|line| line.contains(&format!("\"{label}\"")))
+                .any(|line| line.contains("=> disabled") || line.contains("=> true"))
+        })
+        .unwrap_or(false);
+
+    TimerStatus {
+        job: job.name.clone(),
+        units_present,
+        enabled: loaded.map(|l| l && !disabled),
+        active: loaded,
+        next_elapse: None,
+    }
 }
 
 /// What is installed and running for one job.
@@ -319,5 +553,158 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_units(&job("j"), &schedule(), &ctx(), dir.path()).unwrap();
         assert!(timer_status(&job("j"), Permission::User, dir.path()).units_present);
+    }
+
+    // ----------------------------------------------------------------------------------
+    // launchd
+    // ----------------------------------------------------------------------------------
+
+    #[test]
+    fn one_agent_is_written_where_systemd_needs_two_units() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = write_agent(&job("j"), &schedule(), &ctx(), dir.path(), 7).unwrap();
+        assert!(out.changed);
+        assert!(out.plist.exists());
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "a launchd job is one agent, not two files"
+        );
+    }
+
+    #[test]
+    fn rewriting_reuses_the_installed_offset_and_reports_no_change() {
+        // The whole reason `write_agent` reads before it writes. The spread is chosen at
+        // schedule time, so without reuse a second `schedule` would pick a different minute,
+        // rewrite an unchanged agent and report `installed` — moving the fleet's spread for
+        // no reason and making the `unchanged` signal meaningless.
+        let dir = tempfile::tempdir().unwrap();
+        let first = write_agent(&job("j"), &schedule(), &ctx(), dir.path(), 1).unwrap();
+        let second = write_agent(&job("j"), &schedule(), &ctx(), dir.path(), 2).unwrap();
+        assert!(
+            !second.changed,
+            "a different arbitrary number must not churn"
+        );
+        assert_eq!(first.offset, second.offset);
+    }
+
+    #[test]
+    fn a_first_install_takes_the_offset_it_is_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = write_agent(&job("j"), &schedule(), &ctx(), dir.path(), 3).unwrap();
+        assert_eq!(out.offset, Offset::within(At::Hourly, 3));
+    }
+
+    #[test]
+    fn changing_the_schedule_still_rewrites_the_agent() {
+        // Reusing the offset must not turn into reusing the whole file: a job whose interval
+        // changed has to be rewritten, or `schedule` silently keeps the old schedule.
+        let dir = tempfile::tempdir().unwrap();
+        write_agent(&job("j"), &schedule(), &ctx(), dir.path(), 1).unwrap();
+        let daily = Schedule {
+            at: At::Daily,
+            ..schedule()
+        };
+        assert!(
+            write_agent(&job("j"), &daily, &ctx(), dir.path(), 1)
+                .unwrap()
+                .changed
+        );
+    }
+
+    #[test]
+    fn removing_an_agent_reports_what_it_deleted_and_is_safe_to_repeat() {
+        let dir = tempfile::tempdir().unwrap();
+        write_agent(&job("j"), &schedule(), &ctx(), dir.path(), 1).unwrap();
+        assert_eq!(remove_agent("j", dir.path()).unwrap().len(), 1);
+        assert!(remove_agent("j", dir.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn removing_one_agent_leaves_another_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        write_agent(&job("keep"), &schedule(), &ctx(), dir.path(), 1).unwrap();
+        write_agent(&job("drop"), &schedule(), &ctx(), dir.path(), 1).unwrap();
+        remove_agent("drop", dir.path()).unwrap();
+        assert!(dir.path().join("local.rusticprofile.keep.plist").exists());
+        assert!(!dir.path().join("local.rusticprofile.drop.plist").exists());
+    }
+
+    #[test]
+    fn the_user_domain_is_the_gui_one_and_system_is_not_scoped_to_a_uid() {
+        let user = launchd_domain(Permission::User);
+        assert!(
+            user.starts_with("gui/"),
+            "a LaunchAgent belongs to the GUI domain: {user}"
+        );
+        assert_eq!(
+            user,
+            format!("gui/{}", nix::unistd::getuid()),
+            "the uid must come from getuid(), not from a subprocess"
+        );
+        assert_eq!(launchd_domain(Permission::System), "system");
+    }
+
+    #[test]
+    fn launchctl_argv_starts_with_the_binary_and_passes_arguments_through() {
+        let argv: Vec<String> = launchctl_argv(&["bootout", "gui/501/x"])
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(argv, vec!["launchctl", "bootout", "gui/501/x"]);
+    }
+
+    #[test]
+    fn the_offset_seed_actually_spreads() {
+        // A regression test for a bug found by *using* the feature, not by testing it. The
+        // first implementation reduced the clock's nanosecond field modulo the window;
+        // macOS's clock has microsecond resolution, so that field is always a multiple of
+        // 1000, and 1000 % 5 == 0 — every host got minute 0, and `schedule` cheerfully
+        // reported "hourly at 0 past" while spreading nothing. Measured 10/10.
+        //
+        // 200 samples over a 5-minute window: if the seed were degenerate this fails every
+        // time, and if it is sound the chance of a single distinct value is 5 * (1/5)^200.
+        let offsets: std::collections::HashSet<u8> = (0..200)
+            .map(|_| Offset::within(At::Hourly, arbitrary_offset_seed()).minutes())
+            .collect();
+        assert!(
+            offsets.len() > 1,
+            "every seed folded to the same minute ({offsets:?}) — the fleet would not be spread"
+        );
+    }
+
+    #[test]
+    fn a_low_resolution_clock_would_still_degenerate_which_is_why_the_seed_is_not_one() {
+        // Kept as the evidence for the choice above rather than as a check on `within`:
+        // folding IS plain modulo, deliberately, because the reuse path needs a minute read
+        // back out of a plist to come back unchanged. That is precisely why the *seed* must
+        // not be a microsecond-resolution clock reading.
+        for nanos in [976_122_000u64, 976_234_000, 123_456_000] {
+            assert_eq!(
+                Offset::within(At::Hourly, nanos).minutes(),
+                0,
+                "a multiple of 1000 folds to 0 in a 5-minute window"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_status_reports_a_missing_plist_without_consulting_launchd() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = agent_status(&job("never-scheduled"), Permission::User, dir.path());
+        assert!(!st.units_present);
+    }
+
+    #[test]
+    fn agent_status_sees_the_plist_once_written_and_never_invents_a_next_run() {
+        // launchd reports the calendar descriptor but no next fire time — measured against a
+        // live agent. `None` means "could not tell" here and in the JSON, which is the honest
+        // answer; computing one and presenting it as launchd's would be inventing a fact
+        // about a schedule.
+        let dir = tempfile::tempdir().unwrap();
+        write_agent(&job("j"), &schedule(), &ctx(), dir.path(), 1).unwrap();
+        let st = agent_status(&job("j"), Permission::User, dir.path());
+        assert!(st.units_present);
+        assert_eq!(st.next_elapse, None);
     }
 }
