@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.29)
+## Current State (v0.1.30)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,50 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.30 — drop `ubuntu-x64` from pull-request CI
+
+**CI configuration only; no code changed.** The pull-request matrix goes from four legs to
+three: `ubuntu-arm`, `fedora-x64`, `macos`.
+
+**The rule, stated so the next removal has one to follow: drop a leg only when it is the
+intersection of two things each already covered.** `ubuntu-x64` uniquely covered "Ubuntu host
+runner + x86_64", while `fedora-x64` covers x86_64 Linux and `ubuntu-arm` covers the Ubuntu
+userland on a host runner. Same argument that removed `fedora-arm` in `v0.0.15`, minus that
+one's timing complaint.
+
+**Said precisely, because "redundant" is too loose.** What is genuinely no longer exercised at
+pull-request time is `dtolnay/rust-toolchain@stable` **on x86_64** — the remaining x86_64 leg
+installs rustup inside a container instead. That action still runs here on `ubuntu-arm` and
+`macos`, and on x86_64 in `full-test`. The only platform-specific code in this crate is a
+handful of `nix` syscalls plus the systemd/launchd split, none of which can distinguish an
+x86_64 host runner from an x86_64 container.
+
+**Nothing loses tag-time coverage.** `full-test` still runs all five platforms including
+`ubuntu-x64`, and `build-release` still produces every artefact — so nothing ships untested,
+which was also the closing argument for the `fedora-arm` removal.
+
+**What it buys, honestly: runner minutes, not wall clock.** Measured on the `#44` run,
+`ubuntu-x64` took 37s while `fedora-x64` at 66s set the critical path either way. A pull request
+will not feel faster. `WIP.md` §1a had recorded that caveat, along with the counter-argument that
+`ubuntu-x64` is the most standard environment and therefore the easiest failure to reproduce
+locally — which is real, and is outweighed by the fact that its coverage exists twice over.
+
+**The cost that is not zero, and is worth naming rather than burying.** Trimming the
+pull-request matrix widens the gap that let the `v0.1.21` time-zone-database failure pass every
+PR and then break the release: `full-test` runs only on tags, in leaner containers. That gap is
+not created here, but it is made slightly wider. **If it bites again the fix is to run
+`full-test` on a schedule, or before a release rather than during it — not to restore a leg
+whose coverage is already duplicated.** Recorded in the workflow itself, where someone weighing
+a red release will read it.
+
+**Checked before removing, rather than assumed:** no job `needs:` the `build` job (`full-test`
+→ `build-release` → `release` is the tag chain), so nothing is stranded. Branch protection could
+not be read with the available token (HTTP 403), but `v0.1.5` records PR #19 merging with
+`build (fedora-x64)` red — which is only possible with no required status checks, so there is no
+required `build (ubuntu-x64)` left waiting for a leg that will never report. The `macos` leg was
+re-confirmed as **not** removable by the same reasoning: it is the only leg that exercises
+launchd at all.
 
 ### v0.1.29 — the second host is cut over, and a redaction failure in this file
 
