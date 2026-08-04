@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.30)
+## Current State (v0.1.31)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,47 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.31 — `full-test` runs weekly, so a release is not its first run
+
+**CI configuration only; no code changed.** `full-test` now runs on a weekly schedule
+(Mondays 06:37 UTC) as well as on tags and manual dispatch.
+
+**This closes the gap named in `0.1.30` rather than living with it.** `full-test` is the only job
+that runs the release-shaped environments — all five platforms, with the Ubuntu and Fedora legs
+inside **bare containers** rather than on host runners — and it ran only on tags. That is exactly
+how `v0.1.21`'s time-zone-database failure passed every pull request and then broke the release:
+the first thing ever to exercise those containers was the tag itself, and the bad tag had to be
+deleted. **A suite that is green on every PR and red at tag time has not been run in the
+environment it ships from.**
+
+Three details, each a decision rather than a default:
+
+- **Mondays 06:37 UTC.** Off the hour, because GitHub queues scheduled workflows submitted at
+  popular times, and a different day from `security.yml`'s Sunday 00:00 audit so a red week
+  points at one workflow rather than two.
+- **`build` is skipped on schedule events.** On a schedule, `github.ref_type` is `'branch'`, so
+  without an explicit `github.event_name != 'schedule'` the pull-request matrix would run
+  alongside `full-test` and test the same commit twice.
+- **`build-release` and `release` stay tag-only**, so a weekly run tests everything and publishes
+  nothing. Scheduled runs also only ever execute on the default branch, which is what a release
+  is cut from anyway.
+
+A failed scheduled run notifies the repository owner. That is the point — nobody watches a
+schedule they have to remember to check.
+
+#### Correcting `0.1.30`'s stated benefit
+
+That entry said dropping `ubuntu-x64` bought "runner minutes, not wall clock". **Actions minutes
+are free on a public repository**, and this one has been public since `v0.0.9` — so the framing
+overstated it. What is actually saved is one redundant job per pull request: less queue
+contention, one less line in the checks list, less energy. The *reasoning* for the removal is
+unaffected, because it never rested on cost: the leg was the intersection of two things each
+already covered. Corrected in the workflow comment too, where the next person weighing a matrix
+change will read it.
+
+Kept as a correction rather than an edit, per the `v0.1.16` precedent: the mistake was quoting a
+benefit without checking whether it applied to this repository.
 
 ### v0.1.30 — drop `ubuntu-x64` from pull-request CI
 
