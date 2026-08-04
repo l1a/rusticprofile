@@ -757,6 +757,16 @@ that is identical everywhere. **One byte-identical file on all seven hosts**, in
 prune-host gate. Worth stating plainly, because it is the difference between a config format
 designed for a fleet and one designed for a machine.
 
+**Corollary, found on macOS 2026-08-03: rusticprofile's own paths must not vary by OS
+either.** The same argument that makes `jobs.yaml` fleet-portable makes a per-platform
+config location wrong. `dirs::config_dir()` returns `~/Library/Application Support` on
+macOS, so every command on a Mac looked for `jobs.yaml` somewhere the man page never
+mentioned and exited 2 — while `${state_dir}` in the shipped `log:` would have resolved
+under `~/.local/state` on the Linux hosts and `~/Library/Application Support` on the macOS
+pair, from one byte-identical line. rusticprofile now applies the XDG rules on every Unix
+(0.1.25). This is not a preference for XDG over Apple's conventions; it is the requirement
+that one line of one file mean one thing across the fleet.
+
 **Rejected: emitting `--filter-host <hostname>` from rusticprofile.** It would solve the
 hostname half without templating, and it is the wrong trade. `-P`, the operation, `--name`
 and `--json` are the only flags this tool emits, a test asserts exactly that, and the

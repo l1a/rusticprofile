@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.24" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.25" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -249,6 +249,8 @@ When \fIJOB\fP last ran, and when it last \fBsucceeded\fP\. Written after every 
 .RS
 Where `\f[CR]${state_dir}\fP` points, and where run logs belong\. Logs are \fBstate, not configuration\fP \-\- the XDG Base Directory specification names them as the example of what `\f[CR]XDG_STATE_HOME\fP` is for\. Pointing a `\f[CR]log:\fP` at `\f[CR]${config_dir}\fP` instead is also self\-defeating when `\f[CR]~/\.config\fP` is one of your backup sources: the job then appends to a directory it is in the middle of backing up, and the rustic profile needs an exclusion to compensate\.
 .RE
+.PP
+The variables are honoured where they are set and fall back to `\f[CR]~/\.config\fP` and `\f[CR]~/\.local/state\fP` where they are not \-\- \fBon macOS as well as Linux\fP, rather than `\f[CR]~/Library/Application Support\fP`\. A relative value is ignored, as the specification requires\. This is deliberate rather than unidiomatic: `\f[CR]jobs\.yaml\fP` is meant to be byte\-identical across a fleet, and a location that varied by operating system would make one line of one file resolve to two different places\.
 
 .SH "SEE ALSO"
 .PP

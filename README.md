@@ -167,6 +167,8 @@ Note what is *not* in there: no source paths, no excludes, no retention numbers,
 
 `${state_dir}` is `$XDG_STATE_HOME/rusticprofile` — logs are state, not configuration. Pointing them at `${config_dir}` is also self-defeating if `~/.config` is one of your backup sources: the job then appends to a directory it is busy backing up.
 
+The XDG variables are honoured **on macOS too**, falling back to `~/.config` and `~/.local/state` rather than `~/Library/Application Support` (0.1.25+). That is deliberate, and it follows from the box below: a `jobs.yaml` meant to be byte-identical across a fleet cannot have `${state_dir}` resolve to a different place depending on the operating system reading it.
+
 **`default-job` is honoured by `run`, `plan`, `snapshots` and `config --show`** — not by `unschedule`, where removal is always named explicitly, nor by `schedule`, where omitting `-n` already means "every job that declares a schedule".
 
 > [!IMPORTANT]
