@@ -1,9 +1,35 @@
 # rusticprofile — plan and session handoff
 
-**Status:** pre-code, **unblocked**. Nothing has been implemented. This document is the full design
-plus the reasoning and discoveries behind it. The Part 7 decision — the one thing that blocked all
-code — was settled on 2026-07-30 in favour of **Option B** (named snapshot sets, selected per host);
-Part 7 records it along with the test results that shaped it.
+> [!IMPORTANT]
+> **This is the historical design record. It is not a status page, and it is no longer the
+> place to look for what is true today.**
+>
+> | you want | read |
+> |---|---|
+> | what is built, what is released, what is next | `NOTES.md` — "Current State" and the release log |
+> | **the rules that will bite you** — retention, locking, prune, the delegation boundary | **`NOTES.md` §3a, "Operating invariants"** |
+> | *why* the design is shaped this way, and what was rejected | **this file**, Parts 1–3 |
+> | the measurements against rustic 0.11.3 | **this file**, Parts 5 and 7 |
+>
+> **Section numbers here are permanent anchors.** Seventeen of them are cited by
+> `NOTES.md`, `AGENTS.md`, `WIP.md`, the shipped `config --example` and the source. Nothing
+> is renumbered or deleted when material is promoted — the section stays, with a pointer.
+
+**Status as of 2026-08-04: Milestones 1, 2, 3 and 5 are complete and `v0.1.31` is released**
+on GitHub and crates.io. M4 (lock coordination) is deliberately deferred and is defence in
+depth rather than a precondition — see §7.6. `NOTES.md` is authoritative for all of this.
+
+*The line that stood here until 2026-08-04 read "pre-code. Nothing has been implemented." It
+was written on 2026-07-30, before the first commit, and stayed through thirty-one releases —
+long enough to be the first thing every new session read, and false for nearly all of them.
+Kept as a note rather than silently deleted, because a document that opens by describing a
+state five milestones out of date is the same silent-staleness failure this project exists to
+catch, turned inward.*
+
+This document is the full design plus the reasoning and discoveries behind it. The Part 7
+decision — the one thing that blocked all code — was settled on 2026-07-30 in favour of
+**Option B** (named snapshot sets, selected per host); Part 7 records it along with the test
+results that shaped it.
 
 **Why it reads like a narrative:** it was written as a handoff across Claude accounts, so a
 fresh session has no prior context. Everything needed to continue is here or explicitly
@@ -11,6 +37,11 @@ pointed at. Written 2026-07-30 on host `host-f`.
 
 **Once the repo is scaffolded**, the forward-looking parts belong in `NOTES.md` (the house
 convention for living project state) and this file can shrink to the historical record.
+
+*Acted on 2026-08-04, thirty-one releases later than intended. The operating rules — §7.3,
+§7.5, §7.6, §7.7 and §7.8 — are promoted to `NOTES.md` §3a, which is now where they are
+maintained. Each section below keeps its number, its full text and its measurements, and
+gains a pointer at the top. Nothing was moved out; the authority moved, not the evidence.*
 
 ---
 
@@ -507,7 +538,12 @@ four idle hosts are untouched during M1 — they are the control group.
 
 ## Later milestones
 
-- **M2 — systemd scheduling.** `schedule`/`unschedule`/`status`; `at:` subset → `OnCalendar=`;
+**Milestone status is maintained in `NOTES.md`, not here.** As of 2026-08-04: **M1, M2, M3
+and M5 complete; M4 deferred by decision; M6 effectively delivered** (man page, six-shell
+completions and crates.io all shipped by `v0.1.31`). The entries below are the *specifications
+as written on 2026-07-30*, kept for the reasoning in them.
+
+- **M2 — systemd scheduling. Complete (0.0.18–0.0.19).** `schedule`/`unschedule`/`status`; `at:` subset → `OnCalendar=`;
   `permission` → user vs system unit dir; `priority` → `Nice=`/`IOSchedulingClass=` **in the unit
   file**, which means in-process priority/ionice code is never written. Covers 5 Linux hosts.
   `status` must surface the `enabled-on-hosts` gate so "host-d has a prune timer and nobody else
@@ -536,17 +572,30 @@ four idle hosts are untouched during M1 — they are the control group.
   be closed by more code: a Mac sitting at the login window takes no backups, nothing fails,
   and the only evidence is an absence. That is why `schedule` and `status` both state it, and
   why `last_success` is the field to alert on there even more than on Linux.
-- **M4 — lock coordination.** `LockBudget` implemented: wait budget, execution-time crediting,
-  stale-lock handling. Only then is `prune` against the shared repo supported.
-  **Reclassified 2026-08-02 from prospective to load-bearing** (§7.6): rustic takes no
-  repository lock at all, so the moment a host was cut over it became invisible to the prune
-  scheduled on `host-d`. That prune is now disabled, and M4 is what has to land before it can
-  come back — until then nothing reclaims space. Note the exclusion M4 implements must be
-  written in restic's own `locks/` format, since coordinating only rusticprofile instances
-  would still leave the predecessor and hand-run `restic` outside it.
-- **M5 — observability.** Log targets (`O_APPEND`), status file, `--json`.
-- **M6 — polish and publish.** Man page via `mandown`, six-shell completions, crates.io via
-  `just publish-check` → `just publish`.
+- **M4 — lock coordination. NOT BUILT, and deliberately so.** `LockBudget` would implement a
+  wait budget, execution-time crediting and stale-lock handling.
+
+  > **The paragraph that stood here was wrong, and is preserved below because the error cost
+  > real time.** It said M4 was the precondition for any `prune` against the shared
+  > repository. §7.6's own correction, and `NOTES.md` `0.1.3`/`0.1.11`, establish the
+  > opposite: **rustic is lock-free by design**, `prune` defers deletion by `--keep-delete`
+  > (23 h), and the only unsafe combination is `restic prune` against a rustic writer.
+  > Prune returned to the designated host as a `rustic prune` on 2026-08-03. **M4 is defence
+  > in depth, not permission.**
+
+  *Superseded text, 2026-08-02:* "Reclassified from prospective to load-bearing (§7.6): rustic
+  takes no repository lock at all, so the moment a host was cut over it became invisible to
+  the prune scheduled on `host-d`. That prune is now disabled, and M4 is what has to land
+  before it can come back — until then nothing reclaims space."
+
+  What survives unchanged: if M4 is ever built, the exclusion must be written in **restic's
+  own `locks/` format**, since coordinating only rusticprofile instances would still leave
+  the predecessor and hand-run `restic` outside it. A fleet running one tool needs none of it.
+- **M5 — observability. Complete (0.1.17–0.1.23).** Log targets (`O_APPEND`), status file, `--json`.
+- **M6 — polish and publish. Effectively delivered.** Man page via `mandown`, six-shell
+  completions, crates.io via `just publish-check` → `just publish` — all shipped; `v0.1.31` is
+  on crates.io. Never formally closed as a milestone, because it had no single landing point.
+  The one outstanding piece is the AUR package, blocked on their maintenance window.
 
 ## Dependencies
 
@@ -921,6 +970,9 @@ runs — consistent with Part 4's "a warning must not abort the job." Settle the
 
 ## 7.3 Option B needs label-based retention grouping — found 2026-08-01
 
+> **Promoted to `NOTES.md` §3a (invariant 1 — group named sets by label).** That is where this rule is maintained now.
+> The text below is the original finding and its measurements, kept as the evidence.
+
 Named snapshot sets have a consequence Part 7 did not anticipate, and it is not optional.
 
 **With `group-by = "host"`, the sets compete.** Retention keeps the newest snapshot per
@@ -981,6 +1033,9 @@ profile, not just after editing `jobs.yaml`.
 
 ## 7.5 The same hazard from outside the tool — found 2026-08-01
 
+> **Promoted to `NOTES.md` §3a (invariant 2 — one retention authority).** That is where this rule is maintained now.
+> The text below is the original finding and its measurements, kept as the evidence.
+
 §7.3 says a job using named sets must group retention by label. That rule protects the sets
 from *each other*. It does nothing about a **second tool applying its own retention to the
 same host**, and on a machine mid-migration there is one by definition.
@@ -1040,6 +1095,9 @@ carry a mix of labelled and unlabelled entries, which is what a second writer lo
 from inside the repository.
 
 ## 7.6 Mixing restic and rustic against one repository (found and corrected 2026-08-02)
+
+> **Promoted to `NOTES.md` §3a (invariant 3 — one lock protocol).** That is where this rule is maintained now.
+> The text below is the original finding and its measurements, kept as the evidence.
 
 §7.5 established that a (repository, host) may have exactly one **retention** authority.
 That is not the only authority a repository has, and the second one was already broken
@@ -1159,6 +1217,9 @@ while a restic `prune` schedule still exists anywhere on the fleet.*
 
 ## 7.7 Shipping the findings as a config — `config --example` (decided 2026-08-02)
 
+> **Promoted to `NOTES.md` §3a (invariant 5 — the config carries the traps).** That is where this rule is maintained now.
+> The text below is the original finding and its measurements, kept as the evidence.
+
 Everything Part 7 discovered lives in prose here and in one hand-written file on one
 machine that is not in chezmoi. That is the wrong place for it. The delegation boundary
 means rusticprofile owns almost nothing, so **every decision that can silently destroy data
@@ -1203,6 +1264,9 @@ directory, and validates them through the real binary. An example that has drift
 step with the validator is worse than none, because it is quoted with authority.
 
 ## 7.8 A read-only passthrough — `snapshots` (decided 2026-08-03)
+
+> **Promoted to `NOTES.md` §3a (invariant 4 — the delegation boundary).** That is where this rule is maintained now.
+> The text below is the original finding and its measurements, kept as the evidence.
 
 The predecessor answers `resticprofile @dot-files` with a snapshot listing, because its
 config sets `default-command: "snapshots"`. Migrating removes a daily habit and replaces it

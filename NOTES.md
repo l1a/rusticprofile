@@ -104,7 +104,131 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.31)
+## 3a. Operating invariants — the rules that bite
+
+**These are the rules that can destroy data if broken, gathered in one place.** Every one was
+found the hard way and measured; every one is silent when violated. They were promoted here
+from `PLAN.md` Part 7 on 2026-08-04 — that file keeps the full finding and the measurements
+behind each, under the same section number, but **this is where they are maintained.**
+
+A single sentence connects all of them: *this project exists because a backup that quietly
+does less than it says is worse than one that fails loudly.* Each invariant closes one route
+to that outcome.
+
+### 1. A job using named snapshot sets MUST group retention by label
+
+`group-by = "host,label"` in the rustic profile. Not `"host"`, and not rustic's default
+`"host,label,paths"`.
+
+With `"host"` alone every named set lands in one group and competes for a single retention
+slot, so only whichever finished last survives. Measured on the live repository: a dry run
+kept a **0-byte** `nushell` snapshot and deleted the **6,256-file** `core` one, and reported
+success. With `paths` in the key, a renamed source mints a fresh group with its own full
+quota — that is how 2810 snapshots survived a policy capping ~49 per host.
+
+**Label, not paths:** a set's label is stable by construction, its path list is not.
+*Evidence: `PLAN.md` §7.3.*
+
+### 2. Exactly ONE retention authority per (repository, host)
+
+Two tools may *back up* the same host concurrently — backups are additive and, with prune
+disabled, nothing is destroyed. **Two tools may not `forget` it.**
+
+Invariant 1 protects the sets from each other; it does nothing about a second tool applying
+its own retention to the same host, and a machine mid-migration has one by definition. The
+predecessor's `group-by: host` with `path`/`tag` off swept our labelled snapshots into its
+bucket and deleted a **395.591 MiB** `core` snapshot in favour of a 0-byte one written one
+second later. It ran both ways: our correctly-grouped `forget` deleted one of *its* 397.9 MiB
+snapshots by the mirror-image mechanism.
+
+**Migration means moving that authority, not overlapping it.** The ordering is not optional:
+**disable the outgoing tool's retention BEFORE enabling the incoming tool's schedule**, and
+confirm from the repository rather than from either tool's own report.
+*Evidence: `PLAN.md` §7.5.*
+
+### 3. Exactly ONE lock protocol per repository
+
+**Never run `restic prune` against a repository any rustic client writes to.** This is the
+one measured-unsafe combination, and it is unsafe because restic deletes packs immediately —
+safe only by virtue of an exclusive repository lock that rustic neither takes nor honours.
+Measured: 14 packs (487.780 MiB) deleted from under an in-flight rustic backup, repository
+then failing `restic check --read-data` with five data packs missing.
+
+**`rustic prune` is safe and is the only prune that may run here.** rustic is lock-free *by
+design*: prune marks packs and deletes them only after `--keep-delete`, 23 hours by default.
+Verified — a default `rustic prune` left every pack on disk; only `--instant-delete` removed
+them.
+
+| combination | safe |
+|---|---|
+| `rustic prune` + rustic backup | **yes** — the 23-hour grace period |
+| `restic prune` + restic backup | **yes** — restic's repository lock |
+| **`restic prune` + rustic backup** | **NO — measured corruption** |
+| `rustic prune` + restic backup | probably — *reasoned, never measured* |
+
+**The fourth row has never been tested.** Finishing the migration is what retires it.
+
+> **"Tool X lacks the mechanism I expected" is not "tool X is unsafe."** Reading rustic's own
+> documentation before generalising from the measurement was the missing step, and skipping
+> it cost a day of exposure plus a prune schedule disabled for no reason. M4 is defence in
+> depth, not permission.
+
+*Evidence: `PLAN.md` §7.6.*
+
+### 4. The delegation boundary — what this tool may emit
+
+A **job** invocation is `rustic -P <profile> <operation>`, plus `--json` on `backup`, plus one
+`--name` per enabled snapshot set. **Those are the only flags rusticprofile ever emits**, and
+a test in `rustic/invoke.rs` asserts it against every built argv. That test carries the
+instruction: *if it needs changing, the delegation boundary is moving and that belongs in
+`PLAN.md` first.*
+
+**A passthrough is acceptable only where it is read-only and adds no flags.** `snapshots`
+qualifies and exists; `check` would qualify. `forget` and `prune` do not — destructive, and
+their scoping belongs in the rustic profile where a flag typed at a prompt cannot contradict
+it. `restore` never does.
+
+Two deliberate exceptions, both **read-only**, both because nothing else in the chain can
+catch a silent failure: rusticprofile parses `rustic.toml` to validate every `--name` it
+emits (rustic ignores an unknown one whenever a valid one is also given, exit 0, no
+diagnostic), and to refuse a `sources` entry containing `~` or `$` (rustic expands neither,
+and the result is a successful 0-byte snapshot that then wins its retention slot under
+invariant 1).
+*Evidence: `PLAN.md` §7.2, §7.8, §5.9.*
+
+### 5. The dangerous decisions live in rustic's config, so the shipped example carries them
+
+The delegation boundary means rusticprofile owns almost nothing — so nearly everything that
+can silently destroy data is in `rustic.toml`. `config --example rustic` ships that knowledge
+annotated, and a test puts both examples through the real binary so they cannot drift from
+the validator.
+
+| the trap | |
+|---|---|
+| `opendal:gcs`, not restic's `gs:` — that scheme does not exist in rustic | §5.1 |
+| scoping filters go in `[snapshot-filter]`; under `[forget]` rustic **accepts and ignores** them | §5.5 |
+| `group-by = "host,label"` — invariant 1 | §7.3 |
+| exclusion globs need a leading `!`; a bare pattern is an *include* filter | §7.2 |
+| split sets by how reliably the path exists — rustic hard-fails a whole set on one missing source | §5.7 |
+| `filter-hosts` matches the **fqdn** exactly; a short name matches zero snapshots and retention silently never runs | §5.9 |
+| exclude the password file and cloud credentials, or the key goes inside the lock | §4.1 |
+
+### 6. Corollaries worth stating once
+
+- **`jobs.yaml` is byte-identical on every host; `rustic.toml` must be generated.** rustic
+  expands neither `~` nor `$VAR` and has no env-var route to the host filter. A consequence
+  with teeth: a shared `jobs.yaml` is only ever as new as the **oldest binary** reading it —
+  and, added 2026-08-04, only as current as the **most stale chezmoi checkout** reading it.
+- **rusticprofile applies XDG rules on every Unix, including macOS.** Not a preference; the
+  requirement that one line of one file mean one thing across the fleet.
+- **A `doctor` command would catch invariants 2 and 3 from inside the repository** — a host
+  whose snapshots mix labelled and unlabelled entries has a second retention authority; a
+  rustic-written repository with a live restic exclusive schedule has a second lock protocol.
+  Not built. Backlog.
+
+---
+
+## Current State (v0.1.32)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -297,23 +421,19 @@ Smaller items:
       scoped and filter nothing. All three checks — a scoping filter present, no misplaced
       filters, `group-by` explicit — are refusals at load time.
 - [ ] First benchmark + `benches/`, `criterion`, `[[bench]]` (see deviation 2 above)
-- [ ] **Publishing decision — not yet taken.** `rusticprofile` and `rustic-profile` are both
-      still free on crates.io, and AUR has no `rusticprofile` package (rechecked 2026-08-01).
-      Nothing forces the choice now that the repository is public and carries no
-      infrastructure identifiers, so the trade is:
-
-      - **Publishing early** claims the name with real code rather than a placeholder, which
-        is not squatting. But a crates.io version can be yanked and never deleted, and the
-        README describes a *scheduler* — shipping one that cannot yet schedule (M2/M3) invites
-        confusion about what the crate does.
-      - **Waiting** costs only the small risk of someone independently choosing a compound
-        name whose sole appeal is as a lineage marker for a Go tool with 19 GitHub repos.
-
-      Recommendation: publish at **M2**, when `schedule`/`unschedule`/`status` make the
-      README's first paragraph true. AUR later still — a package wants a tagged release
-      tarball, and there is no tag yet.
-- [ ] Decide what a partial backup should *do* — classify as warning, so `forget` still
-      runs, is the design intent; settle the exit code when `rustic/exit.rs` is written
+- [x] **Publishing decision — taken, and executed as recommended.** The recommendation was
+      *publish at M2, when `schedule`/`unschedule`/`status` make the README's first paragraph
+      true.* M2 landed in `0.0.19` and `v0.1.0` was tagged and published then, so it was
+      followed rather than overtaken. `rusticprofile` was claimed; `rustic-profile` is still
+      free and nothing depends on it. crates.io carries **`0.1.31`** as of 2026-08-04.
+      **AUR remains outstanding** — the package is written and container-verified, blocked
+      solely on their maintenance window (rechecked 2026-08-04, still down; check
+      `ssh aur@aur.archlinux.org help`, **not** the web page, which returns 200 throughout).
+- [x] **Decided in v0.0.5, as the design intended.** A partial backup is `Verdict::Partial`:
+      loud in the report, the job continues, `forget` still runs, exit **0**. Partial is only
+      claimed on at least one successfully parsed `--json` snapshot object — unparseable,
+      absent and uncaptured output all count as zero — because the opposite error would run
+      retention after a backup that saved nothing.
 - [x] **Redact infrastructure identifiers and make the repository public.** Done in v0.0.9.
 - [x] **Why one snapshot set backs up 0 B — answered 2026-08-01, and it is not a defect.**
       The source directory is empty: 0 files on disk. Both rusticprofile and the predecessor
@@ -326,12 +446,19 @@ Smaller items:
       repository. `PLAN.md` §7.6: warn when the repository is written by rustic while any
       restic schedule still runs an exclusive operation, which is a second *lock* authority
       and the more dangerous of the two. Not scheduled; recorded so the idea is not lost.
-- [ ] **M4 blocks space reclamation, as of 2026-08-02.** The designated prune host's timer is
-      disabled (`PLAN.md` §7.6), so packs from forgotten snapshots accumulate with nothing to
-      reclaim them. This is a deliberate cost, not an oversight, and it is the reason M4 is now
-      ahead of M3 in practical priority even though M3 is next in the numbering.
+- [x] **"M4 blocks space reclamation" was WRONG, and is superseded.** Corrected in `0.1.3`
+      and acted on in `0.1.11`: rustic is lock-free by design, so `rustic prune` is safe and
+      is the only prune that may run here. Prune returned to the designated host on
+      2026-08-03 as a `rustic prune`; it first fires **Mon 2026-08-10**. M4 is defence in
+      depth, not permission — invariant 3 in §3a.
 - [ ] Add a Pre-PR Checklist section to `AGENTS.md` Part 2, mirroring retch's §4
-- [ ] Decide what migrates out of `PLAN.md` into this file now that code exists
+- [x] **Decided and done in `0.1.32`.** The operating rules — `PLAN.md` §7.3, §7.5, §7.6,
+      §7.7, §7.8 — are promoted to **§3a** above, which is now where they are maintained.
+      `PLAN.md` keeps every section number, its full text and its measurements, and gains a
+      pointer at the top of each; nothing was renumbered or deleted, because seventeen of its
+      anchors are cited across `NOTES.md`, `AGENTS.md`, `WIP.md`, the shipped
+      `config --example` and the source. `PLAN.md` is now explicitly the historical design
+      record: Parts 1–3 (why the design is shaped this way) and Parts 5/7 (the measurements).
 
 ---
 
@@ -345,6 +472,52 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.32 — split `PLAN.md` and `NOTES.md` along the line they always intended
+
+**Documentation only; no code changed, no test changed.** `PLAN.md`'s own header has said
+since 2026-07-30 that *"once the repo is scaffolded, the forward-looking parts belong in
+`NOTES.md` and this file can shrink to the historical record."* That never happened, and
+thirty-one releases later the two files had drifted into three tangled kinds of content.
+
+**The symptom that forced it.** `PLAN.md` opened with **"Status: pre-code. Nothing has been
+implemented."** — while five milestones were complete and `v0.1.31` was on crates.io. That is
+the first thing `AGENTS.md` Part 2 §0 sends every new session to read. A document whose first
+screen is five milestones out of date is the same silent-staleness failure this project exists
+to catch, turned inward, and it had survived every review because nobody re-reads a header.
+
+**The split, stated as a rule so the next addition has one to follow:**
+
+| kind | lives in |
+|---|---|
+| why the design is shaped this way; what was rejected and why | `PLAN.md` Parts 1–3 |
+| measurements against rustic 0.11.3 | `PLAN.md` Parts 5, 7 |
+| what is built, released, next | `NOTES.md` Current State + release log |
+| **rules that can destroy data if broken** | **`NOTES.md` §3a** |
+
+**`NOTES.md` §3a, "Operating invariants", is the substantive addition** — five rules plus
+their corollaries, each of which is silent when violated: group named sets by label; exactly
+one retention authority per (repository, host); exactly one lock protocol per repository; the
+delegation boundary and what a passthrough may be; and why the dangerous decisions live in
+rustic's config so `config --example` has to carry them.
+
+**Nothing was moved out of `PLAN.md` and nothing was renumbered.** Seventeen section anchors
+are cited from `NOTES.md`, `AGENTS.md`, `WIP.md`, the shipped example and the source — §7.6
+alone is referenced ten times — so each promoted section keeps its number and full text and
+gains a pointer saying where it is now maintained. **The authority moved; the evidence did
+not.** Verified by asserting all seventeen anchors still resolve after the edit.
+
+**Two stale claims in `PLAN.md` Part 4 are corrected in place**, per the `0.1.3`/`0.1.16`
+precedent of correcting rather than rewriting: M4's "nothing may prune until lock coordination
+lands", superseded by `0.1.11`; and the milestone list's future tense for M2 and M5, both long
+complete. M6 is recorded as effectively delivered — man page, completions and crates.io all
+shipped — with the AUR package as its one outstanding piece.
+
+**Four backlog items closed as already-done**, which is its own small finding: the publishing
+decision (taken at M2, executed at `v0.1.0`), what a partial backup should do (settled in
+`0.0.5`), "M4 blocks space reclamation" (wrong, superseded by `0.1.11`), and this migration
+itself. A backlog carrying four items that were finished versions ago overstates the work
+remaining, which is the mirror of the problem above.
 
 ### v0.1.31 — `full-test` runs weekly, so a release is not its first run
 
