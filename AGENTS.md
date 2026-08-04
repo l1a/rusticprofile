@@ -208,9 +208,16 @@ shared by 7 machines, and currently holds the only copy of several years of data
 * **Never delete snapshots** on any host without explicit per-step authorisation. Follow the
   verification ladder in `PLAN.md` §4 in order; it is designed so each rung is provably safe
   and the first irreversible step has the smallest possible blast radius.
-* The **three** idle hosts (`host-c`, `host-e.local`, `host-g.local`) are the control group.
-  Leave them alone. They are the only hosts whose snapshot counts still mean anything as a
-  baseline, because nothing has run against them since 52, 140 and 269 days ago respectively.
+* The control group is now **two** hosts: `host-c` and `host-g.local`. Leave them alone. They
+  are the only hosts whose snapshot counts still mean anything as a baseline, because nothing
+  has run against them since 52 and 269 days ago respectively.
+  * **`host-e.local` left the control group on 2026-08-03**, deliberately and with
+    authorisation: it is the macOS host M3 was developed on, and it was cut over to
+    rusticprofile once launchd scheduling worked. Its first run backed up 3 of 3 snapshot
+    sets and its retention removed 5 aged snapshots, so its count no longer means what it
+    did. **Do not cite it as a baseline.** Detail in `NOTES.md` v0.1.29.
+  * That leaves one untouched macOS host, `host-g.local`, which is the only remaining
+    evidence of what an un-migrated Mac looks like. It is worth more now than it was.
 * `host-f` is **not** in the control group, despite an earlier version of this list saying
   so. It is the development machine — the one this work is done on, and the one every
   throwaway repository and test run has been created from. A control group containing the
