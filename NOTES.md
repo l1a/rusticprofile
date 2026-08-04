@@ -228,7 +228,7 @@ the validator.
 
 ---
 
-## Current State (v0.1.33)
+## Current State (v0.1.34)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -472,6 +472,59 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.34 — the recorded hostname can be pinned, and host checks follow it
+
+**`.local` is the problem this solves.** macOS reports `foo.local` where Linux reports
+`foo`, so one fleet ends up with two naming conventions in its snapshot history and every
+filter, query and census has to know which hosts are which. It is not cosmetic: the mixture
+is what produced a false alarm on 2026-08-04, where `--as-host chani.local` was run against
+a config saying `chani`.
+
+**rustic can already fix it at the source, and rusticprofile now understands that.**
+`rustic backup --host <NAME>`, and its config form `[backup] host`, set the name rustic
+records. Verified in a throwaway repository against rustic 0.11.3: a profile setting
+`host = "pinned-name"` produced a snapshot recording `pinned-name` on a machine actually
+called something else, and `filter-hosts = ["pinned-name"]` matched it.
+
+#### Why this needed a code change and not just a config edit
+
+`check_filter_hosts_can_match` (`0.1.4`) compares `filter-hosts` against the **OS hostname**.
+Pinning `host = "foo"` on a machine called `foo.local` would therefore have been **refused as
+an error while being exactly right** — and the refusal's hint would have said to switch to
+`.chezmoi.fqdnHostname`, which is the precise opposite of the fix. A guard that blocks the
+correct configuration and recommends the wrong one is worse than no guard.
+
+So the comparison target moved. `Profile::recorded_host(os_hostname)` returns the pin when
+there is one and the machine's name otherwise, and that is what every host check now uses.
+**Nothing changes for a profile without a pin** — the feature is opt-in and the existing
+behaviour is pinned by its own test.
+
+#### What is refused, and what is only documented
+
+**Refused at load time:** a profile that pins one name and filters another. That is bug #1
+from `PLAN.md` §2.1 wearing a disguise — rustic records `foo`, the filter selects
+`foo.local`, nothing matches, retention silently never runs. The message names the pin as
+the cause and deliberately does *not* offer the fqdn advice.
+
+**Documented, not checked, because one machine cannot see it:**
+
+- **Changing the pin on an existing repository splits the retention group.** Stored snapshots
+  keep their old recorded name, and under `group-by = "host,label"` old and new are different
+  groups. A filter naming only the new one stops selecting the old one, which then never gets
+  retained down again. Migrate by listing both until the old group ages out, or forget the
+  strays explicitly.
+- **Two machines must never pin the same value.** They would share one retention group and
+  forget each other's snapshots — the "exactly one retention authority per (repository, host)"
+  rule in §3a, breached from a new direction.
+
+Both are in the shipped `config --example rustic`, where someone about to set this will read
+them, alongside the note that `filter-hosts` must name whatever rustic records.
+
+The un-pinned short-hostname error now offers pinning as the second way out, rather than only
+lengthening the filter: one makes a file longer, the other makes the fleet uniform.
+
+319 tests, up from 313.
 
 ### v0.1.33 — two tests were signalling each other's child
 

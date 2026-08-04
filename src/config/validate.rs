@@ -384,6 +384,14 @@ pub fn check_default_job_exists(raw: &RawConfig) -> Vec<Violation> {
 /// `foo.local`. On a host with no domain suffix the two are identical, so the template
 /// looks correct everywhere it is tested and fails only on the machines nobody checked.
 ///
+/// **`[backup] host` moves the target, and this check follows it.** A profile may pin the
+/// recorded name, and rustic then records that instead of the machine's own — measured
+/// against rustic 0.11.3. So the comparison is against
+/// [`Profile::recorded_host`](rustic_toml::Profile::recorded_host), not the OS hostname.
+/// Without this, pinning `host = "foo"` on a machine called `foo.local` would be refused
+/// as an error while being exactly right, and the hint below would advise the reverse of
+/// the correct fix.
+///
 /// **Matching here is deliberately exact, not the lenient short-form match
 /// [`hosts::host_matches`] uses for `enabled-on-hosts`.** Being generous would defeat the
 /// purpose: rustic is the one doing the matching, and it is not generous. A filter this
@@ -409,9 +417,13 @@ pub fn check_filter_hosts_can_match(
             continue;
         };
 
+        // What rustic will WRITE on the snapshot — the pinned name if there is one. This
+        // is the only value `filter-hosts` can usefully be compared against.
+        let recorded = profile.recorded_host(host);
+
         // Absent is a different question, and `check_forget_is_scoped` asks it. Here the
         // filter exists; the only question is whether it can ever select anything.
-        if profile.filter_hosts.is_empty() || profile.filter_hosts.iter().any(|h| h == host) {
+        if profile.filter_hosts.is_empty() || profile.filter_hosts.iter().any(|h| h == recorded) {
             continue;
         }
 
@@ -421,16 +433,24 @@ pub fn check_filter_hosts_can_match(
             .map(|h| format!("`{h}`"))
             .collect::<Vec<_>>()
             .join(", ");
-        let hint = if profile
+        let hint = if profile.backup_host.is_some() {
+            // With a pinned host the fqdn advice below is actively wrong: the fix is to
+            // make the filter agree with the pin, not to lengthen either.
+            " — this profile pins `[backup] host`, so that is the name rustic will record; \
+             `filter-hosts` has to name the same value"
+        } else if profile
             .filter_hosts
             .iter()
-            .any(|h| host.starts_with(&format!("{h}.")))
+            .any(|h| recorded.starts_with(&format!("{h}.")))
         {
             // Name the actual cause rather than leaving it to be worked out. This is the
-            // shape a templated short hostname produces.
+            // shape a templated short hostname produces. Note the other fix is to pin
+            // `[backup] host` to the short name, which makes the whole fleet uniform
+            // instead of making one file longer.
             " — that looks like a short hostname where the full one is needed; rustic \
-             matches the recorded name exactly, so `chezmoi`'s `.chezmoi.hostname` must \
-             become `.chezmoi.fqdnHostname` here"
+             matches the recorded name exactly, so either use `chezmoi`'s \
+             `.chezmoi.fqdnHostname` here, or pin `[backup] host` to the short name so \
+             rustic records that instead"
         } else {
             ""
         };
@@ -438,10 +458,10 @@ pub fn check_filter_hosts_can_match(
         out.push(Violation::new(
             format!("jobs.{name}.profile"),
             format!(
-                "{} scopes `forget` to {listed}, which does not include this host \
-                 (`{host}`){hint}. rustic matches `filter-hosts` against the hostname in \
-                 each snapshot exactly, so this selects nothing: `forget` would delete \
-                 nothing and retention would silently never run",
+                "{} scopes `forget` to {listed}, which does not include the name rustic \
+                 will record (`{recorded}`){hint}. rustic matches `filter-hosts` against \
+                 the hostname in each snapshot exactly, so this selects nothing: `forget` \
+                 would delete nothing and retention would silently never run",
                 path.display()
             ),
         ));
@@ -965,6 +985,77 @@ jobs:
         assert!(
             msg.contains("fqdnHostname"),
             "the cause must be named: {msg}"
+        );
+    }
+
+    // --- [backup] host: rustic records what the profile pins, so checks follow the pin ---
+    //
+    // Measured against rustic 0.11.3 in a throwaway repository: a profile setting
+    // `host = "pinned-name"` produced a snapshot recording `pinned-name` on a machine
+    // called `arrakis`, and `filter-hosts = ["pinned-name"]` matched it. So the recorded
+    // name -- not the OS hostname -- is what every host check has to compare against.
+
+    #[test]
+    fn a_pinned_host_is_what_filter_hosts_must_match_not_the_machine_name() {
+        // The whole point of pinning: the machine is `host-e.local`, but rustic will
+        // record `host-e`, so a filter naming `host-e` is correct. Before this, the check
+        // compared against the OS name and refused a config that is exactly right.
+        let dir = profile_with(
+            "[backup]\nhost = \"host-e\"\n\n[snapshot-filter]\nfilter-hosts = [\"host-e\"]\n\n[forget]\ngroup-by = \"host,label\"\n",
+        );
+        assert!(
+            check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-e.local").is_empty(),
+            "a filter matching the pinned host must be accepted on a dotted machine"
+        );
+    }
+
+    #[test]
+    fn a_filter_that_ignores_the_pin_is_refused_and_blames_the_pin() {
+        // Pinning one name and filtering another is bug #1 with extra steps: rustic
+        // records `host-e`, the filter selects `host-e.local`, nothing matches, retention
+        // silently never runs. The hint must not send the reader to fqdnHostname, which
+        // would be the exact opposite of the fix.
+        let dir = profile_with(
+            "[backup]\nhost = \"host-e\"\n\n[snapshot-filter]\nfilter-hosts = [\"host-e.local\"]\n\n[forget]\ngroup-by = \"host,label\"\n",
+        );
+        let v = check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-e.local");
+        assert_eq!(v.len(), 1, "{v:?}");
+        let msg = format!("{:?}", v[0]);
+        assert!(
+            msg.contains("pins `[backup] host`"),
+            "the pin must be named as the cause: {msg}"
+        );
+        assert!(
+            !msg.contains("fqdnHostname"),
+            "the fqdn advice is wrong when a pin is in play: {msg}"
+        );
+    }
+
+    #[test]
+    fn without_a_pin_the_os_hostname_is_still_the_target() {
+        // The pin is opt-in; absent it, nothing about the existing behaviour changes.
+        let dir = profile_with(
+            "[snapshot-filter]\nfilter-hosts = [\"host-e.local\"]\n\n[forget]\ngroup-by = \"host\"\n",
+        );
+        assert!(
+            check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-e.local").is_empty()
+        );
+    }
+
+    #[test]
+    fn the_short_form_hint_now_offers_pinning_as_the_other_fix() {
+        // The un-pinned dotted case still errors, but the message names both ways out:
+        // lengthen the filter, or pin the short name so rustic records that instead.
+        let dir = profile_with(
+            "[snapshot-filter]\nfilter-hosts = [\"host-e\"]\n\n[forget]\ngroup-by = \"host\"\n",
+        );
+        let v = check_filter_hosts_can_match(&parse(FORGET_JOB), dir.path(), "host-e.local");
+        assert_eq!(v.len(), 1, "{v:?}");
+        let msg = format!("{:?}", v[0]);
+        assert!(msg.contains("fqdnHostname"), "{msg}");
+        assert!(
+            msg.contains("[backup] host"),
+            "pinning is the fleet-wide fix and must be offered: {msg}"
         );
     }
 

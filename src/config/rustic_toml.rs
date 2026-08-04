@@ -66,6 +66,10 @@ struct RawProfile {
 struct Backup {
     #[serde(default)]
     snapshots: Vec<SnapshotEntry>,
+    /// `[backup] host` — the name rustic records on the snapshot, overriding the OS
+    /// hostname. Read because `filter-hosts` must match what is *recorded*, not what the
+    /// machine happens to be called; see [`Profile::recorded_host`].
+    host: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +147,29 @@ pub struct Profile {
     /// can be refused. Empty when the key is absent — see
     /// [`validate::check_filter_hosts_can_match`](super::validate::check_filter_hosts_can_match).
     pub filter_hosts: Vec<String>,
+    /// `[backup] host`, if the profile pins the recorded hostname.
+    ///
+    /// **rustic records whatever this says, not the machine's own name** (measured against
+    /// rustic 0.11.3: a profile setting `host = "pinned-name"` produced a snapshot recording
+    /// `pinned-name` on a machine called `arrakis`, and a `filter-hosts` naming the pinned
+    /// value matched it). That makes it the right answer to macOS reporting `foo.local`:
+    /// pin the short name once and every host in the fleet is written the same way.
+    ///
+    /// It also moves the target of every host check. `filter-hosts` has to match the
+    /// **recorded** name, so once this is set the OS hostname stops being the thing to
+    /// compare against — see [`Profile::recorded_host`].
+    pub backup_host: Option<String>,
+}
+
+impl Profile {
+    /// The hostname rustic will actually record, given the machine's own name.
+    ///
+    /// `[backup] host` when pinned, otherwise `os_hostname`. This is the value
+    /// `filter-hosts` must contain, and getting it from anywhere else is how retention
+    /// silently stops matching anything (`PLAN.md` §2.1 bug #1).
+    pub fn recorded_host<'a>(&'a self, os_hostname: &'a str) -> &'a str {
+        self.backup_host.as_deref().unwrap_or(os_hostname)
+    }
 }
 
 /// A `sources` entry containing `~` or `$`, which rustic does not expand.
@@ -244,6 +271,7 @@ pub fn read_profile(path: &Path) -> Result<Profile, ReadError> {
         misplaced_forget_filters: raw.forget.misplaced.declared(),
         unexpandable_sources,
         filter_hosts: raw.snapshot_filter.filter_hosts.unwrap_or_default(),
+        backup_host: raw.backup.host,
     })
 }
 
@@ -372,6 +400,23 @@ filter-hosts = ["host-a"]
             "a filter in the wrong section must not count as scoping"
         );
         assert_eq!(p.forget_group_by.as_deref(), Some("host"));
+    }
+
+    #[test]
+    fn a_pinned_backup_host_is_read() {
+        let (_dir, path) = write_temp("[backup]\nhost = \"pinned\"\n");
+        let p = read_profile(&path).unwrap();
+        assert_eq!(p.backup_host.as_deref(), Some("pinned"));
+        // The pin wins over the machine's own name: that is the whole point.
+        assert_eq!(p.recorded_host("some-machine"), "pinned");
+    }
+
+    #[test]
+    fn without_a_pin_the_recorded_host_is_the_machine() {
+        let (_dir, path) = write_temp("[snapshot-filter]\nfilter-hosts = [\"host-a\"]\n");
+        let p = read_profile(&path).unwrap();
+        assert_eq!(p.backup_host, None);
+        assert_eq!(p.recorded_host("some-machine"), "some-machine");
     }
 
     #[test]

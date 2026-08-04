@@ -213,6 +213,11 @@ credential_path = "/home/user/.config/example-credentials.json"
 # survivable.
 # ---------------------------------------------------------------------------------------
 [snapshot-filter]
+# This must name what rustic RECORDS on the snapshot, matched exactly — not what the
+# machine happens to be called. If `[backup] host` is set below, that is the name; if it
+# is not, it is the OS hostname. Naming anything else selects zero snapshots, so `forget`
+# deletes nothing and retention silently never runs, forever, while every command reports
+# success. rusticprofile refuses this at load time.
 filter-hosts = ["host-a"]
 
 [forget]
@@ -235,6 +240,34 @@ keep-monthly = 12
 keep-yearly = 2
 
 [backup]
+# PIN THE RECORDED HOSTNAME. Optional, and worth it on a mixed fleet.
+#
+# Without this, rustic records whatever the OS reports — which on macOS is `foo.local`
+# and on Linux is `foo`. One fleet then has two naming conventions in its snapshot
+# history, and every filter, query and census has to know which hosts are which.
+#
+# Setting it makes the recorded name a decision rather than an accident. Verified against
+# rustic 0.11.3: a profile setting `host = "host-a"` produced a snapshot recording
+# `host-a` on a machine whose real name was something else, and a `filter-hosts` naming
+# the pinned value matched it.
+#
+# THREE THINGS TO KNOW BEFORE SETTING IT:
+#
+#  1. `filter-hosts` above must name the SAME value. Pinning one name and filtering
+#     another is the silent-retention bug with extra steps. rusticprofile refuses it.
+#  2. CHANGING IT ON AN EXISTING REPOSITORY SPLITS THE RETENTION GROUP. Snapshots already
+#     stored keep their old recorded name, and with `group-by = "host,label"` the old and
+#     new names are different groups. The old group stops being selected by a filter that
+#     names only the new one, so it is never retained down again — it just sits there.
+#     Migrate deliberately: list both names in `filter-hosts` until the old group has
+#     aged out under policy, or forget the strays explicitly.
+#  3. TWO MACHINES MUST NEVER PIN THE SAME VALUE. They would share one retention group and
+#     forget each other's snapshots — exactly the "one retention authority per (repository,
+#     host)" rule this whole file is built around. Nothing can detect that from one
+#     machine; it is on you.
+#
+# host = "host-a"
+
 # Options shared by every snapshot set below.
 exclude-if-present = ["CACHEDIR.TAG"]
 one-file-system = false

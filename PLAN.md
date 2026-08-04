@@ -844,6 +844,15 @@ pair, from one byte-identical line. rusticprofile now applies the XDG rules on e
 (0.1.25). This is not a preference for XDG over Apple's conventions; it is the requirement
 that one line of one file mean one thing across the fleet.
 
+**Amended 2026-08-04 (`0.1.34`): the hostname half has a better answer than templating.**
+`rustic backup --host <NAME>`, and its config form `[backup] host`, set the name rustic
+*records* — verified in a throwaway repository. Pinning the short name makes a `*.local`
+Mac record `foo` like every Linux host, which removes the two-conventions problem at the
+source rather than teaching every consumer about it. rusticprofile reads the key and
+compares `filter-hosts` against the recorded name rather than the OS hostname; without that
+it would have refused the correct config and advised the opposite fix. **The home path still
+needs templating**, so this narrows what the template must carry rather than removing it.
+
 **Rejected: emitting `--filter-host <hostname>` from rusticprofile.** It would solve the
 hostname half without templating, and it is the wrong trade. `-P`, the operation, `--name`
 and `--json` are the only flags this tool emits, a test asserts exactly that, and the
