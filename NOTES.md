@@ -228,7 +228,7 @@ the validator.
 
 ---
 
-## Current State (v0.1.34)
+## Current State (v0.1.35)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -237,6 +237,7 @@ executable, which is what makes rung 2 of the verification ladder possible: poin
 recording shim that logs its argv and exits 0, and a whole job runs end to end without
 rustic ever executing. The exit-code surface promised by `PLAN.md` is now asserted by
 tests: `0` success or partial, `1` run failure, `2` config error, `130` interrupted.
+
 
 The override is applied *after* loading, so it cannot mask a mistake in the configuration
 it overrides. `config` does not take it — that command never invokes rustic.
@@ -472,6 +473,15 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.35 — support non-interactive open-pr
+
+**`just open-pr` now supports non-interactive execution and environment options.**
+
+Before this change, `just open-pr` ended with a bare `gh pr create`, which failed non-interactively with *"must provide --title and --body when not attached to a tty"* after printing "Gate passed".
+
+- In non-interactive contexts (`! [ -t 0 ]`), if no arguments or title/body options are given, `open-pr` defaults to `--fill` so `gh pr create` completes cleanly using commit messages.
+- `open-pr` also parses `PR_TITLE`, `PR_BODY`, `PR_BODY_FILE`, and `PR_FILL` environment variables when invoked without explicit positional arguments.
 
 ### v0.1.34 — rusticprofile owns the hostname
 

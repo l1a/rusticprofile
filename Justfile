@@ -511,6 +511,7 @@ open-pr *ARGS:
     set -euo pipefail
     #   just open-pr --title "..." --body-file body.md      # at a terminal
     #   PR_CONFIRM=y just open-pr --title "..." --fill      # script, CI or agent
+    #   PR_CONFIRM=y PR_TITLE="..." PR_BODY="..." just open-pr
     #
     # This recipe is the only thing that can gate PR creation: neither `gh` nor `git`
     # has a hook for "a PR is about to open". Being a Justfile recipe rather than
@@ -519,13 +520,45 @@ open-pr *ARGS:
     # At a terminal gh keeps stdin, so its interactive flow still works when open-pr is
     # called with no arguments. Without one, gh is given an explicitly empty stdin: it
     # would otherwise inherit whatever the gate's checklist prompt drained (`echo y |
-    # just open-pr`), and gh reads stdin itself for `--body-file -`. Failing at the last
-    # step on an unrelated dead pipe is a confusing way to lose a passed gate.
+    # just open-pr`), and gh reads stdin itself for `--body-file -`.
+    #
+    # In non-interactive mode, args passed to open-pr are forwarded. Environment variables
+    # PR_TITLE, PR_BODY, PR_BODY_FILE, and PR_FILL can also supply options. If no args or
+    # title/body/fill options are supplied, non-interactive mode defaults to --fill so
+    # gh pr create finishes cleanly rather than failing with "must provide --title and --body".
     just pr
+
+    # Filter out empty arguments passed by just when *ARGS is empty
+    CLEAN_ARGS=()
+    for arg in "$@"; do
+        if [ -n "$arg" ]; then
+            CLEAN_ARGS+=("$arg")
+        fi
+    done
+
+    ENV_ARGS=()
+    if [ ${#CLEAN_ARGS[@]} -eq 0 ]; then
+        if [ -n "${PR_TITLE:-}" ]; then
+            ENV_ARGS+=("--title" "$PR_TITLE")
+        fi
+        if [ -n "${PR_BODY:-}" ]; then
+            ENV_ARGS+=("--body" "$PR_BODY")
+        fi
+        if [ -n "${PR_BODY_FILE:-}" ]; then
+            ENV_ARGS+=("--body-file" "$PR_BODY_FILE")
+        fi
+        if [ -n "${PR_FILL:-}" ] && [ "$PR_FILL" != "0" ] && [ "$PR_FILL" != "n" ] && [ "$PR_FILL" != "false" ]; then
+            ENV_ARGS+=("--fill")
+        fi
+    fi
+
     if [ -t 0 ]; then
-        gh pr create "$@"
+        gh pr create "${CLEAN_ARGS[@]}" "${ENV_ARGS[@]}"
     else
-        gh pr create "$@" </dev/null
+        if [ ${#CLEAN_ARGS[@]} -eq 0 ] && [ ${#ENV_ARGS[@]} -eq 0 ]; then
+            ENV_ARGS+=("--fill")
+        fi
+        gh pr create "${CLEAN_ARGS[@]}" "${ENV_ARGS[@]}" </dev/null
     fi
 
 # Generate a flamegraph for execution profiling (requires perf on Linux or dtrace on macOS)
