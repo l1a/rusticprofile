@@ -678,8 +678,8 @@ fn show_status(args: &StatusArgs) -> ExitCode {
         // A timer can be armed, green and firing while every run fails — or be quietly
         // disabled, in which case nothing fails and nothing reports. Only the recorded
         // outcome distinguishes those from a job that is fine.
-        if let Ok(state_dir) = config::paths::user_state_dir() {
-            let path = rusticprofile::run::status::path_for(&state_dir, &job.name);
+        {
+            let path = rusticprofile::run::status::path_for(&config.state_dir, &job.name);
             match rusticprofile::run::status::read(&path) {
                 Some(rec) => {
                     println!(
@@ -787,7 +787,7 @@ fn run_job(args: &RunArgs) -> ExitCode {
     // report, and which output format a caller asked for says nothing about whether the
     // run should be remembered.
     write_run_log(job, &report, &now);
-    write_run_status(&report, &now);
+    write_run_status(&config.state_dir, &report, &now);
     ExitCode::from(report.exit_code())
 }
 
@@ -795,13 +795,14 @@ fn run_job(args: &RunArgs) -> ExitCode {
 ///
 /// Like the log, a failure here never changes the exit code — the backup happened, and a
 /// bookkeeping problem must not be reported as a backup problem.
-fn write_run_status(report: &rusticprofile::run::steps::JobReport, now: &jiff::Zoned) {
+fn write_run_status(
+    state_dir: &std::path::Path,
+    report: &rusticprofile::run::steps::JobReport,
+    now: &jiff::Zoned,
+) {
     use rusticprofile::run::status;
 
-    let Ok(state_dir) = config::paths::user_state_dir() else {
-        return;
-    };
-    let path = status::path_for(&state_dir, &report.job);
+    let path = status::path_for(state_dir, &report.job);
     // Read first: a failing run must carry forward when the job last actually worked,
     // which is the only field that can reveal a job that has silently stopped.
     let previous = status::read(&path);
@@ -926,8 +927,6 @@ fn resolve_job_name(
 fn status_as_json(config: &Config, args: &StatusArgs) -> ExitCode {
     use rusticprofile::report::json::{GatedJobJson, JobStatusJson, StatusJson};
 
-    let state_dir = config::paths::user_state_dir().ok();
-
     let backend = schedule::current_backend();
 
     let jobs = config
@@ -957,11 +956,10 @@ fn status_as_json(config: &Config, args: &StatusArgs) -> ExitCode {
                     next_elapse: None,
                 },
             };
-            let recorded = state_dir.as_ref().and_then(|d| {
-                rusticprofile::run::status::read(&rusticprofile::run::status::path_for(
-                    d, &job.name,
-                ))
-            });
+            let recorded = rusticprofile::run::status::read(&rusticprofile::run::status::path_for(
+                &config.state_dir,
+                &job.name,
+            ));
             JobStatusJson::new(&job.name, job.schedule.is_some(), &timer, recorded.as_ref())
         })
         .collect();

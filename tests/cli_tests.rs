@@ -8,10 +8,41 @@
 
 use std::process::Command;
 
+/// A scratch state directory shared by every child this file spawns.
+///
+/// **This exists to stop the test suite writing into the real one, and it is not cosmetic.**
+/// `run` records each job at `$XDG_STATE_HOME/rusticprofile/status/<job>.json`, and these
+/// fixtures use the job name `dot-files` — which is also the live hourly job on this fleet. So
+/// `cargo test` on such a host overwrote the real record with a fixture's, claiming a success
+/// on `host-a` that never happened. That destroys the `last_success` history whose entire
+/// purpose is revealing a job that has quietly stopped working, and replaces it with a
+/// fabrication a monitor would believe. Observed on a real host, seconds after a test run.
+///
+/// Redirected through `XDG_STATE_HOME` rather than a new flag: that variable is already the
+/// documented contract (see the man page's FILES section), so this needs no product surface,
+/// and it is honoured on macOS as well as Linux since 0.1.25.
+///
+/// **One choke point, deliberately.** Every spawn in this file goes through [`command`], so a
+/// test added later cannot forget to be hermetic — which a per-test flag could not promise.
+fn state_dir() -> &'static std::path::Path {
+    use std::sync::OnceLock;
+    static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
+    DIR.get_or_init(|| tempfile::tempdir().expect("scratch state dir"))
+        .path()
+}
+
+/// The binary, with state redirected away from the developer's real one.
+///
+/// Use this rather than `Command::new(env!(...))` directly.
+fn command() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_rusticprofile"));
+    cmd.env("XDG_STATE_HOME", state_dir());
+    cmd
+}
+
 /// Run the binary with `args`, returning (stdout, stderr, success).
 fn run(args: &[&str]) -> (String, String, bool) {
-    let bin_path = env!("CARGO_BIN_EXE_rusticprofile");
-    let output = Command::new(bin_path)
+    let output = command()
         .args(args)
         .output()
         .expect("failed to execute rusticprofile binary");
@@ -81,7 +112,7 @@ const EXIT_CONFIG_ERROR: i32 = 2;
 
 /// Run the binary and return (stdout, stderr, exit code).
 fn run_code(args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+    let output = command()
         .args(args)
         .output()
         .expect("failed to execute rusticprofile binary");
@@ -443,7 +474,7 @@ fn plan_never_spawns_rustic() {
     // Planning is inspection. It must work with no rustic binary anywhere on PATH, so it
     // is safe to run on a machine that has never had one installed.
     let (_dir, path) = fixture(GOLDEN_CONFIG);
-    let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+    let output = command()
         .args([
             "plan",
             "-n",
@@ -483,7 +514,7 @@ fn plan_explains_a_gated_off_job() {
 /// `env_clear` first so a developer's real `RUSTIC_*` or `GOOGLE_*` variables cannot leak
 /// into an assertion — or into test output.
 fn run_code_env(args: &[&str], vars: &[(&str, &str)]) -> (String, String, i32) {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_rusticprofile"));
+    let mut cmd = command();
     cmd.args(args).env_clear();
     for (k, v) in vars {
         cmd.env(k, v);
@@ -851,6 +882,69 @@ fn rustic_binary_override_lets_a_shim_stand_in_for_rustic() {
 }
 
 #[test]
+fn a_run_records_its_status_under_xdg_state_home_and_nowhere_else() {
+    // The mechanism every other test in this file silently depends on, asserted once so it
+    // cannot rot: `run` must write its record under $XDG_STATE_HOME.
+    //
+    // This is a regression test for real damage, not for tidiness. These fixtures use the job
+    // name `dot-files`, which is the live hourly job on this fleet, so before the harness
+    // redirected state a plain `cargo test` overwrote that job's real record with a fixture's
+    // — a fabricated success on `host-a`, replacing the `last_success` history that exists to
+    // reveal a job which has quietly stopped working.
+    let job = "state-dir-job";
+    let (dir, path) = fixture(&run_config_named(job));
+    let shim = recording_shim(dir.path());
+    let state = dir.path().join("state");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+        .args([
+            "run",
+            "-n",
+            job,
+            "--config",
+            &path,
+            "--as-host",
+            "host-a",
+            "--rustic-binary",
+            &shim,
+        ])
+        .env("XDG_STATE_HOME", &state)
+        .output()
+        .expect("failed to execute binary");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let record = state
+        .join("rusticprofile/status")
+        .join(format!("{job}.json"));
+    assert!(
+        record.is_file(),
+        "the record must land under XDG_STATE_HOME, not the real state directory: {}",
+        record.display()
+    );
+    let text = std::fs::read_to_string(&record).unwrap();
+    assert!(text.contains(job), "{text}");
+
+    // And `status` reading the same tree must find it — the reader and the writer have to
+    // agree on which file is the record, which is why the directory is resolved once and
+    // carried on `Config` rather than re-derived per command.
+    let seen = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+        .args(["status", "--config", &path, "--as-host", "host-a"])
+        .env("XDG_STATE_HOME", &state)
+        .output()
+        .expect("failed to execute binary");
+    let stdout = String::from_utf8_lossy(&seen.stdout);
+    assert!(
+        stdout.contains("last success"),
+        "status must read back what run wrote: {stdout}"
+    );
+}
+
+#[test]
 fn a_missing_rustic_binary_is_a_run_failure_not_a_panic() {
     // Exit 1, not 2: the configuration is fine, the run is what failed. A monitoring
     // system has to be able to tell those apart.
@@ -918,7 +1012,7 @@ fn config_check_never_needs_the_rustic_binary() {
     // Validation is hermetic: no rustic on PATH, no repository, no network. Running it
     // must be safe on any machine at any time.
     let (_dir, path) = fixture(GOOD_CONFIG);
-    let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+    let output = command()
         .args([
             "config",
             "--check",
@@ -945,7 +1039,7 @@ fn config_example_emits_to_stdout_without_needing_a_configuration() {
     // An example is what you ask for when you have no configuration yet, so it must not
     // require one — and it must be hermetic, like every other `config` mode.
     for what in ["jobs", "rustic"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+        let output = command()
             .args(["config", "--example", what])
             .env("PATH", "/nonexistent")
             .env("XDG_CONFIG_HOME", "/nonexistent")
@@ -971,7 +1065,7 @@ fn the_emitted_examples_pass_config_check() {
     let dir = tempfile::tempdir().expect("temp dir");
 
     let jobs_text = String::from_utf8(
-        Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+        command()
             .args(["config", "--example", "jobs"])
             .output()
             .unwrap()
@@ -979,7 +1073,7 @@ fn the_emitted_examples_pass_config_check() {
     )
     .unwrap();
     let rustic_text = String::from_utf8(
-        Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+        command()
             .args(["config", "--example", "rustic"])
             .output()
             .unwrap()
@@ -1024,7 +1118,7 @@ fn the_emitted_examples_plan_a_real_argv() {
     // runnable job. `plan` builds the argv rustic would actually receive.
     let dir = tempfile::tempdir().expect("temp dir");
     let rustic_text = String::from_utf8(
-        Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+        command()
             .args(["config", "--example", "rustic"])
             .output()
             .unwrap()
@@ -1032,7 +1126,7 @@ fn the_emitted_examples_plan_a_real_argv() {
     )
     .unwrap();
     let jobs_text = String::from_utf8(
-        Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+        command()
             .args(["config", "--example", "jobs"])
             .output()
             .unwrap()
@@ -1123,7 +1217,7 @@ fn schedule_writes_what_this_platforms_backend_needs() {
     let (dir, path) = fixture(SCHEDULABLE_CONFIG);
     let unit_dir = dir.path().join("units");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+    let output = command()
         .args([
             "schedule",
             "-n",
@@ -1335,7 +1429,7 @@ fn schedule_refuses_when_rustic_cannot_be_resolved() {
     }
     let (dir, path) = fixture(GOOD_CONFIG); // no `rustic-binary`, and no rustic on PATH
     let unit_dir = dir.path().join("units");
-    let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+    let output = command()
         .args([
             "schedule",
             "-n",

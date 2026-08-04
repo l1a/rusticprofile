@@ -57,6 +57,14 @@ pub struct Config {
     pub host: String,
     pub rustic_binary: String,
     pub rustic_config_dir: PathBuf,
+    /// Where run logs and the status file go, already resolved.
+    ///
+    /// Carried here rather than re-derived per caller. `main` previously called
+    /// `paths::user_state_dir()` in three separate places — the runner, `status` and
+    /// `status --json` — so three code paths each decided independently where state lived,
+    /// and an override had to be remembered in all three or the reader and the writer would
+    /// disagree about which file is the record.
+    pub state_dir: PathBuf,
     /// Jobs this host runs, in name order.
     pub jobs: Vec<Job>,
     /// Jobs excluded by `enabled-on-hosts`, kept so the gate is inspectable rather than
@@ -139,6 +147,8 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
     let host_short = hosts::short(&host).to_string();
 
     let config_dir = paths::user_config_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Resolved once here and carried on `Config`, so the log path `${state_dir}` produces
+    // and the status file the runner writes can never point at different trees.
     let state_dir = paths::user_state_dir().unwrap_or_else(|_| PathBuf::from("."));
     let temp_dir = std::env::temp_dir();
 
@@ -307,6 +317,7 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         host,
         rustic_binary,
         rustic_config_dir,
+        state_dir,
         jobs,
         gated_out,
         default_job: raw.defaults.default_job.clone(),

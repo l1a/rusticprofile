@@ -371,6 +371,7 @@ mod tests {
 
     fn config_with(binary: &str) -> Config {
         Config {
+            state_dir: std::path::PathBuf::from("/state"),
             host: "host-a".to_string(),
             rustic_binary: binary.to_string(),
             rustic_config_dir: std::path::PathBuf::from("/cfg/rustic"),

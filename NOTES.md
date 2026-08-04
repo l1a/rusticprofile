@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.27)
+## Current State (v0.1.28)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,59 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.28 — `cargo test` was destroying the real status record
+
+**The test suite was overwriting the very field the tool exists to protect.** Found while
+cleaning up after the M3 verification, and it had been true since M5 landed the status file.
+
+`run` records each job at `$XDG_STATE_HOME/rusticprofile/status/<job>.json`. The integration
+fixtures use the job name **`dot-files`** — which is also the fleet's live hourly job. So a
+plain `cargo test` on such a host wrote this into the real state directory:
+
+```json
+{ "job": "dot-files", "host": "host-a",
+  "last_run": "2026-08-03T21:42:25-07:00", "last_verdict": "success",
+  "last_success": "2026-08-03T21:42:25-07:00", "skipped": [] }
+```
+
+`"host": "host-a"` is a **fixture's** hostname. Two consequences, and the second is worse:
+
+1. It destroys the `last_success` history — the one field `v0.1.18` added because *"a run that
+   fails is loud, a run that never happens is silent"*, and the field `WIP.md` says to alert
+   on.
+2. It replaces it with a **fabricated success**. A monitor reads a run that never happened, and
+   if the next real run fails, that fake success is carried forward by the very
+   carry-forward rule that makes the field useful.
+
+It demonstrated itself before being fixed: `rusticprofile status` on the macOS host reported
+`dot-files` last succeeding at 21:47:29, on a machine where that job has never once run.
+
+**Fixed in the harness, with no product surface added.** Every child the integration tests spawn
+now gets `XDG_STATE_HOME` pointing at a scratch directory. That variable is already the
+documented contract — the man page's FILES section says so, and `0.1.25` made it authoritative
+on macOS too — so nothing new had to be invented.
+
+**A choke point, not a per-test flag.** All eleven spawn sites go through one `command()`
+helper, so a test added later cannot forget to be hermetic. A `--state-dir` flag was written
+first and then removed: it would have had to be remembered in every future test, which is a
+weaker guarantee for more surface.
+
+**Verified by deleting the real state tree and running the full suite**: it was not recreated.
+That is the assertion that matters, because a count of passing tests says nothing about what
+they wrote.
+
+**One real simplification came out of it.** `main.rs` resolved `paths::user_state_dir()` in
+**three** separate places — the runner, `status`, and `status --json` — so three code paths
+independently decided where state lived, and the reader could disagree with the writer about
+which file is the record. It is now resolved once in `config::load` and carried as
+`Config.state_dir`. A new integration test asserts the round trip: `run` writes under
+`XDG_STATE_HOME`, and `status` reading the same tree finds it.
+
+Also corrected: `schedule/mod.rs` still opened with "macOS launchd is M3", written when it was
+future work and left behind by `0.1.27`.
+
+313 tests, up from 312.
 
 ### v0.1.27 — M3 complete: macOS schedules itself
 
