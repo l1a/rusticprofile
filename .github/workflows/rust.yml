@@ -35,25 +35,42 @@ jobs:
     container: ${{ matrix.container }}
     # Skip this job on version tags (full-test will run instead)
     if: github.ref_type != 'tag'
-    # `fedora-arm` is deliberately absent here, and only here.
+    # Two platforms are deliberately absent from this matrix and present in `full-test`, so
+    # every one of them still runs on every tag and manual dispatch. Both removals follow the
+    # same rule: **drop a leg only when it is the intersection of two things each already
+    # covered here.** Neither is about saving wall clock — see the note at the end.
     #
-    # It was the slowest thing in CI by a wide margin — 19 minutes on one merge, essentially
-    # all of it `dnf install` plus a from-scratch rustup inside a Fedora container on an ARM
-    # runner. It sets the wall clock for every pull request.
+    # `fedora-arm` (removed in v0.0.15) was the slowest thing in CI by a wide margin — 19
+    # minutes on one merge, essentially all of it `dnf install` plus a from-scratch rustup
+    # inside a Fedora container on an ARM runner, and it set the wall clock for every pull
+    # request. What it uniquely covered was the *combination* Fedora + aarch64, while
+    # `fedora-x64` covers Fedora's toolchain and `ubuntu-arm` covers aarch64.
     #
-    # What it uniquely covers is the *combination* of Fedora and aarch64. `fedora-x64`
-    # already covers Fedora's toolchain and `ubuntu-arm` already covers aarch64, and the
-    # only platform-specific code here is a handful of `nix` syscalls — so an
-    # independent failure of just that intersection is unlikely.
+    # `ubuntu-x64` (removed in v0.1.30) is the same argument without the timing complaint.
+    # What it uniquely covered was the combination "Ubuntu host runner + x86_64":
+    # `fedora-x64` covers x86_64 Linux, and `ubuntu-arm` covers the Ubuntu userland on a host
+    # runner. Stated precisely, because "redundant" is too loose: what is genuinely no longer
+    # exercised at pull-request time is `dtolnay/rust-toolchain@stable` *on x86_64*, since the
+    # remaining x86_64 leg installs rustup inside a container. That action still runs here on
+    # `ubuntu-arm` and `macos`, and on x86_64 in `full-test`. The only platform-specific code
+    # in this crate is a handful of `nix` syscalls plus the systemd/launchd split, none of
+    # which distinguishes an x86_64 host runner from an x86_64 container.
     #
-    # It still runs on every tag and manual dispatch via `full-test`, and `build-release`
-    # still produces the linux-arm64 artifact from it, so nothing ships untested.
+    # **`macos` must not be removed by the same reasoning, and the case has grown.** It is the
+    # only leg that exercises launchd at all — agent generation, `plutil -lint` over every
+    # generated plist, and the launchd branches of `schedule`/`unschedule`/`status`. None of it
+    # can run on Linux.
+    #
+    # **What this buys, honestly: runner minutes, not wall clock.** Measured on the #44 run,
+    # `ubuntu-x64` was 37s while `fedora-x64` at 66s set the critical path either way. It also
+    # widens the gap that let the v0.1.21 time-zone-database failure pass every pull request
+    # and break the release: `full-test` runs only on tags, in leaner containers. If that bites
+    # again, the fix is to run `full-test` on a schedule or before a release — not to restore a
+    # leg whose coverage is already duplicated.
     strategy:
       matrix:
-        platform: [ubuntu-x64, ubuntu-arm, fedora-x64, macos]
+        platform: [ubuntu-arm, fedora-x64, macos]
         include:
-          - platform: ubuntu-x64
-            os: ubuntu-latest
           - platform: ubuntu-arm
             os: ubuntu-24.04-arm
           - platform: fedora-x64
