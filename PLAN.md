@@ -210,11 +210,17 @@ The house standard:
   | host-b | 952 | active | Linux |
   | host-c | 364 | 52d idle | Linux |
   | host-d | 55 | active | Linux — **designated prune host** |
-  | host-e.local | 25 | 140d idle | macOS |
+  | host-e.local | 25 → **23** | **cut over to rusticprofile 2026-08-03** | macOS |
   | host-f | 4 | active | Linux (this machine, reinstalled 2026-07-22) |
   | host-g.local | 3 | 269d idle | macOS, home is `/Users/user-b` |
 
   `host-h` (2 snapshots) was forgotten by explicit ID on 2026-07-30.
+
+  **The counts above are the 2026-07-30 census and are no longer current** — the repository
+  held 687 snapshots after `host-e.local`'s cutover. Two rows have moved since: `host-f` was
+  cut over on 2026-08-01, and `host-e.local` on 2026-08-03 (+3 backed up, −5 forgotten, other
+  hosts unchanged at 664, verified from the repository). The table is kept as the census it
+  was, because the *ratios* are what the retention findings rest on; read it as history.
 - **Paths differ across the fleet:** `/home/user-a`, `/Users/user-a`, `/Users/user-b`. 16
   distinct path-sets exist in the repo. This is *why* copying backup sources into retention
   `--path` filters is dangerous here.

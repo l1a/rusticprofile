@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.28)
+## Current State (v0.1.29)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,84 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.29 — the second host is cut over, and a redaction failure in this file
+
+**Documentation only; no behaviour changed.** Two things, and the second is a defect in this
+file rather than in the code.
+
+#### `host-e.local` is cut over — the first macOS host to take its own backups
+
+Ladder rung 9 for a second machine, and the first on macOS. **It left the control group to do
+it**, deliberately and with authorisation, so `AGENTS.md` §3 is corrected: the control group is
+now `host-c` and `host-g.local`, and `host-g.local` is the only remaining evidence of what an
+un-migrated Mac looks like.
+
+Measured from the repository rather than from either tool's report:
+
+| | before | after | |
+|---|---|---|---|
+| `host-e.local` snapshots | 25 | **23** | +3 backed up, −5 forgotten |
+| repository total | 689 | **687** | same net |
+| packs | 784 | **788** | new data; prune is off, so nothing was reclaimed |
+| **other hosts** | 664 | **664** | **unchanged** — `[snapshot-filter]` held under a real irreversible operation |
+
+The 5 removals were authorised individually from a `forget --dry-run` beforehand: four same-day
+near-duplicates from 2026-03-09 and one from 2026-02-04, with 20 kept including every
+monthly and yearly anchor back to 2025-08-21. Each was confirmed gone afterwards by ID.
+
+**The `group-by` in the profile was verified to take effect rather than assumed.** The
+config-driven dry run and an explicit `--group-by host,label` both said 5; rustic's default
+`host,label,paths` said 4. A differential test, because "the key is present" is not "the key is
+doing something" — §7.7 records that rustic accepts and ignores these keys in the wrong
+section.
+
+**One rollout step earned its place, and it is the reason that list exists.** `WIP.md`'s
+procedure says to confirm `enabled-on-hosts` coverage *before* arming anything. On this host
+both gated-off sets' sources were present — `~/.gnupg` holding a **real keyring**
+(`trustdb.gpg`, `pubring.kbx`) — while the host was in neither set's list. Arming first would
+have backed it up hourly, reported `success` every time, and never once saved those keys.
+Nothing would have failed; the sets simply would not have run. The host was added to both
+lists first, and the run then reported `backup saved 3 of 3 snapshot sets`.
+
+**Retention authority moved before the schedule arrived**, per §7.5's non-optional ordering: the
+predecessor's LaunchAgent was durably disabled with `launchctl disable` — the launchd analogue
+of `systemctl --user disable` — with its plist left installed, so the reversal is one command.
+Exactly one retention authority on the host, checked rather than assumed.
+
+Exclusions were verified against the **stored** snapshot with positive controls, as on the
+first cutover: password file, cloud credentials, `.cache`, `node_modules` and `.DS_Store` all
+absent; `.ssh` 48 files and `chezmoi` 422 present, so the check could actually fail. **A first
+attempt at that check was wrong in a way worth recording:** `grep -c ".cache"` reported 11
+matches, because an unescaped `.` matches any character — `_cache` and friends. `grep -Fc
+'/.cache'` reports 0. A verification step whose oracle is a sloppy pattern can report a
+failure that is not there, which is the same class of error as the ones that report success
+that is not there.
+
+#### This file was leaking live hostnames, and had been since 0.1.4
+
+§3 of this document says: *"No live infrastructure identifiers in tracked files. The repository
+is public… Grep the diff before opening a PR, and beware substring false positives."*
+
+Doing exactly that grep found **11 real hostnames in this file's own release log**, in the
+`0.1.4`, `0.1.12` and `0.1.24` entries — quoted inside example error messages and command
+output, where they read as illustration and slipped past review three times. Now redacted to
+the `host-x` vocabulary.
+
+The substring warning proved its worth in the same pass: a naive search for one of the names
+matches **"mechanism"**, which occurs 17 times across these documents. Most of the hits were
+that word.
+
+**A `#[cfg(test)]` guard was itself part of the leak.** The test asserting the shipped examples
+carry no real home directory did it by checking for one hard-coded developer path — a live
+identifier in a public file, inside the test written to prevent live identifiers in public
+files, and one that could only ever catch a leak on the single machine it named. It now asks
+`dirs::home_dir()` for *this* machine's home.
+
+**Redacting the file does not purge the history.** The earlier commits remain readable, exactly
+as recorded for the fork incident in `WIP.md` §8: the current tree is clean, and past objects
+are reachable to anyone who looks for them. Accepted rather than escalated, on the same
+reasoning — these are hostnames on a private fleet, not credentials.
 
 ### v0.1.28 — `cargo test` was destroying the real status record
 
@@ -642,7 +720,7 @@ for the first time on macOS because rustic 0.11.3 is now installed there.
 
 ### v0.1.24 — name the version skew, and refresh a stale README
 
-**Two loose ends from the gimli incident.**
+**Two loose ends from the host-d incident.**
 
 **The error now names the running version.** Unknown keys and variables stay hard errors —
 that rule caught a config block in the predecessor which had silently never taken effect
@@ -703,7 +781,7 @@ $ rusticprofile status --json 2>/dev/null
       "skipped_last_run": []
     }
   ],
-  "not_on_this_host": [ { "job": "dot-files-prune", "enabled_on_hosts": ["gimli"] } ]
+  "not_on_this_host": [ { "job": "dot-files-prune", "enabled_on_hosts": ["host-d"] } ]
 }
 ```
 
@@ -1093,10 +1171,10 @@ job. Correct on the real host, and a **false alarm on every other one**: the che
 and they disagree precisely when the simulation is doing its job.
 
 ```
-$ rusticprofile config --check --as-host gimli      # before
+$ rusticprofile config --check --as-host host-d      # before
 error: 2 configuration errors:
-  jobs.dot-files.profile: …/dot-files.toml scopes `forget` to `arrakis`, which does not
-  include this host (`gimli`) …
+  jobs.dot-files.profile: …/dot-files.toml scopes `forget` to `host-f`, which does not
+  include this host (`host-d`) …
 ```
 
 Nothing was wrong: on that host, chezmoi renders its own profile naming its own hostname.
@@ -1107,11 +1185,11 @@ silently would report a clean bill of health for a machine whose rustic profile 
 has never seen:
 
 ```
-$ rusticprofile config --check --as-host gimli      # after
+$ rusticprofile config --check --as-host host-d      # after
 ok: …/jobs.yaml
-  host              gimli
+  host              host-d
   note:         simulated — `filter-hosts` was NOT checked
-                    that check reads this machine's rustic profile, and `gimli` has its own
+                    that check reads this machine's rustic profile, and `host-d` has its own
 ```
 
 Two tests hold the line: one that simulating another host exits 0 *and* says the check was
@@ -1384,7 +1462,7 @@ matches that field **exactly**, so the filter selects nothing, `forget` deletes 
 retention silently never runs while every command reports success. That is bug #1 from
 `PLAN.md` §2.1, reintroduced.
 
-It was invisible on the host it was written on: `arrakis` has no domain suffix, so
+It was invisible on the host it was written on: `host-f` has no domain suffix, so
 `.chezmoi.hostname` and `.chezmoi.fqdnHostname` are identical there. Two of the seven hosts
 are `*.local`, and neither is rolled out yet — the template would have failed only on the
 machines nobody was looking at.
@@ -1394,8 +1472,8 @@ importantly, so is the reason it was possible.** `check_filter_hosts_can_match` 
 load time any profile whose `filter-hosts` does not include the host that will run it:
 
 ```
-jobs.j.profile: …/p.toml scopes `forget` to `chani`, which does not include this host
-  (`chani.local`) — that looks like a short hostname where the full one is needed; rustic
+jobs.j.profile: …/p.toml scopes `forget` to `host-e`, which does not include this host
+  (`host-e.local`) — that looks like a short hostname where the full one is needed; rustic
   matches the recorded name exactly, so `chezmoi`'s `.chezmoi.hostname` must become
   `.chezmoi.fqdnHostname` here. …retention would silently never run
 ```

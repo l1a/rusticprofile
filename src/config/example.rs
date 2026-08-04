@@ -401,9 +401,20 @@ mod tests {
     /// expands — and no real hostname or home directory may be baked in here.
     #[test]
     fn examples_are_static_text_with_placeholder_identifiers() {
+        // Asked against *this* machine's real home rather than one developer's hard-coded
+        // path. The literal it replaced was itself a live identifier in a public file — the
+        // thing this test exists to prevent — and it could only ever catch a leak on the one
+        // machine whose path it named.
+        let real_home = dirs::home_dir().map(|h| h.display().to_string());
         for text in [JOBS_YAML, RUSTIC_TOML] {
+            if let Some(home) = &real_home {
+                assert!(
+                    !text.contains(home.as_str()),
+                    "this machine's real home directory leaked into an example"
+                );
+            }
             assert!(
-                !text.contains("/home/ktobias") && !text.contains("/Users/"),
+                !text.contains("/Users/"),
                 "a real home directory leaked into an example"
             );
         }
