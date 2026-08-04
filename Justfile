@@ -528,8 +528,16 @@ open-pr *ARGS:
     # gh pr create finishes cleanly rather than failing with "must provide --title and --body".
     just pr
 
+    # Filter out empty arguments passed by just when *ARGS is empty
+    CLEAN_ARGS=()
+    for arg in "$@"; do
+        if [ -n "$arg" ]; then
+            CLEAN_ARGS+=("$arg")
+        fi
+    done
+
     ENV_ARGS=()
-    if [ $# -eq 0 ]; then
+    if [ ${#CLEAN_ARGS[@]} -eq 0 ]; then
         if [ -n "${PR_TITLE:-}" ]; then
             ENV_ARGS+=("--title" "$PR_TITLE")
         fi
@@ -545,12 +553,12 @@ open-pr *ARGS:
     fi
 
     if [ -t 0 ]; then
-        gh pr create "$@" "${ENV_ARGS[@]}"
+        gh pr create "${CLEAN_ARGS[@]}" "${ENV_ARGS[@]}"
     else
-        if [ $# -eq 0 ] && [ ${#ENV_ARGS[@]} -eq 0 ]; then
+        if [ ${#CLEAN_ARGS[@]} -eq 0 ] && [ ${#ENV_ARGS[@]} -eq 0 ]; then
             ENV_ARGS+=("--fill")
         fi
-        gh pr create "$@" "${ENV_ARGS[@]}" </dev/null
+        gh pr create "${CLEAN_ARGS[@]}" "${ENV_ARGS[@]}" </dev/null
     fi
 
 # Generate a flamegraph for execution profiling (requires perf on Linux or dtrace on macOS)
