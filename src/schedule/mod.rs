@@ -11,10 +11,11 @@
 //! what lets a unit be inspected before it exists anywhere — the same discipline as `plan`
 //! showing an argv before anything is spawned.
 //!
-//! macOS launchd is M3. The `permission` and `priority` vocabulary is already shared, so
-//! that milestone is a second backend rather than a second design — [`launchd`] generates
-//! agents from the same [`UnitContext`] and the same `at:` vocabulary, differing only where
-//! launchd genuinely differs from systemd.
+//! **Both backends are implemented**: systemd on Linux ([`systemd`]), launchd on macOS
+//! ([`launchd`]). The `permission` and `priority` vocabulary is shared, so the second one was
+//! a second backend rather than a second design — [`launchd`] generates agents from the same
+//! [`UnitContext`] and the same `at:` vocabulary, differing only where launchd genuinely
+//! differs from systemd. Those differences are enumerated in that module's own documentation.
 
 pub mod calendar;
 pub mod install;
