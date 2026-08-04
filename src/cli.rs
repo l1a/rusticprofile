@@ -58,10 +58,10 @@ pub enum Command {
     /// Run a job's operations in order
     Run(RunArgs),
 
-    /// Install systemd units for a job
+    /// Install the OS schedule for a job (systemd units, or a launchd agent on macOS)
     Schedule(ScheduleArgs),
 
-    /// Remove a job's systemd units
+    /// Remove a job's OS schedule (systemd units, or its launchd agent)
     Unschedule(UnscheduleArgs),
 
     /// Show what is scheduled on this host, and what is deliberately not
@@ -130,7 +130,9 @@ pub struct ScheduleArgs {
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// Write units into this directory instead of the systemd user directory
+    /// Write units or agents into this directory instead of the platform's own
+    ///
+    /// An inspection target: nothing is armed when this is given, on either backend.
     #[arg(long, value_name = "DIR")]
     pub unit_dir: Option<PathBuf>,
 }
@@ -145,7 +147,7 @@ pub struct UnscheduleArgs {
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// Look for units in this directory instead of the systemd user directory
+    /// Look for units or agents in this directory instead of the platform's own
     #[arg(long, value_name = "DIR")]
     pub unit_dir: Option<PathBuf>,
 }
@@ -167,7 +169,7 @@ pub struct StatusArgs {
     #[arg(long, value_name = "HOST")]
     pub as_host: Option<String>,
 
-    /// Look for units in this directory instead of the systemd user directory
+    /// Look for units or agents in this directory instead of the platform's own
     #[arg(long, value_name = "DIR")]
     pub unit_dir: Option<PathBuf>,
 }

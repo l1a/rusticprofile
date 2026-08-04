@@ -124,6 +124,17 @@ pub struct GatedJobJson {
 pub struct StatusJson {
     pub schema: u32,
     pub host: String,
+    /// Which service manager schedules here: `"systemd"`, `"launchd"`, or `null` on a
+    /// platform with neither.
+    ///
+    /// **Added in 0.1.27 without a schema bump**, which the schema's own contract allows —
+    /// fields may be added, and a consumer ignoring unknown ones keeps working.
+    ///
+    /// It earns its place by explaining an absence. `next_run` is always `null` under
+    /// launchd, because launchd reports no next fire time; without this field a monitor
+    /// cannot tell that from a timer it simply failed to read, and "could not tell" and
+    /// "this platform never tells" call for different alerts.
+    pub backend: Option<String>,
     pub jobs: Vec<JobStatusJson>,
     /// Jobs excluded here by `enabled-on-hosts`.
     ///

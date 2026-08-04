@@ -1098,8 +1098,28 @@ jobs:
       at: hourly
 ";
 
+/// What `schedule` should produce on the platform running this test.
+///
+/// One job is **two** systemd units and **one** launchd agent, because systemd cannot run a
+/// command from a timer and launchd can. On a platform with neither, it is a refusal and no
+/// files at all — which is the case that must never regress, since files on disk plus a
+/// success message are indistinguishable from a working install.
+fn schedule_backend_exists() -> bool {
+    expected_schedule_files().is_some()
+}
+
+fn expected_schedule_files() -> Option<usize> {
+    if cfg!(target_os = "linux") {
+        Some(2)
+    } else if cfg!(target_os = "macos") {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 #[test]
-fn schedule_writes_units_only_where_systemd_exists() {
+fn schedule_writes_what_this_platforms_backend_needs() {
     let (dir, path) = fixture(SCHEDULABLE_CONFIG);
     let unit_dir = dir.path().join("units");
 
@@ -1119,44 +1139,199 @@ fn schedule_writes_units_only_where_systemd_exists() {
 
     let written = std::fs::read_dir(&unit_dir).map(|d| d.count()).unwrap_or(0);
 
-    if cfg!(target_os = "linux") {
-        assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
-        assert_eq!(written, 2, "a service and a timer should be written");
-    } else {
-        // The refusal is the whole point: no files, and a message that distinguishes
-        // "not yet" from "never".
-        assert_eq!(
-            output.status.code(),
-            Some(2),
-            "scheduling must be refused where it cannot work.\nstderr:\n{stderr}"
-        );
-        assert_eq!(
-            written, 0,
-            "no unit may be written on a platform that cannot run it"
-        );
-        assert!(stderr.contains("Milestone 3"), "stderr:\n{stderr}");
+    match expected_schedule_files() {
+        Some(expected) => {
+            assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
+            assert_eq!(
+                written, expected,
+                "this platform's backend needs {expected} file(s).\nstderr:\n{stderr}"
+            );
+        }
+        None => {
+            // The refusal is the whole point: no files, and a message that says which
+            // backends exist rather than a bare "unsupported".
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "scheduling must be refused where it cannot work.\nstderr:\n{stderr}"
+            );
+            assert_eq!(
+                written, 0,
+                "no unit may be written on a platform that cannot run it"
+            );
+            assert!(stderr.contains("systemd"), "stderr:\n{stderr}");
+            assert!(stderr.contains("launchd"), "stderr:\n{stderr}");
+        }
     }
 }
 
 #[test]
-fn status_reports_the_platform_rather_than_failing() {
-    // `status` asks "what is scheduled here". On a platform with no backend the truthful
-    // answer is "nothing, and here is why" — an answer, not an error.
+fn a_custom_unit_dir_never_arms_anything() {
+    // `--unit-dir` is an inspection target. It must not reach `systemctl` or `launchctl` —
+    // writing somewhere a service manager does not read and then telling it to load from
+    // where it does would arm something nobody asked about.
+    if expected_schedule_files().is_none() {
+        return; // nothing is written at all here; covered by the test above
+    }
+    let (dir, path) = fixture(SCHEDULABLE_CONFIG);
+    let unit_dir = dir.path().join("units");
+    let (stdout, stderr, code) = run_code(&[
+        "schedule",
+        "-n",
+        "dot-files",
+        "--config",
+        &path,
+        "--unit-dir",
+        &unit_dir.display().to_string(),
+    ]);
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    assert!(
+        stdout.contains("not armed"),
+        "it must say the schedule is inert: {stdout}"
+    );
+}
+
+#[test]
+fn schedule_writes_a_plist_launchd_would_accept() {
+    // Substring assertions on the generator prove the content; only a parser proves the
+    // file. This is the same check the unit tests run, but on what the *binary* actually
+    // wrote — the two could differ, and this is the one that reaches a real disk.
+    if !cfg!(target_os = "macos") {
+        println!("skipping: launchd agents are macOS-only");
+        return;
+    }
+    let (dir, path) = fixture(SCHEDULABLE_CONFIG);
+    let unit_dir = dir.path().join("units");
+    let (_out, stderr, code) = run_code(&[
+        "schedule",
+        "-n",
+        "dot-files",
+        "--config",
+        &path,
+        "--unit-dir",
+        &unit_dir.display().to_string(),
+    ]);
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+
+    let plist = unit_dir.join("local.rusticprofile.dot-files.plist");
+    assert!(plist.exists(), "expected {}", plist.display());
+    let lint = Command::new("plutil")
+        .arg("-lint")
+        .arg(&plist)
+        .output()
+        .expect("plutil should be present on macOS");
+    assert!(
+        lint.status.success(),
+        "plutil rejected the written agent:\n{}\n{}",
+        String::from_utf8_lossy(&lint.stdout),
+        std::fs::read_to_string(&plist).unwrap_or_default()
+    );
+}
+
+#[test]
+fn rescheduling_reports_no_change_rather_than_moving_the_spread() {
+    // The offset is chosen at schedule time on launchd, so without reuse a second `schedule`
+    // would rewrite an unchanged agent, move this host's slot and report `installed` — and
+    // then `unchanged` would never mean anything. Asserted through the binary because the
+    // reuse happens in the command, not in the generator.
+    if expected_schedule_files().is_none() {
+        return;
+    }
+    let (dir, path) = fixture(SCHEDULABLE_CONFIG);
+    let unit_dir = dir.path().join("units");
+    let args = [
+        "schedule",
+        "-n",
+        "dot-files",
+        "--config",
+        &path,
+        "--unit-dir",
+        &unit_dir.display().to_string(),
+    ];
+    let (first, stderr, code) = run_code(&args);
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    assert!(first.contains("installed:"), "{first}");
+
+    let before: Vec<String> = std::fs::read_dir(&unit_dir)
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect();
+
+    let (second, stderr, code) = run_code(&args);
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    assert!(
+        second.contains("unchanged:"),
+        "re-running must report no change: {second}"
+    );
+
+    let after: Vec<String> = std::fs::read_dir(&unit_dir)
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(before, after, "the files must be byte-identical");
+}
+
+#[test]
+fn status_reports_the_backend_rather_than_failing() {
+    // `status` asks "what is scheduled here". Every platform gets a truthful answer: the
+    // backend's name where there is one, and "nothing, and here is why" where there is not —
+    // an answer, not an error.
     let (_dir, path) = fixture(GOOD_CONFIG);
     let (stdout, stderr, code) = run_code(&["status", "--config", &path, "--as-host", "host-a"]);
     assert_eq!(code, 0, "status must not fail anywhere.\nstderr:\n{stderr}");
-    if !cfg!(target_os = "linux") {
-        assert!(stdout.contains("Milestone 3"), "stdout:\n{stdout}");
+
+    if cfg!(target_os = "linux") {
+        assert!(stdout.contains("systemd"), "stdout:\n{stdout}");
+    } else if cfg!(target_os = "macos") {
+        assert!(stdout.contains("launchd"), "stdout:\n{stdout}");
+        // The one thing a macOS schedule cannot promise has to be visible here, because this
+        // is the command someone runs to ask whether backups are happening.
+        assert!(
+            stdout.contains("linger"),
+            "the login limitation must be stated: {stdout}"
+        );
+    } else {
+        assert!(stdout.contains("not implemented"), "stdout:\n{stdout}");
     }
+}
+
+#[test]
+fn status_json_names_the_backend_so_a_null_next_run_is_explicable() {
+    // `next_run` is always null under launchd, because launchd reports no next fire time.
+    // Without this field a monitor cannot tell that from a timer it failed to read, and the
+    // two call for different alerts.
+    let (_dir, path) = fixture(GOOD_CONFIG);
+    let (stdout, stderr, code) =
+        run_code(&["status", "--json", "--config", &path, "--as-host", "host-a"]);
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("status --json must parse");
+    assert_eq!(
+        value["schema"], 1,
+        "adding a field must not bump the schema"
+    );
+
+    let expected = if cfg!(target_os = "linux") {
+        serde_json::json!("systemd")
+    } else if cfg!(target_os = "macos") {
+        serde_json::json!("launchd")
+    } else {
+        serde_json::Value::Null
+    };
+    assert_eq!(value["backend"], expected, "stdout:\n{stdout}");
 }
 
 #[test]
 fn schedule_refuses_when_rustic_cannot_be_resolved() {
-    // The unit must carry an absolute path to rustic, because the systemd user manager's
-    // PATH is not the shell's — with `linger` it is the boot environment. If rustic cannot
-    // be found there is no correct unit to write, so nothing is written.
-    if !cfg!(target_os = "linux") {
-        return; // `schedule` refuses on non-systemd platforms for a different reason.
+    // The unit must carry an absolute path to rustic, because a service manager's PATH is
+    // not the shell's. Measured on both: with `linger` systemd's user manager starts at boot
+    // with `/usr/local/bin:/usr/bin`, and a launchd agent gets
+    // `/usr/bin:/bin:/usr/sbin:/sbin`. If rustic cannot be found there is no correct
+    // unit or agent to write, so nothing is written.
+    //
+    // Runs on macOS as well now that launchd is implemented — previously it returned early
+    // there, because `schedule` refused for an unrelated reason and the check was untestable.
+    if !schedule_backend_exists() {
+        return; // `schedule` refuses first, for a different reason
     }
     let (dir, path) = fixture(GOOD_CONFIG); // no `rustic-binary`, and no rustic on PATH
     let unit_dir = dir.path().join("units");

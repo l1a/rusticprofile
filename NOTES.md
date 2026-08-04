@@ -104,7 +104,7 @@ costs real complexity in the publish recipes.
 
 ---
 
-## Current State (v0.1.26)
+## Current State (v0.1.27)
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -345,6 +345,118 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.27 — M3 complete: macOS schedules itself
+
+**`schedule`, `unschedule` and `status` work on macOS.** `backend_is_available()` becomes
+`current_backend() -> Option<Backend>`, and the four commands that touch the world dispatch on
+it. Everything above that match is shared: the same `at:` vocabulary, the same `UnitContext`,
+the same spread window, the same host gating, the same validation.
+
+**Verified end to end on the macOS host, not asserted from unit tests.** A throwaway local
+rustic repository under a temp dir, a real agent installed into the real
+`~/Library/LaunchAgents`, then `launchctl kickstart`:
+
+```
+2026-08-03T21:42:48-07:00 success m3-verify on host-e.local
+  backup   success  backup saved 1 of 1 snapshot sets (0.764s)
+    -> /opt/homebrew/bin/rustic -P …/p.toml backup --json --name core
+  forget   success  forget succeeded (0.630s)
+```
+
+launchd reported `runs = 1`, `last exit code = 0`, `nice = 19`, `spawn type = background (5)`;
+the snapshot was in the repository; the status file recorded `last_success`; `status` agreed;
+`unschedule` booted the agent out and removed the plist, and repeating it was a no-op. Nothing
+touched the shared repository or that host's snapshot baseline.
+
+#### A bug found by using it, not by testing it
+
+**The fleet spread silently did nothing.** `schedule` printed `runs hourly at 0 past`, which
+looked like luck until the seed was checked: the first implementation took
+`Timestamp::now().subsec_nanosecond()` and reduced it modulo the 5-minute window. **macOS's
+clock has microsecond resolution**, so that field is always a multiple of 1000 — and
+`1000 % 5 == 0`. Measured 10 samples out of 10 at minute 0. Every host in the fleet would have
+landed on the same instant while `schedule` reported a spread.
+
+That is this project's own failure class, in the feature written to prevent contention. The
+seed is now `RandomState::new().hash_one(…)` — OS-seeded, no dependency added, no clock
+involved — and a regression test folds 200 seeds and fails if they all land on one minute.
+Re-verified by installing three times: minutes 3, 1, 1.
+
+**The lesson generalises past this bug: a low-resolution clock is a bad source of
+arbitrariness whenever the consumer reduces it modulo a small number**, and the failure is
+invisible unless you look at the value. `Offset::within` is left as plain modulo on purpose —
+the reuse path needs a minute read back out of a plist to come back unchanged — so the
+robustness has to live in the seed.
+
+#### Idempotence, which took deliberate work here
+
+A random offset and a byte-comparison idempotence check pull against each other: a fresh choice
+on every run would rewrite an unchanged agent, move the host's slot and report `installed`
+forever. So `write_agent` **reads the installed plist and reuses the offset it finds**, falling
+back to a new one only for a first install or a plist hand-edited past recognition. Confirmed
+through the binary rather than the generator: a second `schedule` reports `unchanged` and the
+files are byte-identical.
+
+#### Three things launchd needs that systemd does not
+
+**`enable` before `bootstrap`, and it earns its place.** A persistent `launchctl disable`
+survives bootout/bootstrap, so without it `schedule` on a job somebody once disabled would
+report success and schedule nothing. Verified by disabling an installed agent behind the tool's
+back: `status` correctly read `installed, not enabled`, and the next `schedule` cleared the
+override and returned it to `active`.
+
+**`bootout` before `bootstrap`.** `bootstrap` fails outright when the service is already
+loaded, so re-arming needs the old registration gone. Its failure on a first install is the
+normal case and is ignored.
+
+**`gui/<uid>` as the domain**, with the uid from `getuid()` rather than `id -u`. Asking a
+different oracle than the code uses is the v0.1.5 defect, where a fixture shelled out to
+`hostname(1)` and disagreed with the binary on every containerised runner.
+
+#### What `status` now says, and one new JSON field
+
+```
+host: host-e.local
+backend: launchd
+  m3-verify              active
+    declared             hourly (user, background)
+    next run             not reported by launchd; the agent's StartCalendarInterval has the schedule
+    last run             2026-08-03T21:42:48-07:00 (success)
+    last success         2026-08-03T21:42:48-07:00
+
+  note: a user LaunchAgent runs only while you are logged in — launchd has no equivalent of
+        systemd's `linger`, so a Mac sitting at the login window takes no backups. …
+```
+
+**The `next run` line is printed even though there is nothing to print**, the same way `never
+recorded` is: launchd reports the calendar descriptor and no next firing, and a blank line
+there would read as "nothing is scheduled", which is a different claim.
+
+**The login caveat is stated by `schedule` *and* `status`.** It is the one thing a macOS
+schedule cannot promise, it cannot be fixed by more code, and a Mac at the login window fails
+nothing at all — the absence-shaped failure `last_success` exists for. `permission: system`
+installs a LaunchDaemon that runs regardless, as root.
+
+**`status --json` gains `backend`** (`"systemd"`, `"launchd"` or `null`), **without a schema
+bump**, which the schema's own contract allows — fields may be added and a consumer ignoring
+unknown ones keeps working. It earns its place by explaining an absence: `next_run` is always
+null under launchd, and a monitor otherwise cannot tell that from a timer it failed to read.
+
+#### Also corrected here
+
+**The shipped `config --example jobs` claimed something the validator rejects.** Its `at:`
+comment read `hourly | daily | weekly | monthly, or an OnCalendar expression`. There is no
+OnCalendar escape hatch — `At` is a closed enum of four values, deliberately (`PLAN.md` lists
+templating "in any form" as a non-goal, and an arbitrary calendar expression is the same
+bargain in a different costume). The example is tested through the real binary, but a test can
+only prove the config *parses*; it cannot notice a comment that is false. Now corrected, and
+the launchd differences are documented there too.
+
+**`config --show` said a declared schedule was "not installed until M2".** M2 landed nineteen
+versions ago.
+
+263 unit and 49 integration tests, up from 249 and 45.
 
 ### v0.1.26 — M3 begins: launchd agent generation
 

@@ -116,16 +116,25 @@ jobs:
     # dot-files` is what writes the units and arms the timer, and `unschedule` fully undoes
     # it. Add `--write-only` to install them inert and read them first.
     #
-    # A scheduled job becomes TWO systemd units: a .timer and the .service it activates.
-    # systemd has no way for a timer to run a command directly, so that is not a choice
-    # rusticprofile makes. Only the timer is enable-able; the service is `static`.
+    # On Linux a scheduled job becomes TWO systemd units: a .timer and the .service it
+    # activates. systemd has no way for a timer to run a command directly, so that is not a
+    # choice rusticprofile makes. Only the timer is enable-able; the service is `static`.
+    #
+    # On macOS it becomes ONE launchd agent (~/Library/LaunchAgents), because launchd puts the
+    # schedule and the program in the same job. Two things differ there and both are stated by
+    # `schedule` and `status` rather than left to be discovered:
+    #   - launchd has no `RandomizedDelaySec`, so the fleet spread is a real minute baked into
+    #     the agent. It is chosen once, on first install, and reused afterwards.
+    #   - launchd has no equivalent of systemd's `linger`: a user agent runs only while you
+    #     are logged in, so a Mac at the login window takes no backups. `permission: system`
+    #     installs a LaunchDaemon instead, which runs regardless -- as root.
     schedule:
-      at: hourly           # hourly | daily | weekly | monthly, or an OnCalendar expression
+      at: hourly           # hourly | daily | weekly | monthly -- these four and nothing else
       permission: user     # user | system
       priority: background # background | standard
 
-    # Absolute paths only. ${date:...} is validated now and resolved per run, so a
-    # generated systemd unit can never be frozen with the date it was written.
+    # Absolute paths only. ${date:...} is validated now and resolved per run, so a generated
+    # unit or agent can never be frozen with the date it was written.
     #
     # ${state_dir} is $XDG_STATE_HOME/rusticprofile, NOT the config directory. Logs are
     # state, and the XDG spec names them as the example of what XDG_STATE_HOME is for.
