@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.1.35" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.0" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -37,31 +37,31 @@ The \fBconfig\fP subcommand inspects and validates `\f[CR]jobs\.yaml\fP`, and th
 The \fBrun\fP subcommand executes a job, and \fBschedule\fP installs the systemd units (Linux) or launchd agent (macOS) that triggers it\. Invoking \fBrusticprofile\fP with no arguments exits non\-zero and says so rather than doing anything by default\.
 
 .SH "OPTIONS"
-\fB\-h, \-\-help\fP
+\fB\fB\-h, \-\-help\fP\fP
 .RS
 Show help information\.
 .RE
-\fB\-V, \-\-version\fP
+\fB\fB\-V, \-\-version\fP\fP
 .RS
 Print version information\.
 .RE
-\fB\-\-completions\fP \fISHELL\fP
+\fB\fB\-\-completions\fP \fISHELL\fP\fP
 .RS
 Write a shell completion script to standard output\. \fISHELL\fP is one of `\f[CR]bash\fP`, `\f[CR]zsh\fP`, `\f[CR]fish\fP`, `\f[CR]elvish\fP`, `\f[CR]nushell\fP` or `\f[CR]power\-shell\fP`\.
 .RE
 
 .SH "CONFIG"
-\fB\-\-check\fP
+\fB\fB\-\-check\fP\fP
 .RS
 .PP
 Validate the configuration\. \fBEvery problem is reported at once\fP, not one per run, and nothing is spawned before validation completes\. Exits 0 if the configuration is usable, 2 otherwise\. Also prints which jobs this host runs and which are excluded by \fBenabled\-on\-hosts\fP \-\- a gate that cannot be seen is indistinguishable from a job that was never written\.
 .RE
-\fB\-\-show\fP \fB\-n\fP \fIJOB\fP
+\fB\fB\-\-show\fP \fB\-n\fP \fIJOB\fP\fP
 .RS
 .PP
 Print the resolved form of one job: its operations, the snapshot sets that survive host gating, its schedule and its log path\. If \fIJOB\fP exists but is gated off on this host, that is reported as such rather than as an unknown job\.
 .RE
-\fB\-\-example\fP \fIWHAT\fP
+\fB\fB\-\-example\fP \fIWHAT\fP\fP
 .RS
 .PP
 Write an annotated starting\-point configuration to stdout, where \fIWHAT\fP is \fBjobs\fP or \fBrustic\fP\. Requires no existing configuration and reads nothing \-\- it is what you ask for when you have neither file yet\.
@@ -72,7 +72,7 @@ Emitted to stdout rather than written anywhere, exactly as \fB\-\-completions\fP
 .PP
 Placeholders (`\f[CR]host\-a\fP`, `\f[CR]/home/user\fP`) are \fBstatic\fP\. Your hostname and home directory are deliberately not filled in \-\- a configuration that appears to work is one nobody reads, and every value in these files is worth reading once\.
 .RE
-\fB\-\-as\-host\fP \fIHOST\fP
+\fB\fB\-\-as\-host\fP \fIHOST\fP\fP
 .RS
 .PP
 Evaluate as though running on \fIHOST\fP instead of the real hostname\. This is the only way to check another machine's view of a per\-host gate without logging into it\.
@@ -81,7 +81,7 @@ Evaluate as though running on \fIHOST\fP instead of the real hostname\. This is 
 A configuration may set \fBdefaults\.default\-job\fP, which is the job used by \fBrun\fP, \fBplan\fP, \fBsnapshots\fP and \fBconfig \-\-show\fP when `\f[CR]\-n\fP` is omitted\. It is validated at load time against the \fIdeclared\fP jobs, so a typo is an error on every machine rather than only where that job happens to run\.
 .PP
 Two commands deliberately ignore it\. \fBunschedule\fP always requires an explicit name \-\- removing a schedule because a configuration file named a default, rather than because someone typed it, is the one action that should never happen by default\. \fBschedule\fP already treats a missing `\f[CR]\-n\fP` as "every job that declares a schedule", which is useful in its own right and would be lost\.
-\fB\-\-config\fP \fIPATH\fP
+\fB\fB\-\-config\fP \fIPATH\fP\fP
 .RS
 Read \fIPATH\fP instead of the default `\f[CR]jobs\.yaml\fP`\.
 .RE
@@ -91,15 +91,15 @@ Validation also rejects a `\f[CR]sources\fP` entry containing `\f[CR]~\fP` or `\
 Validation rejects, among other things, any key it does not recognise; a snapshot set that is not defined in the rustic profile it names; a job whose snapshot sets are all gated away on this host; an \fBenabled\-on\-hosts\fP list that is empty; a relative log path; and an unknown or malformed `\f[CR]${\.\.\.}\fP` reference\. Each of these would otherwise cause the tool to quietly do less than the configuration says\.
 
 .SH "RUN"
-\fB\-n\fP \fIJOB\fP
+\fB\fB\-n\fP \fIJOB\fP\fP
 .RS
 The job to run\. Required \-\- there is no "run everything" form\.
 .RE
-\fB\-\-dry\-run\fP
+\fB\fB\-\-dry\-run\fP\fP
 .RS
 Ask rustic to report what it would do without writing anything\. Reports what \fIwould\fP be saved, never what was saved\.
 .RE
-\fB\-\-rustic\-binary\fP \fIPATH\fP
+\fB\fB\-\-rustic\-binary\fP \fIPATH\fP\fP
 .RS
 Use this executable instead of the one the configuration names\. A bare name is resolved on `\f[CR]PATH\fP`\. Applied after the configuration is validated, so it cannot mask a mistake in the file it overrides\. Point it at a script that records its arguments and exits, and a job can be exercised end to end without rustic running at all\.
 .RE
@@ -115,15 +115,17 @@ Exit status is \fB0\fP for success or partial, \fB1\fP for failure, \fB130\fP fo
 \fBschedule\fP installs a job's OS schedule and arms it; \fBunschedule\fP disarms and removes it\. Each is a single step and each fully undoes the other\. \fBstatus\fP reports what is installed on this host and what is deliberately not\.
 .PP
 On \fBLinux\fP that means systemd units driven by `\f[CR]systemctl\fP`; on \fBmacOS\fP, a launchd agent driven by `\f[CR]launchctl\fP`\. On a platform with neither, \fBschedule\fP refuses and writes nothing \-\- files on disk plus a success message are indistinguishable from a working install, so refusing is the only honest answer\. \fBstatus\fP reports the backend it found, and `\f[CR]status \-\-json\fP` names it in a `\f[CR]backend\fP` field\.
-\fB\-n\fP \fIJOB\fP
+.PP
+On \fBWindows\fP it means one Task Scheduler task under `\f[CR]\rusticprofile\\fP`\fIJOB\fP, driven by `\f[CR]schtasks\fP`\. Where there is no backend at all, \fBstatus\fP still prints each job's `\f[CR]last run\fP` and `\f[CR]last success\fP`, because that record is written by \fBrun\fP and does not come from a service manager; it is the field to watch in any case, since a run that never happens reports nothing\.
+\fB\fB\-n\fP \fIJOB\fP\fP
 .RS
 The job to act on\. Optional for \fBschedule\fP, where omitting it installs every job declaring a `\f[CR]schedule:\fP` block\. Required for \fBunschedule\fP \-\- removal is always named explicitly\.
 .RE
-\fB\-\-write\-only\fP
+\fB\fB\-\-write\-only\fP\fP
 .RS
 Write the schedule without arming it\. `\f[CR]schedule\fP` arms by default \-\- that is what the verb means, and \fBunschedule\fP is a single step that fully undoes it\. Use this to inspect what was generated before anything can fire\.
 .RE
-\fB\-\-unit\-dir\fP \fIDIR\fP
+\fB\fB\-\-unit\-dir\fP \fIDIR\fP\fP
 .RS
 Write or read units and agents in \fIDIR\fP instead of the platform's own directory\. Intended for inspecting what is generated without installing it; neither `\f[CR]systemctl\fP` nor `\f[CR]launchctl\fP` is invoked when this is given\.
 .RE
@@ -138,6 +140,20 @@ A scheduled job is \fBtwo\fP units, `\f[CR]rusticprofile\-\fP`\fIJOB\fP`\f[CR]\.
 .PP
 The timer sets \fBPersistent=true\fP, so a run missed while the machine was asleep is caught up rather than silently skipped, and \fBRandomizedDelaySec\fP, so several machines sharing one repository do not all wake on the same instant\. Priority is expressed as `\f[CR]Nice=\fP` and `\f[CR]IOSchedulingClass=\fP` in the unit rather than applied in\-process\.
 
+.SS "Task Scheduler (Windows)"
+.PP
+A scheduled job is \fBone\fP task, registered at `\f[CR]\rusticprofile\\fP`\fIJOB\fP rather than written into a directory a service manager reads: `\f[CR]schtasks /Create /XML\fP` copies the definition into the service's own store\. rusticprofile keeps the definition it generated under `\f[CR]$XDG_STATE_HOME/rusticprofile/tasks\fP` as a record, and the service remains the authority on what is actually scheduled\. `\f[CR]permission: system\fP` registers the task under the LocalSystem account instead of your own\.
+.PP
+Three things differ from the Unix backends, each measured rather than assumed:
+.PP
+\fBHourly is twenty\-four triggers, not one repeating trigger\.\fP A repeating trigger whose start boundary lies in the past is treated by Task Scheduler as \fIcurrently due\fP and runs the task the moment it is registered \-\- which would make \fBschedule\fP take a backup, and run retention, as a side effect of scheduling\. Twenty\-four plain daily triggers, one per hour, avoid that while still firing within the hour\.
+.PP
+\fBBoth priorities are written out\.\fP `\f[CR]priority: standard\fP` emits `\f[CR]<Priority>5</Priority>\fP` rather than nothing, because Task Scheduler's own default is 7 \-\- already below normal \-\- so silence would quietly mean "de\-prioritised" here while meaning "leave the default alone" on the other two platforms\.
+.PP
+\fBTwo Task Scheduler defaults are overridden\fP, because both would stop backups without reporting anything: `\f[CR]DisallowStartIfOnBatteries\fP` and `\f[CR]StopIfGoingOnBatteries\fP` are `\f[CR]true\fP` by default, so a laptop on battery would take no backups and unplugging mid\-run would kill one\. `\f[CR]ExecutionTimeLimit\fP` is also cleared, since the default of three days would terminate a long first backup rather than let it finish\.
+.PP
+A user task, like a launchd agent, runs \fBonly while you are logged on\fP \-\- there is no `\f[CR]linger\fP` equivalent\. `\f[CR]permission: system\fP` runs regardless, as SYSTEM; running as yourself without a login session would need a stored password or S4U, which relocates the credential problem rather than removing it\.
+
 .SS "launchd (macOS)"
 .PP
 A scheduled job is \fBone\fP agent, `\f[CR]~/Library/LaunchAgents/local\.rusticprofile\.\fP`\fIJOB\fP`\f[CR]\.plist\fP`, because launchd puts the schedule and the program in the same job\. `\f[CR]permission: system\fP` installs a LaunchDaemon under `\f[CR]/Library/LaunchDaemons\fP` instead\. Priority becomes `\f[CR]ProcessType=Background\fP`, `\f[CR]Nice\fP` and the `\f[CR]LowPriorityIO\fP` keys \-\- again in the agent, not applied in\-process\.
@@ -151,7 +167,7 @@ Four differences from systemd are worth knowing, because each is a property of l
 \fBA user agent runs only while you are logged in\.\fP launchd has no equivalent of systemd's `\f[CR]linger\fP`, so a Mac sitting at the login window takes no backups at all: nothing fails, nothing is logged, and the only evidence is an absence\. \fBschedule\fP and \fBstatus\fP both say so\. Watch `\f[CR]last success\fP` rather than the schedule, or use `\f[CR]permission: system\fP`, which runs regardless of login \-\- as root, which needs its own answer for repository credentials\.
 .PP
 \fBThere is no next\-fire time to report\.\fP `\f[CR]launchctl print\fP` gives the calendar descriptor and never a next firing, so `\f[CR]next run\fP` reads \fInot reported by launchd\fP and the JSON `\f[CR]next_run\fP` is `\f[CR]null\fP`\. Computing one and presenting it as launchd's would be inventing a fact about a schedule\.
-\fB\-\-json\fP
+\fB\fB\-\-json\fP\fP
 .RS
 .PP
 Emit the report as JSON instead of the human summary, on \fBrun\fP and \fBstatus\fP\. For anything automated: matching the human summary would mean matching English, which is exactly what rusticprofile refuses to do to rustic's own output and for the same reason \-\- a summary line is a message to a person and changes when the wording improves\.
@@ -166,19 +182,19 @@ rustic's own progress output goes to stderr, so `\f[CR]rusticprofile run \-\-jso
 \fBstatus\fP distinguishes \fIinstalled but not enabled\fP from \fIstate unknown\fP, since only the former means the schedule is definitely off, and it lists jobs excluded by \fBenabled\-on\-hosts\fP so that a host without a given timer reads as a decision rather than an absence\.
 
 .SH "PLAN"
-\fB\-n\fP \fIJOB\fP
+\fB\fB\-n\fP \fIJOB\fP\fP
 .RS
 The job to plan\. Required \-\- there is no "plan everything" form\.
 .RE
-\fB\-\-format\fP \fIFORMAT\fP
+\fB\fB\-\-format\fP \fIFORMAT\fP\fP
 .RS
 `\f[CR]human\fP` (default) prints a readable summary, one operation per line\. `\f[CR]lines\fP` prints one argv element per line, with a blank line between operations; this is the exact form, and is what the project's golden tests record\.
 .RE
-\fB\-\-show\-env\fP
+\fB\fB\-\-show\-env\fP\fP
 .RS
 Also print the rustic\-related environment the run would inherit, with secret values masked\. Not valid with `\f[CR]\-\-format lines\fP`, which is an exact machine\-readable form that extra output would corrupt\. rusticprofile does not modify the environment; this shows what rustic will receive\.
 .RE
-\fB\-\-show\-secrets\fP
+\fB\fB\-\-show\-secrets\fP\fP
 .RS
 Print secret values in full instead of masking them\. Requires \fB\-\-show\-env\fP, and prints a warning to standard error first\. Anything capturing the terminal captures the secrets too\.
 .RE
@@ -194,7 +210,7 @@ rustic \-P RESOLVED\-PROFILE\-PATH OPERATION [\-\-dry\-run] [\-\-json] [\-\-name
 `\f[CR]\-P\fP` is given a resolved absolute path rather than a bare profile name, because rustic's own search for a bare name need not include the directory rusticprofile validated against\. `\f[CR]\-\-name\fP` appears only for \fBbackup\fP, once per snapshot set enabled on the current host, as does `\f[CR]\-\-json\fP`\. Those three flags plus `\f[CR]\-P\fP` are the only ones rusticprofile ever emits; everything else a backup needs comes from rustic's own configuration\. `\f[CR]\-\-json\fP` is requested because rustic exits 1 for both a partial and a failed backup, and the count of snapshot objects it writes to standard output is the only reliable way to tell them apart\. Progress and diagnostics are unaffected \-\- rustic writes those to standard error\.
 
 .SH "SNAPSHOTS"
-\fBsnapshots \-n\fP \fIJOB\fP
+\fB\fBsnapshots \-n\fP \fIJOB\fP\fP
 .RS
 .PP
 List the repository's snapshots by handing the query to \fBrustic\fP(1)\.
@@ -230,46 +246,56 @@ Strings in the configuration may contain `\f[CR]${\.\.\.}\fP` references\. This 
 .SH "EXIT STATUS"
 .PP
 The contract the implemented commands follow:
-\fB0\fP
+\fB\fB0\fP\fP
 .RS
 Success, including a run that completed with warnings\.
 .RE
-\fB1\fP
+\fB\fB1\fP\fP
 .RS
 A run failed\.
 .RE
-\fB2\fP
+\fB\fB2\fP\fP
 .RS
 The configuration is invalid\. Reported before any process is spawned, with every violation listed at once, so a config error is never confused with a backup failure\.
 .RE
-\fB130\fP
+\fB\fB130\fP\fP
 .RS
 Interrupted\.
 .RE
 
 .SH "FILES"
-\fB$XDG_CONFIG_HOME/rusticprofile/jobs\.yaml\fP
+\fB\fB$XDG_CONFIG_HOME/rusticprofile/jobs\.yaml\fP\fP
 .RS
+.PP
 Job definitions: which jobs exist, their operations, host gating and schedule\.
 .RE
-\fB$XDG_CONFIG_HOME/rustic/PROFILE\.toml\fP
+\fB\fB$XDG_CONFIG_HOME/rustic/PROFILE\.toml\fP\fP
 .RS
+.PP
 rustic's own configuration, which owns all backup detail\. rusticprofile reads it read\-only, to verify that every snapshot\-set name it is about to pass actually exists\.
 .RE
-\fB~/Library/LaunchAgents/local\.rusticprofile\.\fBJOB\fP\.plist\fP
+\fB\fB~/Library/LaunchAgents/local\.rusticprofile\.\fBJOB\fP\.plist\fP\fP
 .RS
+.PP
 The launchd agent on macOS, written by \fBschedule\fP and removed by \fBunschedule\fP\. `\f[CR]permission: system\fP` uses `\f[CR]/Library/LaunchDaemons\fP` instead\. On Linux the equivalents are `\f[CR]~/\.config/systemd/user/rusticprofile\-\fP`\fIJOB\fP`\f[CR]\.{service,timer}\fP`\.
 .RE
-\fB$XDG_STATE_HOME/rusticprofile/status/\fBJOB\fP\.json\fP
+\fB\fB$XDG_STATE_HOME/rusticprofile/tasks/\fBJOB\fP\.xml\fP\fP
 .RS
+.PP
+On Windows, the task definition \fBschedule\fP generated\. Unlike the Unix backends this file is \fInot\fP the installation \-\- `\f[CR]schtasks\fP` copies the definition into the Task Scheduler service's own store, and the registration at `\f[CR]\rusticprofile\\fP`\fIJOB\fP is what actually runs\. This copy is a record of what was registered, and deleting it does not unschedule anything\.
+.RE
+\fB\fB$XDG_STATE_HOME/rusticprofile/status/\fBJOB\fP\.json\fP\fP
+.RS
+.PP
 When \fIJOB\fP last ran, and when it last \fBsucceeded\fP\. Written after every run, atomically\. `\f[CR]last_success\fP` is carried forward across a failed run on purpose: the useful question is not "did the last attempt work?" but "when did this last actually work?", and only that field can reveal a job which has quietly stopped working \-\- a failing run is loud, a run that never happens is not\. \fBstatus\fP displays both\.
 .RE
-\fB$XDG_STATE_HOME/rusticprofile/\fP
+\fB\fB$XDG_STATE_HOME/rusticprofile/\fP\fP
 .RS
+.PP
 Where `\f[CR]${state_dir}\fP` points, and where run logs belong\. Logs are \fBstate, not configuration\fP \-\- the XDG Base Directory specification names them as the example of what `\f[CR]XDG_STATE_HOME\fP` is for\. Pointing a `\f[CR]log:\fP` at `\f[CR]${config_dir}\fP` instead is also self\-defeating when `\f[CR]~/\.config\fP` is one of your backup sources: the job then appends to a directory it is in the middle of backing up, and the rustic profile needs an exclusion to compensate\.
 .RE
 .PP
-The variables are honoured where they are set and fall back to `\f[CR]~/\.config\fP` and `\f[CR]~/\.local/state\fP` where they are not \-\- \fBon macOS as well as Linux\fP, rather than `\f[CR]~/Library/Application Support\fP`\. A relative value is ignored, as the specification requires\. This is deliberate rather than unidiomatic: `\f[CR]jobs\.yaml\fP` is meant to be byte\-identical across a fleet, and a location that varied by operating system would make one line of one file resolve to two different places\.
+The variables are honoured where they are set and fall back to `\f[CR]~/\.config\fP` and `\f[CR]~/\.local/state\fP` where they are not \-\- \fBon macOS and Windows as well as Linux\fP, rather than `\f[CR]~/Library/Application Support\fP` or `\f[CR]%APPDATA%\fP`\. A relative value is ignored, as the specification requires; note that on Windows a path without a drive letter counts as relative, so a rooted\-but\-driveless `\f[CR]log:\fP` is refused there\. This is deliberate rather than unidiomatic: `\f[CR]jobs\.yaml\fP` is meant to be byte\-identical across a fleet, and a location that varied by operating system would make one line of one file resolve to two different places\.
 
 .SH "SEE ALSO"
 .PP

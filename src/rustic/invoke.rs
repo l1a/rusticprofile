@@ -486,6 +486,18 @@ mod tests {
         assert_eq!(argv.len(), 7);
     }
 
+    /// The `-P` argument the code under test will build, asked of the helper it actually uses.
+    ///
+    /// **Not the literal `"/cfg/rustic/p.toml"`.** `Path::join` uses the platform separator, so
+    /// that literal is a Unix-only assertion and failed on Windows against the perfectly correct
+    /// `/cfg/rustic\p.toml`. Asking a different oracle than the code under test is the `v0.1.5`
+    /// defect, where a fixture shelled out to `hostname(1)`.
+    fn profile_arg() -> String {
+        crate::config::paths::profile_toml(std::path::Path::new("/cfg/rustic"), "p")
+            .to_string_lossy()
+            .into_owned()
+    }
+
     fn config_with(binary: &str) -> Config {
         Config {
             state_dir: std::path::PathBuf::from("/state"),
@@ -526,7 +538,7 @@ mod tests {
             vec![
                 "rustic",
                 "-P",
-                "/cfg/rustic/p.toml",
+                &profile_arg(),
                 "backup",
                 "--json",
                 "--name",
@@ -537,7 +549,7 @@ mod tests {
         assert_eq!(plan[1].operation, Operation::Forget);
         assert_eq!(
             as_strings(&plan[1].argv),
-            vec!["rustic", "-P", "/cfg/rustic/p.toml", "forget"]
+            vec!["rustic", "-P", &profile_arg(), "forget"]
         );
     }
 

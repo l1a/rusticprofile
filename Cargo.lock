@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "rusticprofile"
-version = "0.1.35"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -466,6 +466,7 @@ dependencies = [
  "serde_yaml_ng",
  "tempfile",
  "toml",
+ "windows-sys",
 ]
 
 [[package]]

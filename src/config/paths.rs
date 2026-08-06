@@ -7,7 +7,7 @@
 //! (`jobs.yaml`) and rustic's (`<profile>.toml`). rusticprofile writes to neither, and
 //! reads rustic's only to enumerate snapshot-set names.
 //!
-//! ## The XDG rules apply on macOS too, and that is deliberate
+//! ## The XDG rules apply on macOS and Windows too, and that is deliberate
 //!
 //! `dirs::config_dir()` follows each platform's own convention, which on macOS is
 //! `~/Library/Application Support`. That is correct for a Mac application and wrong for
@@ -26,6 +26,20 @@
 //!
 //! Applying the rules explicitly changes nothing on Linux: `dirs` implements exactly these
 //! rules there already.
+//!
+//! **Windows joins them for the same reason, not by analogy.** `dirs` would give
+//! `%APPDATA%\Roaming` and `%LOCALAPPDATA%`, which makes `${state_dir}` in one shared `log:`
+//! line resolve to a third distinct place — the `0.1.25` defect with a third platform added.
+//! There is a local precedent too: chezmoi, which generates this fleet's configuration, reads
+//! its own config from `~/.config` on Windows rather than from `%APPDATA%`, so a Windows host
+//! already keeps its dotfiles where the other six do.
+//!
+//! One consequence is worth stating because it is not obvious: `HOME` is normally unset on
+//! Windows, so a `jobs.yaml` written around `${env:HOME}` fails to load there with an unset
+//! variable rather than resolving to something wrong. That is the correct direction to fail in
+//! — loudly, at load time — but it means a fleet sharing one file needs `HOME` set on its
+//! Windows hosts (or `${home}`, which does not exist yet). `dirs::home_dir()` itself is fine:
+//! it falls back to the user profile, so *these* paths resolve regardless.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -49,12 +63,17 @@ use anyhow::{Context, Result};
 fn xdg_dir(configured: Option<&OsStr>, home: &Path, fallback: &str) -> PathBuf {
     match configured {
         Some(value) if Path::new(value).is_absolute() => PathBuf::from(value),
-        _ => home.join(fallback),
+        // Joined component by component rather than as one `".local/state"` string. Both work —
+        // Windows accepts `/` in every path API — but a single join produces
+        // `C:\Users\u\.local/state`, which is what the tool then *prints* in its own output. A
+        // path that looks malformed invites someone to "fix" a path that is not broken.
+        _ => fallback
+            .split('/')
+            .fold(home.to_path_buf(), |path, part| path.join(part)),
     }
 }
 
 /// `$XDG_CONFIG_HOME`, or `~/.config`.
-#[cfg(unix)]
 fn config_home() -> Result<PathBuf> {
     let home = dirs::home_dir()
         .context("could not determine the user configuration directory (is HOME set?)")?;
@@ -65,18 +84,7 @@ fn config_home() -> Result<PathBuf> {
     ))
 }
 
-/// The platform's own configuration directory, where there are no XDG conventions.
-///
-/// Windows is a declared non-goal for v1 — the scheduling backends are systemd and launchd —
-/// but the crate must still build, so it keeps the behaviour `dirs` gives it.
-#[cfg(not(unix))]
-fn config_home() -> Result<PathBuf> {
-    dirs::config_dir()
-        .context("could not determine the user configuration directory (is HOME set?)")
-}
-
 /// `$XDG_STATE_HOME`, or `~/.local/state`.
-#[cfg(unix)]
 fn state_home() -> Result<PathBuf> {
     let home =
         dirs::home_dir().context("could not determine the user state directory (is HOME set?)")?;
@@ -85,14 +93,6 @@ fn state_home() -> Result<PathBuf> {
         &home,
         ".local/state",
     ))
-}
-
-/// The platform's nearest equivalent, where there is no state directory concept.
-#[cfg(not(unix))]
-fn state_home() -> Result<PathBuf> {
-    dirs::state_dir()
-        .or_else(dirs::data_local_dir)
-        .context("could not determine the user state directory (is HOME set?)")
 }
 
 /// `$XDG_CONFIG_HOME/rusticprofile`, where `jobs.yaml` lives.
@@ -144,14 +144,21 @@ mod tests {
         assert_eq!(p, PathBuf::from("/etc/rustic/dot-files.toml"));
     }
 
+    /// An absolute path this platform recognises.
+    ///
+    /// **Windows needs a drive or UNC prefix**, so `/somewhere/else` is *relative* there and
+    /// the rule below would correctly ignore it. The consequence for an operator is real and
+    /// belongs with the rule rather than in a surprise: `XDG_CONFIG_HOME=/opt/cfg` exported on
+    /// a Windows host is discarded as relative and the fallback under `~` is used instead.
+    #[cfg(not(windows))]
+    const ELSEWHERE: &str = "/somewhere/else";
+    #[cfg(windows)]
+    const ELSEWHERE: &str = r"D:\somewhere\else";
+
     #[test]
     fn an_absolute_variable_wins() {
-        let dir = xdg_dir(
-            Some(OsStr::new("/somewhere/else")),
-            Path::new("/home/u"),
-            ".config",
-        );
-        assert_eq!(dir, PathBuf::from("/somewhere/else"));
+        let dir = xdg_dir(Some(OsStr::new(ELSEWHERE)), Path::new("/home/u"), ".config");
+        assert_eq!(dir, PathBuf::from(ELSEWHERE));
     }
 
     #[test]
@@ -177,6 +184,28 @@ mod tests {
     }
 
     #[test]
+    fn the_fallback_uses_this_platforms_separator_throughout() {
+        // Not cosmetic-only: this path is printed by `schedule` and `status`, and a displayed
+        // `C:\Users\u\.local/state` reads as a bug in the tool.
+        let dir = xdg_dir(None, Path::new("/home/u"), ".local/state");
+        assert_eq!(dir, PathBuf::from("/home/u").join(".local").join("state"));
+
+        // Asserted from a platform-shaped home, so the only separators under test are the ones
+        // this function introduced — an earlier version of this test used a Unix home on Windows
+        // and failed on slashes that came straight from its own input.
+        #[cfg(windows)]
+        {
+            let dir = xdg_dir(None, Path::new(r"C:\Users\u"), ".local/state");
+            assert_eq!(dir, PathBuf::from(r"C:\Users\u\.local\state"));
+            assert!(
+                !dir.display().to_string().contains('/'),
+                "no forward slash may survive on Windows: {}",
+                dir.display()
+            );
+        }
+    }
+
+    #[test]
     fn an_empty_variable_is_the_same_as_unset() {
         let dir = xdg_dir(Some(&OsString::new()), Path::new("/home/u"), ".config");
         assert_eq!(dir, PathBuf::from("/home/u/.config"));
@@ -191,13 +220,16 @@ mod tests {
         assert_ne!(config, state);
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "linux"))]
     #[test]
-    fn macos_uses_the_xdg_paths_the_documentation_promises() {
-        // The bug this closes: on macOS `dirs` returns ~/Library/Application Support, so
-        // every command looked for jobs.yaml somewhere the man page never mentioned and
-        // chezmoi never writes. `jobs.yaml` is byte-identical fleet-wide, so the location
-        // has to be too.
+    fn every_platform_uses_the_xdg_paths_the_documentation_promises() {
+        // The bug this closes: on macOS `dirs` returns ~/Library/Application Support, and on
+        // Windows %APPDATA%\Roaming — so every command looked for jobs.yaml somewhere the man
+        // page never mentioned and chezmoi never writes. `jobs.yaml` is byte-identical
+        // fleet-wide, so the location has to be too.
+        //
+        // Asserted off Linux rather than on macOS alone: Linux is the platform where `dirs`
+        // already agrees, so it is the one platform this test could not fail on.
         //
         // Guarded on the variables being unset, because honouring them is the other half of
         // the contract and a machine that sets them is not misconfigured.

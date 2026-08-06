@@ -99,6 +99,8 @@ Exit status is **0** for success or partial, **1** for failure, **130** for inte
 
 On **Linux** that means systemd units driven by `systemctl`; on **macOS**, a launchd agent driven by `launchctl`. On a platform with neither, **schedule** refuses and writes nothing — files on disk plus a success message are indistinguishable from a working install, so refusing is the only honest answer. **status** reports the backend it found, and `status --json` names it in a `backend` field.
 
+On **Windows** it means one Task Scheduler task under `\rusticprofile\`*JOB*, driven by `schtasks`. Where there is no backend at all, **status** still prints each job's `last run` and `last success`, because that record is written by **run** and does not come from a service manager; it is the field to watch in any case, since a run that never happens reports nothing.
+
 **-n** *JOB*
 :   The job to act on. Optional for **schedule**, where omitting it installs every job declaring a `schedule:` block. Required for **unschedule** — removal is always named explicitly.
 
@@ -117,6 +119,20 @@ Nothing generated contains a **log path or a date**. A unit or agent written tod
 A scheduled job is **two** units, `rusticprofile-`*JOB*`.service` and `.timer`. systemd offers no way for a timer to run a command directly, so this is not a choice rusticprofile makes. Only the timer carries an `[Install]` section; the service is reported as `static`, meaning it can be started by its timer and not enabled independently — a service that could be enabled on its own would run the backup at every login, with no schedule to explain it.
 
 The timer sets **Persistent=true**, so a run missed while the machine was asleep is caught up rather than silently skipped, and **RandomizedDelaySec**, so several machines sharing one repository do not all wake on the same instant. Priority is expressed as `Nice=` and `IOSchedulingClass=` in the unit rather than applied in-process.
+
+## Task Scheduler (Windows)
+
+A scheduled job is **one** task, registered at `\rusticprofile\`*JOB* rather than written into a directory a service manager reads: `schtasks /Create /XML` copies the definition into the service's own store. rusticprofile keeps the definition it generated under `$XDG_STATE_HOME/rusticprofile/tasks` as a record, and the service remains the authority on what is actually scheduled. `permission: system` registers the task under the LocalSystem account instead of your own.
+
+Three things differ from the Unix backends, each measured rather than assumed:
+
+**Hourly is twenty-four triggers, not one repeating trigger.** A repeating trigger whose start boundary lies in the past is treated by Task Scheduler as *currently due* and runs the task the moment it is registered — which would make **schedule** take a backup, and run retention, as a side effect of scheduling. Twenty-four plain daily triggers, one per hour, avoid that while still firing within the hour.
+
+**Both priorities are written out.** `priority: standard` emits `<Priority>5</Priority>` rather than nothing, because Task Scheduler's own default is 7 — already below normal — so silence would quietly mean "de-prioritised" here while meaning "leave the default alone" on the other two platforms.
+
+**Two Task Scheduler defaults are overridden**, because both would stop backups without reporting anything: `DisallowStartIfOnBatteries` and `StopIfGoingOnBatteries` are `true` by default, so a laptop on battery would take no backups and unplugging mid-run would kill one. `ExecutionTimeLimit` is also cleared, since the default of three days would terminate a long first backup rather than let it finish.
+
+A user task, like a launchd agent, runs **only while you are logged on** — there is no `linger` equivalent. `permission: system` runs regardless, as SYSTEM; running as yourself without a login session would need a stored password or S4U, which relocates the credential problem rather than removing it.
 
 ## launchd (macOS)
 
@@ -220,13 +236,17 @@ The contract the implemented commands follow:
 **~/Library/LaunchAgents/local.rusticprofile.**JOB**.plist**
 :   The launchd agent on macOS, written by **schedule** and removed by **unschedule**. `permission: system` uses `/Library/LaunchDaemons` instead. On Linux the equivalents are `~/.config/systemd/user/rusticprofile-`*JOB*`.{service,timer}`.
 
+**$XDG_STATE_HOME/rusticprofile/tasks/**JOB**.xml**
+
+:   On Windows, the task definition **schedule** generated. Unlike the Unix backends this file is *not* the installation — `schtasks` copies the definition into the Task Scheduler service's own store, and the registration at `\rusticprofile\`*JOB* is what actually runs. This copy is a record of what was registered, and deleting it does not unschedule anything.
+
 **$XDG_STATE_HOME/rusticprofile/status/**JOB**.json**
 :   When *JOB* last ran, and when it last **succeeded**. Written after every run, atomically. `last_success` is carried forward across a failed run on purpose: the useful question is not "did the last attempt work?" but "when did this last actually work?", and only that field can reveal a job which has quietly stopped working — a failing run is loud, a run that never happens is not. **status** displays both.
 
 **$XDG_STATE_HOME/rusticprofile/**
 :   Where `${state_dir}` points, and where run logs belong. Logs are **state, not configuration** — the XDG Base Directory specification names them as the example of what `XDG_STATE_HOME` is for. Pointing a `log:` at `${config_dir}` instead is also self-defeating when `~/.config` is one of your backup sources: the job then appends to a directory it is in the middle of backing up, and the rustic profile needs an exclusion to compensate.
 
-The variables are honoured where they are set and fall back to `~/.config` and `~/.local/state` where they are not — **on macOS as well as Linux**, rather than `~/Library/Application Support`. A relative value is ignored, as the specification requires. This is deliberate rather than unidiomatic: `jobs.yaml` is meant to be byte-identical across a fleet, and a location that varied by operating system would make one line of one file resolve to two different places.
+The variables are honoured where they are set and fall back to `~/.config` and `~/.local/state` where they are not — **on macOS and Windows as well as Linux**, rather than `~/Library/Application Support` or `%APPDATA%`. A relative value is ignored, as the specification requires; note that on Windows a path without a drive letter counts as relative, so a rooted-but-driveless `log:` is refused there. This is deliberate rather than unidiomatic: `jobs.yaml` is meant to be byte-identical across a fleet, and a location that varied by operating system would make one line of one file resolve to two different places.
 
 # SEE ALSO
 

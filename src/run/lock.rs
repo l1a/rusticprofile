@@ -15,12 +15,22 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
 use nix::fcntl::{Flock, FlockArg};
 
 /// A held lock. Released when dropped, including on panic and on process exit.
+///
+/// The two platforms reach that guarantee by different mechanisms and it is worth naming which:
+/// on Unix an advisory `flock(2)` released when the descriptor closes, on Windows a file opened
+/// with **no sharing**, which the kernel enforces for as long as the handle is open. Both are
+/// released by the OS when the process dies for any reason, including a kill — so neither can
+/// leave a lock that outlives its run and blocks every future one.
 #[derive(Debug)]
 pub struct JobLock {
+    #[cfg(unix)]
     _flock: Flock<File>,
+    #[cfg(windows)]
+    _file: File,
     path: PathBuf,
 }
 
@@ -57,9 +67,15 @@ impl std::fmt::Display for LockError {
 
 /// Directory holding lock files.
 ///
-/// Prefers `$XDG_RUNTIME_DIR`, which is per-user, on tmpfs and cleared at logout — so a
-/// lock can never survive a reboot and block every future run. Falls back to the temp
-/// directory where that is unset, such as under a system unit.
+/// Prefers `$XDG_RUNTIME_DIR`, which is per-user, on tmpfs and cleared at logout. Falls back to
+/// the temp directory where that is unset, such as under a system unit — and always on Windows,
+/// where `dirs::runtime_dir()` is `None` because the concept does not exist.
+///
+/// **The "cleared at logout" property is a bonus, not the guarantee.** An earlier version of
+/// this comment claimed the tmpfs location is what stops a lock surviving a reboot, which would
+/// make the Windows fallback (`%TEMP%`, a real directory that persists) unsafe. It is not: on
+/// both platforms the lock lives in the *open handle*, not in the file, so a leftover file is
+/// inert and the next run locks it again. See [`JobLock`].
 pub fn lock_dir() -> PathBuf {
     dirs::runtime_dir()
         .unwrap_or_else(std::env::temp_dir)
@@ -79,24 +95,79 @@ pub fn acquire(job: &str) -> Result<JobLock, LockError> {
         return Err(LockError::Unavailable(path, e));
     }
 
-    let file = match File::options()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&path)
-    {
-        Ok(f) => f,
-        Err(e) => return Err(LockError::Unavailable(path, e)),
-    };
+    take(&path).map_err(|e| match e {
+        TakeError::Busy => LockError::Busy(path),
+        TakeError::Io(e) => LockError::Unavailable(path, e),
+    })
+}
 
+/// Why [`take`] did not return a lock.
+enum TakeError {
+    Busy,
+    Io(io::Error),
+}
+
+/// Open `path` and hold it exclusively, or say which kind of failure happened.
+///
+/// Split out per platform so [`acquire`] carries the policy — where the file lives, that a
+/// second holder is refused rather than queued — and each arm carries only the mechanism.
+#[cfg(unix)]
+fn take(path: &Path) -> Result<JobLock, TakeError> {
+    let file = open_lock_file(path).map_err(TakeError::Io)?;
     match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
         Ok(flock) => Ok(JobLock {
             _flock: flock,
-            path,
+            path: path.to_path_buf(),
         }),
-        Err((_file, _errno)) => Err(LockError::Busy(path)),
+        Err((_file, _errno)) => Err(TakeError::Busy),
     }
+}
+
+/// Open `path` and hold it exclusively, or say which kind of failure happened.
+///
+/// **Windows has no `flock`, and needs no separate lock call.** Opening with `share_mode(0)`
+/// asks for the file with no sharing at all, so the *open itself* is the lock: while this handle
+/// lives, any other opener — including another rusticprofile, and including one in this same
+/// process — fails with `ERROR_SHARING_VIOLATION`. That gives exactly the semantics `acquire`
+/// wants without a second syscall and without a new dependency: mandatory rather than advisory,
+/// non-blocking, and released by the kernel when the handle closes for any reason.
+///
+/// A `LockFileEx` byte-range lock was the other candidate and was rejected: it needs
+/// `windows-sys`, and it locks *ranges* within a file that is still openable, which is a weaker
+/// thing to hold than the file.
+#[cfg(windows)]
+fn take(path: &Path) -> Result<JobLock, TakeError> {
+    /// `ERROR_SHARING_VIOLATION` — another handle holds the file with sharing denied. This is
+    /// the busy case and the *only* one; anything else is a real I/O problem and must not be
+    /// reported as "a run is already in progress", which would silently skip a backup.
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+
+    match open_lock_file(path) {
+        Ok(file) => Ok(JobLock {
+            _file: file,
+            path: path.to_path_buf(),
+        }),
+        Err(e) if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => Err(TakeError::Busy),
+        Err(e) => Err(TakeError::Io(e)),
+    }
+}
+
+/// Create-or-open the lock file, never truncating it.
+///
+/// `truncate(false)` is deliberate: the file's *contents* are irrelevant, and truncating one
+/// another process is holding would be a write to a file this code has no business writing.
+fn open_lock_file(path: &Path) -> io::Result<File> {
+    let mut options = File::options();
+    options.create(true).read(true).write(true).truncate(false);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // The lock itself — see `take`.
+        options.share_mode(0);
+    }
+
+    options.open(path)
 }
 
 /// How long this run may wait for a *repository* lock held by another machine.

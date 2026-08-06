@@ -45,10 +45,17 @@ permissions:
   contents: read
 
 jobs:
-  # Windows is absent from every matrix here on purpose: it is a declared non-goal for
-  # v1 (PLAN.md "Risks and non-goals"), since the scheduling backends are systemd and
-  # launchd. Adding a Windows runner would only prove the crate compiles somewhere it is
-  # not meant to run.
+  # Windows is in every matrix here as of 0.1.36. The comment that stood in this place said it
+  # was "absent on purpose: a declared non-goal for v1 … adding a Windows runner would only
+  # prove the crate compiles somewhere it is not meant to run." That is superseded — PLAN.md
+  # §7.9 reverses the non-goal, because the machine this project is developed and released from
+  # now runs Windows.
+  #
+  # It is a *pull-request* leg, not only a tag-time one, and that is the point: the alternative
+  # was Windows support verified on exactly one developer's machine, which is the v0.1.21 failure
+  # restated — a suite green everywhere it runs and never run where it ships. The Windows leg is
+  # also the only one that exercises the `share_mode(0)` lock, `GetComputerNameExW`, and the
+  # `cfg(not(unix))` branches of `exec` and `main`, none of which any Unix runner can reach.
   build:
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
@@ -94,7 +101,7 @@ jobs:
     # block).** Restoring a duplicated leg is still not the answer if a release goes red.
     strategy:
       matrix:
-        platform: [ubuntu-arm, fedora-x64, macos]
+        platform: [ubuntu-arm, fedora-x64, macos, windows]
         include:
           - platform: ubuntu-arm
             os: ubuntu-24.04-arm
@@ -103,6 +110,8 @@ jobs:
             container: fedora:latest
           - platform: macos
             os: macos-latest
+          - platform: windows
+            os: windows-latest
 
     steps:
     - name: Install dependencies (Fedora)
@@ -142,6 +151,12 @@ jobs:
     - name: Smoke test the binary
       # Completion generation is the one code path that produces real output today, so
       # it is what a smoke test can meaningfully assert on.
+      #
+      # `shell: bash` is required, not cosmetic: the default shell on a Windows runner is
+      # PowerShell, where `> /dev/null` creates a *file* called `dev\null` instead of
+      # discarding — so the step would either fail on the missing directory or silently leave
+      # a file behind, and in neither case would it be the smoke test it claims to be.
+      shell: bash
       run: cargo run -- --completions bash > /dev/null
 
   full-test:
@@ -156,7 +171,7 @@ jobs:
 
     strategy:
       matrix:
-        platform: [ubuntu-x64, ubuntu-arm, fedora-x64, fedora-arm, macos]
+        platform: [ubuntu-x64, ubuntu-arm, fedora-x64, fedora-arm, macos, windows, windows-arm]
         include:
           - platform: ubuntu-x64
             os: ubuntu-latest
@@ -172,6 +187,16 @@ jobs:
             container: fedora:latest
           - platform: macos
             os: macos-latest
+          # No container equivalent, so these are the release-shaped environments for Windows —
+          # the same runners `build-release` uses.
+          - platform: windows
+            os: windows-latest
+          # aarch64-pc-windows-msvc. Tag-time only, like `fedora-arm`: it is the second
+          # architecture of a platform already covered at pull-request time, and the only
+          # thing it uniquely exercises is the toolchain on aarch64 — there is no
+          # architecture-dependent code in this crate.
+          - platform: windows-arm
+            os: windows-11-arm
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -215,7 +240,7 @@ jobs:
 
     strategy:
       matrix:
-        platform: [fedora-x64, fedora-arm, macos]
+        platform: [fedora-x64, fedora-arm, macos, windows, windows-arm]
         include:
           - platform: fedora-x64
             os: ubuntu-latest
@@ -228,6 +253,16 @@ jobs:
           - platform: macos
             os: macos-latest
             artifact_name: release-assets-macos-arm64
+          # A platform that is supported but has no downloadable binary is supported only for
+          # people who already have a Rust toolchain, so these ship alongside the others. Both
+          # architectures, matching what Linux gets — an arm64 Windows laptop is exactly the
+          # machine least likely to have a toolchain on it.
+          - platform: windows
+            os: windows-latest
+            artifact_name: release-assets-windows-x86_64
+          - platform: windows-arm
+            os: windows-11-arm
+            artifact_name: release-assets-windows-arm64
 
     steps:
       - name: Install system dependencies (Fedora)
@@ -257,6 +292,10 @@ jobs:
             fedora-x64) cp target/release/rusticprofile release/rusticprofile-linux-x86_64 ;;
             fedora-arm) cp target/release/rusticprofile release/rusticprofile-linux-arm64 ;;
             macos)      cp target/release/rusticprofile release/rusticprofile-macos-arm64 ;;
+            # Keeps the `.exe` suffix: Windows needs it to execute the file at all, so
+            # renaming it to match the others' bare names would ship something unrunnable.
+            windows)     cp target/release/rusticprofile.exe release/rusticprofile-windows-x86_64.exe ;;
+            windows-arm) cp target/release/rusticprofile.exe release/rusticprofile-windows-arm64.exe ;;
           esac
           cp docs/rusticprofile.1 release/ || true
 
@@ -295,6 +334,8 @@ jobs:
             release/rusticprofile-linux-x86_64
             release/rusticprofile-linux-arm64
             release/rusticprofile-macos-arm64
+            release/rusticprofile-windows-x86_64.exe
+            release/rusticprofile-windows-arm64.exe
             release/rusticprofile.1
           generate_release_notes: true
 

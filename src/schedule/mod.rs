@@ -20,6 +20,7 @@
 pub mod calendar;
 pub mod install;
 pub mod launchd;
+pub mod schtasks;
 pub mod systemd;
 
 use std::path::Path;
@@ -63,6 +64,8 @@ pub enum Backend {
     Systemd,
     /// macOS: one LaunchAgent plist, driven by `launchctl`.
     Launchd,
+    /// Windows: one Task Scheduler definition, driven by `schtasks.exe`.
+    TaskScheduler,
 }
 
 impl std::fmt::Display for Backend {
@@ -70,6 +73,7 @@ impl std::fmt::Display for Backend {
         f.write_str(match self {
             Backend::Systemd => "systemd",
             Backend::Launchd => "launchd",
+            Backend::TaskScheduler => "taskscheduler",
         })
     }
 }
@@ -86,6 +90,8 @@ pub fn current_backend() -> Option<Backend> {
         Some(Backend::Systemd)
     } else if cfg!(target_os = "macos") {
         Some(Backend::Launchd)
+    } else if cfg!(target_os = "windows") {
+        Some(Backend::TaskScheduler)
     } else {
         None
     }
@@ -112,7 +118,8 @@ pub fn backend_is_available() -> bool {
 pub fn unsupported_platform_message() -> String {
     format!(
         "scheduling is not implemented on {}. rusticprofile generates systemd units on \
-         Linux and launchd agents on macOS, and {} has neither.\n       \
+         Linux, launchd agents on macOS and Task Scheduler definitions on Windows, and {} \
+         is none of those.\n       \
          Everything else works here: `config`, `plan` and `run` are unaffected, so a job \
          can still be run by hand or from any scheduler you already have.",
         std::env::consts::OS,
@@ -132,6 +139,45 @@ pub fn unsupported_platform_message() -> String {
 /// page. `permission: system` is the way out: a LaunchDaemon runs regardless of login, at the
 /// cost of running as root, which needs its own answer for repository credentials — the same
 /// trade a systemd system unit carries.
+/// The login limitation for `backend`, if it has one.
+///
+/// **Two of the three backends cannot run a user's job with nobody logged on**, for the same
+/// reason and with the same way out, so this is one question asked of the backend rather than a
+/// pair of `if`s at every call site — a third backend arriving is exactly when a caller forgets
+/// one. systemd is the only one that can, via `linger`.
+///
+/// `None` means "no caveat", not "unknown": a schedule with nothing to warn about must print
+/// nothing rather than reassuring text nobody needs.
+#[must_use]
+pub fn login_caveat(backend: Backend) -> Option<String> {
+    match backend {
+        Backend::Systemd => None,
+        Backend::Launchd => Some(launchd_login_caveat()),
+        Backend::TaskScheduler => Some(taskscheduler_login_caveat()),
+    }
+}
+
+/// The Windows counterpart of [`launchd_login_caveat`].
+///
+/// A task with `InteractiveToken` runs as the logged-on user and only while someone is logged
+/// on, so a Windows machine sitting at the lock screen after a reboot takes no backups — nothing
+/// fails, and the only evidence is an absence.
+///
+/// **The way out is worse here than on macOS, and saying so is the point.** launchd's answer is
+/// a LaunchDaemon running as root. Windows has two: `permission: system` runs as SYSTEM, which is
+/// the direct analogue; or a task can run "whether the user is logged on or not", which needs
+/// either a **stored password** or S4U. Both relocate the credential problem rather than solving
+/// it, which is why `permission` keeps its two values and this is a caveat rather than a flag.
+#[must_use]
+pub fn taskscheduler_login_caveat() -> String {
+    "a user task runs only while you are logged on — Windows has no equivalent of systemd's \
+     `linger`, so a machine sitting at the lock screen after a reboot takes no backups. Watch \
+     `last success` rather than the schedule, or use `permission: system` (a task running as \
+     SYSTEM). Running as yourself *without* being logged on needs a stored password or S4U, \
+     which moves the credential problem rather than removing it."
+        .to_string()
+}
+
 #[must_use]
 pub fn launchd_login_caveat() -> String {
     "a user LaunchAgent runs only while you are logged in — launchd has no equivalent of \
@@ -151,6 +197,8 @@ mod tests {
             Some(Backend::Systemd)
         } else if cfg!(target_os = "macos") {
             Some(Backend::Launchd)
+        } else if cfg!(target_os = "windows") {
+            Some(Backend::TaskScheduler)
         } else {
             None
         };
@@ -183,5 +231,20 @@ mod tests {
     fn each_backend_names_itself() {
         assert_eq!(Backend::Systemd.to_string(), "systemd");
         assert_eq!(Backend::Launchd.to_string(), "launchd");
+        assert_eq!(Backend::TaskScheduler.to_string(), "taskscheduler");
+    }
+
+    #[test]
+    fn only_systemd_can_run_without_a_login_session() {
+        // `linger` is the one thing systemd has that the other two do not, so this is the
+        // backend difference most likely to matter operationally. A caveat that appeared on
+        // systemd would be noise; one missing on Windows would be a silent gap.
+        assert!(login_caveat(Backend::Systemd).is_none());
+        for backend in [Backend::Launchd, Backend::TaskScheduler] {
+            let m = login_caveat(backend).expect("both need a caveat");
+            assert!(m.contains("linger"), "{m}");
+            assert!(m.contains("last success"), "{m}");
+            assert!(m.contains("system"), "{m}");
+        }
     }
 }

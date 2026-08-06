@@ -480,6 +480,7 @@ src/
   report.rs     M1  owo-colors output
   schedule/{mod,calendar,systemd}.rs                         M2
   schedule/launchd.rs                                        M3
+  schedule/schtasks.rs                                       0.2.0 (Windows; §7.9)
 ```
 
 **No shell, ever** — see §2.3 for why this is architecture rather than preference.
@@ -650,9 +651,15 @@ inside rusticprofile — which is the argument for the `doctor` command rather t
 validation rules. Assume the next one exists and has not been found yet.
 
 **Non-goals for v1.** Reading resticprofile config; a `migrate` command; restic as a backend;
-Windows; crond/schtasks; groups; **restore** (use rustic directly — say so in the README's first
+~~Windows; crond/schtasks~~ — **REVERSED 2026-08-06 for Windows; see §5.10 and §7.9**; groups;
+**restore** (use rustic directly — say so in the README's first
 screen); hooks (rustic has them); Prometheus/metrics (rustic has them); templating in any form,
 including a "just one small conditional" escape hatch.
+
+*Struck rather than deleted, per this file's convention. What changed is not the reasoning but the
+fleet: the development machine now runs Windows, so "the scheduling backends are systemd and
+launchd" stopped describing the machine this work is done on. Task Scheduler is in scope as a
+third backend; **`crond` remains a non-goal**, and so does restic-as-a-backend.*
 
 **No compatibility promises** with resticprofile — not the schema, CLI, exit codes or output. The
 name is a lineage marker, not a compatibility claim, and the README must open by saying so.
@@ -926,10 +933,156 @@ entry containing `~` or `$` for a job that backs up. This is the same bargain as
 in the chain can catch the mistake, and the mistake is silent. A tool whose stated purpose
 is preventing silent degradation cannot let this particular one through.
 
+## 5.10 What Windows actually breaks — measured 2026-08-06, rustic 0.11.3, rustc 1.97.1
+
+Measured on the development machine after it was reinstalled from Fedora to Windows 11, rather
+than reasoned about from the non-goal. The headline is that **rustic itself is fine on Windows**;
+what needed work was smaller than expected in one place and larger in another, and two of the
+findings are traps rather than gaps.
+
+### The build: five sites, and `nix` is not one of them
+
+`cargo check --all-targets` gave **15 errors in 5 places** — `gethostname`, `flock`,
+the signal machinery, `getuid` for launchd's `gui/<uid>` domain, and the SIGPIPE reset.
+
+**`nix` compiles on Windows.** It resolves and builds as an *empty* crate, so an unconditional
+dependency entry is not itself an error — every use site fails instead, with
+`could not find sys in nix`, which reads like a feature-flag mistake rather than a platform one.
+It is now under `[target.'cfg(unix)'.dependencies]` so the error names the real cause.
+
+### `%COMPUTERNAME%` is NOT the hostname, and using it would split the repository
+
+This is the finding with teeth, because the wrong answer looks purely cosmetic:
+
+| source | value on this machine |
+|---|---|
+| `%COMPUTERNAME%` (NetBIOS) | **`HOST-A`** |
+| `hostname`, and `GetComputerNameExW(ComputerNamePhysicalDnsHostname)` | **`host-a`** |
+
+Since `0.1.34` rusticprofile *records* this name. Emitting the upper-cased form would have done
+two silent things: `hosts::host_matches` is plain equality, so `enabled-on-hosts: [host-a, …]`
+would stop selecting the machine and its gated snapshot sets would simply not run; and under
+`group-by = "host,label"` the host's existing history is a **different retention group**, so it
+stops being selected and accumulates forever. That is §3a invariant 1 breached by a value nobody
+would think to check. Lower-casing `%COMPUTERNAME%` was rejected — right here, and silently wrong
+for a host genuinely named `Web1`.
+
+### rustic cannot address a local repository by bare Windows path
+
+`repository = "C:/Users/user/repo"` fails with:
+
+```
+The backend type `C` is not supported. Please check the given backend and try again.
+```
+
+§5.1 records that rustic splits the repository string on `:` and reads the first element as a
+backend type. **A Windows drive letter is exactly that shape.** The fix is the explicit form,
+verified working end to end — `init`, then `backup --json` producing a snapshot:
+
+```toml
+repository = "local:C:/Users/user/repo"
+```
+
+`opendal:gcs` is unaffected, so the fleet's production path never sees this. It bites local and
+removable-drive repositories, and it bit the three rustic-backed integration tests.
+
+### Backslashes: TOML rejects them, YAML mis-reads them, and both look like our bug
+
+The same `\` -> `/` idiom the fleet's chezmoi template already applies, now with the two failures
+it prevents measured:
+
+| where | what a raw `C:\Users\…` does |
+|---|---|
+| TOML string | `TOML parse error at line 3, column 19` — `\U` is not a valid escape |
+| YAML **double-quoted** scalar | `did not find expected hexadecimal number` — `\U` opens an 8-digit Unicode escape |
+| YAML plain scalar | harmless; backslashes are literal |
+
+Both surface as rusticprofile refusing a config, which reads as a defect in the validator.
+
+### Two smaller platform facts, both honest gaps rather than bugs
+
+- **`Path::is_absolute()` needs a drive or UNC prefix.** So `/var/log/x.log` is *relative* on
+  Windows and `check_log_is_absolute` refuses it — correctly, since a driveless path resolves
+  against whatever drive the scheduler chose. Consequence worth naming: a shared `jobs.yaml`
+  with a rooted-but-driveless `log:` loads on the Unix hosts and is refused on a Windows one. The
+  shipped example cannot hit it, because `${state_dir}` is always fully qualified.
+- **`HOME` is normally unset**, so a `jobs.yaml` built around `${env:HOME}` — which the shipped
+  `config --example jobs` still is — fails to load on Windows with an unset-variable error. That
+  is the right *direction* to fail in, but the example should not be the thing that fails; see
+  §7.9 for the two ways out.
+
+### §2.3's guarantee is weaker on Windows, and that is a design fact worth recording
+
+`PLAN.md` §2.3 argues that never using a shell deletes a whole class of bug because arguments
+reach the child byte for byte. **That is a property of Unix passing an argv.** Windows passes one
+command line which the child re-parses, so the round trip depends on the child's parser rather
+than on the OS. rustic is a Rust program and uses the same MSVCRT rules `Command` quotes for, so
+it holds in practice — but it holds *for this child*, not structurally, and the
+`arguments_reach_the_child_byte_for_byte` unit test is therefore Unix-only. The honest place to
+assert it on Windows is `tests/cli_tests.rs`, where `CARGO_BIN_EXE_rusticprofile` provides a
+cooperating child.
+
+The architectural conclusion does not change — a shell would be worse on Windows too, and there
+is still no quoting logic in this crate — only the strength of the claim.
+
+### A repeating trigger with a past boundary runs the moment it is registered
+
+Found by registering a real task and reading `Last Run Time` back, not by reading the schema —
+and it is the finding that would have shipped a §7.5 violation. The obvious way to say "every
+hour" is a daily `<CalendarTrigger>` with `<Repetition><Interval>PT1H</Interval></Repetition>`.
+With a `StartBoundary` in the past, **Task Scheduler treats that as currently due and runs the
+task immediately.** For this tool that means `schedule` takes a backup *and runs `forget`* as a
+side effect of scheduling — exactly what launchd's absent `RunAtLoad` exists to prevent.
+
+Measured on Windows 11, `Last Run Time` read seconds after registering:
+
+| trigger | ran on registration? | next fire |
+|---|---|---|
+| past boundary + `<Repetition>` | **yes, immediately** | next hour |
+| past boundary, no repetition | no — never ran | tomorrow |
+| future boundary + `<Repetition>` | no | **tomorrow** — loses hourly for a day |
+| **24 × past boundary, one per hour, no repetition** | **no** | **the next hour** |
+
+`StartWhenAvailable` was the first suspect and is **not** the cause: with it set to `false` the
+task still ran on registration. Worth recording, because it is the setting that *sounds*
+responsible and disabling it would have cost the `Persistent=true` equivalent for nothing.
+
+So hourly is emitted as **24 plain daily triggers**, one per hour, all sharing the fixed
+boundary date. It is the only construction that gets all three properties at once: no run at
+registration, a correct next fire time inside the hour, and a boundary that never changes — so
+generation stays pure, needs no clock, and re-scheduling is byte-identical.
+
+Verified end to end afterwards, on this machine, against a throwaway local repository:
+`schedule` → `last run: never`, `0 snapshots`, next fire at the next hour; **three** successive
+`schedule` runs → still `0 snapshots`, reporting `installed` then `unchanged` twice; a manual
+`schtasks /Run` → one snapshot written, `status` reporting `last success`; `unschedule` → task
+gone and definition removed.
+
+### The gate is one PATH entry away from working — not a rewrite
+
+Not a code problem, but it decides whether the house workflow survives on this machine. With the
+**default** PATH nothing runs: `bash`, `sha256sum`, `date` and `install` are absent, and `find`
+resolves to `C:\Windows\system32\find.exe`, a text-search tool — the same shadowing trap
+`~/AGENTS.md` records for `bfs`/`find` and `eza`/`ls`. Every shebang recipe fails, including
+`golden-is-current`, which `check` depends on.
+
+**Git for Windows ships all of them in `usr\bin`.** With that directory prepended, `just check`
+— golden staleness gate included — and `just man` both ran green here. So the Justfile is fine;
+`set windows-shell` is worth adding only so the non-shebang recipes stop depending on which `sh`
+is first on PATH.
+
+*Also surfaced here, and platform-independent: `just check` runs `cargo clippy` **without**
+`--all-targets`, so test code has never been linted. Running it with `--all-targets` found one
+real lint in `exec`'s test module.*
+
 ## Safety rules observed during this testing
 
 Read-only against GCS (`repoinfo`, `snapshots`); every write test in a throwaway local repo under
 `/tmp`, deleted afterwards; no `prune` against GCS; no snapshots deleted on any host.
+
+*Unchanged for the Windows work (2026-08-06): the shared repository was never contacted. Every
+measurement above used a throwaway local repository under the temp directory, and the two
+`GetComputerNameExW` results were read from the OS.*
 
 ---
 
@@ -1374,6 +1527,80 @@ The flag-inventory test in `rustic/invoke.rs` continues to assert that **job** i
 carry only `-P`, `--json` and `--name`. That guarantee is unchanged; this command is not a
 job invocation and has its own test asserting rusticprofile contributes only `-P` and the
 operation word.
+
+## 7.9 SETTLED: Windows becomes a supported platform (2026-08-06)
+
+**Decision: Windows is supported, and Task Scheduler becomes a third scheduling backend.** This
+reverses a stated v1 non-goal, so it is written here before the code, per the precedent §5.9 set
+when the hostname decision moved the delegation boundary.
+
+### Why the non-goal was right, and why it stopped being right
+
+The original reasoning was *"the scheduling backends are systemd and launchd"* — sound, because it
+described a fleet of five Linux hosts and two Macs. It was never an argument about Windows being
+unsuitable; it was an argument about where the machines were.
+
+**The development machine was reinstalled from Fedora to Windows.** So the platform with no
+support is now the platform the work is done on, the gate is run on, and releases are cut from.
+That is a different question from "should we grow a third platform for users", and it answers
+itself.
+
+### What is in scope, and what stays out
+
+| | |
+|---|---|
+| **In** | building and running on Windows; `config`, `plan`, `run`, `snapshots`, `status`; a Task Scheduler backend for `schedule`/`unschedule`/`status` |
+| **Out** | `crond` — still a non-goal, and nothing on this fleet uses it |
+| **Out** | restic as a backend — unchanged, for the §3 reasons |
+| **Out** | WSL as the answer. A backup tool that only protects a Linux filesystem inside the machine is not protecting the machine |
+
+### The three things that are genuinely different, and how each is answered
+
+**1. There is no `flock`.** The lock is a file opened with `share_mode(0)` — no sharing at all, so
+the *open itself* is the exclusion and a second holder gets `ERROR_SHARING_VIOLATION`. That is
+mandatory rather than advisory, needs no second syscall and no dependency, and is released by the
+kernel when the handle closes for any reason. `LockFileEx` was rejected: it needs `windows-sys` and
+locks byte ranges inside a file that is still openable, which is a weaker thing to hold.
+
+**2. There are no signals.** And forwarding turns out to be unnecessary for the interactive case:
+a child spawned without a new process group shares the console, and the console delivers `Ctrl+C`
+to every process attached to it, so rustic receives the interrupt from the same keypress. What is
+absent is the *record* — no handler, so `Outcome::interrupted` stays false and `Verdict::Interrupted`
+is never reported there. Stated rather than papered over, in the same spirit as launchd reporting
+no next-fire time.
+
+The case that is **not** covered is a scheduled run, which has no console: stopping the task kills
+only the top process and orphans rustic. Closing that needs a job object with
+`KILL_ON_JOB_CLOSE`, and it belongs with the backend rather than with `exec` — a scheduled run is
+the only place it can happen.
+
+**3. `%COMPUTERNAME%` is a trap, not a source.** See §5.10. `GetComputerNameExW` is the reason
+`windows-sys` is a dependency at all, and it is worth one: the alternative silently strands a
+host's history in its own retention group.
+
+### One deliberate consistency, and it is the same argument as `0.1.25`
+
+**The XDG rules apply on Windows too** — `~/.config`, `~/.local/state`, not `%APPDATA%`. Not a
+preference: `jobs.yaml` is byte-identical fleet-wide, so `${state_dir}` in one shared `log:` line
+must not resolve to a third distinct place. There is a local precedent — chezmoi, which generates
+this fleet's configuration, reads its own config from `~/.config` on Windows.
+
+### The one thing left undecided, because it is a fleet decision and not a code one
+
+The shipped `config --example jobs` sets `rustic-config-dir: "${env:HOME}/.config/rustic"`, and
+`HOME` is normally unset on Windows. Two ways out, and they are not equivalent:
+
+- **Rely on the default.** That key's default is already `$XDG_CONFIG_HOME/rustic`, which is now
+  correct on all three platforms, so the line can simply go. Zero new surface, no version skew,
+  and it removes a value that was only ever the default spelled less portably.
+- **Add `${home}`**, resolved from `dirs::home_dir()`, which works everywhere. More expressive,
+  and the honest fix for anyone who genuinely needs a home-relative path — but it triggers the
+  `0.1.24` rule: a shared `jobs.yaml` using it fails to load on every host still running an older
+  binary.
+
+The first is right for the example. The second is worth having anyway, later, and separately —
+and neither changes the fleet's own `jobs.yaml`, which is chezmoi-managed and has its own decision
+to make about `${env:HOME}`.
 
 # Part 8 — Related state elsewhere
 

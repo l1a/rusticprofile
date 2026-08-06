@@ -491,9 +491,25 @@ jobs:
         assert!(err.0[0].message.contains("gated away"));
     }
 
+    /// An absolute log directory for fixtures, per platform.
+    ///
+    /// **Windows requires a drive or UNC prefix**, so `/var/log` is *relative* there and
+    /// `check_log_is_absolute` refuses it — correctly, and for exactly the reason the rule
+    /// exists: a driveless path is resolved against the current drive, which for a scheduled
+    /// task is whatever the scheduler chose.
+    ///
+    /// Worth knowing beyond the fixture, because it is the one place this rule is not
+    /// fleet-portable: a shared `jobs.yaml` with a rooted-but-driveless `log:` loads on the Unix
+    /// hosts and is refused on a Windows one. The shipped `config --example jobs` cannot hit it,
+    /// because `${state_dir}` always interpolates to a fully-qualified path.
+    #[cfg(not(windows))]
+    const ABS_LOG_DIR: &str = "/var/log/";
+    #[cfg(windows)]
+    const ABS_LOG_DIR: &str = "C:/var/log/";
+
     #[test]
     fn log_paths_interpolate_and_must_be_absolute() {
-        let yaml = "
+        let template = "
 schema: 1
 defaults:
   rustic-config-dir: RUSTIC_DIR
@@ -503,10 +519,14 @@ jobs:
     operations: [backup]
     log: /var/log/${job}-${host_short}.log
 ";
-        let c = load_as(yaml, "host-a.local").unwrap();
-        assert_eq!(c.jobs[0].log.as_deref(), Some("/var/log/j-host-a.log"));
+        let yaml = template.replace("/var/log/", ABS_LOG_DIR);
+        let c = load_as(&yaml, "host-a.local").unwrap();
+        assert_eq!(
+            c.jobs[0].log.as_deref(),
+            Some(&format!("{ABS_LOG_DIR}j-host-a.log")[..])
+        );
 
-        let relative = yaml.replace("/var/log/", "logs/");
+        let relative = template.replace("/var/log/", "logs/");
         let err = load_as(&relative, "host-a.local").unwrap_err();
         assert!(err.0[0].message.contains("absolute"));
     }
@@ -523,11 +543,12 @@ jobs:
     profile: p
     operations: [backup]
     log: /var/log/${job}-${date:%Y-%m-%d}.log
-";
-        let c = load_as(yaml, "h").unwrap();
+"
+        .replace("/var/log/", ABS_LOG_DIR);
+        let c = load_as(&yaml, "h").unwrap();
         assert_eq!(
             c.jobs[0].log.as_deref(),
-            Some("/var/log/j-${date:%Y-%m-%d}.log")
+            Some(&format!("{ABS_LOG_DIR}j-${{date:%Y-%m-%d}}.log")[..])
         );
     }
 
