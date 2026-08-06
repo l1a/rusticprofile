@@ -543,21 +543,35 @@ mod tests {
         signal_child(nix::libc::SIGTERM);
     }
 
+    /// A mutex used by nothing but the guard-lifetime assertion below.
+    ///
+    /// **Deliberately not [`CHILD_PID_LOCK`], and the reason is the whole point of this comment.**
+    /// The assertion is *"a held guard blocks and a dropped guard releases"*, which it proves by
+    /// calling `try_lock` and requiring a specific answer. That only holds if nothing else is
+    /// using the mutex — so pointing it at the lock every other test legitimately takes made it
+    /// race the moment more tests started taking it. It failed on CI while passing locally, which
+    /// is the same shape as the `0.1.33` flake and has the same resolution: **the test was
+    /// breaking a constraint, so the test is what changes.**
+    ///
+    /// The property under test is a property of `MutexGuard`, not of which mutex it guards, so a
+    /// dedicated one asserts exactly as much and cannot be interfered with.
+    static GUARD_SEMANTICS_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn a_dropped_guard_would_not_serialise_anything() {
         // The guard's whole effect is its lifetime, and `let _ = exclusive();` drops it
         // immediately while *looking* correct — restoring the race silently, which is the
         // failure class this project exists to prevent. `#[must_use]` makes ignoring the
         // return value a warning (and `just check` runs clippy with `-D warnings`), so the
-        // mistake cannot reach main; this asserts the lock is real and actually exclusive.
-        let guard = exclusive();
+        // mistake cannot reach main; this asserts a guard is real and actually exclusive.
+        let guard = GUARD_SEMANTICS_LOCK.lock().unwrap();
         assert!(
-            CHILD_PID_LOCK.try_lock().is_err(),
+            GUARD_SEMANTICS_LOCK.try_lock().is_err(),
             "the lock must be held while a guard is alive, or nothing is serialised"
         );
         drop(guard);
         assert!(
-            CHILD_PID_LOCK.try_lock().is_ok(),
+            GUARD_SEMANTICS_LOCK.try_lock().is_ok(),
             "the lock must be released once the guard is dropped"
         );
     }

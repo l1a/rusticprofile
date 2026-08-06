@@ -644,6 +644,21 @@ ships `bash`, `sha256sum`, `date`, `install`, `grep`, `sed`, `cut` and a real `f
 and prepending that directory makes the whole gate work. The Justfile now says so at the top,
 including that a default-PATH `find` is `C:\Windows\system32\find.exe`, a text-search tool.
 
+##### A test raced again, and again the test was the defect
+
+`exec::tests::a_dropped_guard_would_not_serialise_anything` — the guard-lifetime assertion added
+in `0.1.33` — **failed on the Windows CI runner while passing locally**. It probes `CHILD_PID_LOCK`
+with `try_lock` and demands a specific answer, which only holds while nothing else is using that
+mutex. The two Windows tests added here legitimately take it, so the assertion became racy.
+
+Same shape as `0.1.33`, same resolution, and worth stating as the pattern rather than the incident:
+**when a test races, ask whether the test is the thing breaking a constraint.** The property under
+test is a property of `MutexGuard`, not of which mutex it guards, so it now uses a dedicated mutex
+that nothing else touches. Production is untouched — no new lock, no `cfg`, no atomic.
+
+Verified the way `0.1.33` verified its fix: **0 failures in 30 stressed runs** at
+`--test-threads=16`, against a reproducible CI failure before.
+
 ##### Also here
 
 `login_caveat(backend)` replaces the pair of `if backend == Launchd` checks: **two of the three
