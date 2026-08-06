@@ -259,8 +259,33 @@ pub fn remove_agent(job_name: &str, dir: &Path) -> io::Result<Vec<PathBuf>> {
 #[must_use]
 pub fn launchd_domain(permission: Permission) -> String {
     match permission {
-        Permission::User => format!("gui/{}", nix::unistd::getuid()),
+        Permission::User => format!("gui/{}", current_uid()),
         Permission::System => "system".to_string(),
+    }
+}
+
+/// This user's numeric id, for launchd's `gui/<uid>` domain.
+///
+/// **`0` off Unix, and that value can never be used.** `current_backend()` returns
+/// [`Backend::Launchd`](super::Backend::Launchd) only on macOS, so every caller of
+/// [`launchd_domain`] sits behind that match arm. The fallback exists so the launchd backend
+/// keeps *compiling and being unit-tested* on every platform — the same reason
+/// [`super::systemd::service_unit`] and [`super::launchd::agent_plist`] are pure functions
+/// rather than `#[cfg]`-gated ones, and the reason `current_backend` is a runtime check at all.
+///
+/// A fabricated value that a caller *could* reach would be the thing this project refuses (see
+/// `run::lock::budget`, which returns `None` rather than a plausible wait). This one is
+/// unreachable by construction, which is a different case — but it is only worth the trade
+/// because gating the alternative would fragment three `launchctl`-driving functions and the
+/// `main.rs` dispatch arm that calls them.
+fn current_uid() -> u32 {
+    #[cfg(unix)]
+    {
+        nix::unistd::getuid().as_raw()
+    }
+    #[cfg(not(unix))]
+    {
+        0
     }
 }
 
@@ -639,7 +664,7 @@ mod tests {
         );
         assert_eq!(
             user,
-            format!("gui/{}", nix::unistd::getuid()),
+            format!("gui/{}", current_uid()),
             "the uid must come from getuid(), not from a subprocess"
         );
         assert_eq!(launchd_domain(Permission::System), "system");

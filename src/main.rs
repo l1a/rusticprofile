@@ -91,6 +91,14 @@ fn main() -> ExitCode {
 /// and a backtrace hint. Every other Unix tool simply dies quietly at that point, and a
 /// backup tool that appears to crash when you pipe it into `head` is exactly the kind of
 /// alarming-but-meaningless output this project tries not to produce.
+/// **There is no equivalent on Windows, and the panic remains there.** Windows has no
+/// `SIGPIPE`: a closed pipe surfaces as a write error, the print macros panic on it exactly as
+/// they do on Unix, and no signal disposition exists to change that. So `rusticprofile status |
+/// more`, exited early, can still print a panic on Windows. Recorded rather than silently left
+/// as a no-op, because "the fix does not apply here" and "the bug does not happen here" are
+/// different claims and only the first is true. Closing it means not using the print macros for
+/// bulk output, which is a larger change than this function.
+#[cfg(unix)]
 fn restore_default_sigpipe() {
     // SAFETY: setting a signal disposition to the default before any threads are spawned.
     unsafe {
@@ -100,6 +108,9 @@ fn restore_default_sigpipe() {
         );
     }
 }
+
+#[cfg(not(unix))]
+fn restore_default_sigpipe() {}
 
 fn emit_completions(shell: CompletionShell) {
     let mut cmd = Cli::command();
@@ -630,6 +641,56 @@ fn unschedule_job(args: &UnscheduleArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The recorded outcome for one job: when it last ran, and when it last *worked*.
+///
+/// "When did this last actually work?" is the question a schedule cannot answer. A timer can be
+/// armed, green and firing while every run fails — or be quietly disabled, in which case nothing
+/// fails and nothing reports. Only the recorded outcome distinguishes those from a job that is
+/// fine, which is why this is printed on every platform, backend or no backend.
+fn print_recorded_outcome(config: &Config, job: &rusticprofile::config::job::Job) {
+    let path = rusticprofile::run::status::path_for(&config.state_dir, &job.name);
+    match rusticprofile::run::status::read(&path) {
+        Some(rec) => {
+            println!(
+                "    {:<20} {} ({})",
+                "last run", rec.last_run, rec.last_verdict
+            );
+            match &rec.last_success {
+                Some(t) => println!("    {:<20} {t}", "last success"),
+                None => println!("    {:<20} {}", "last success", "never".red().bold()),
+            }
+            if !rec.skipped.is_empty() {
+                println!(
+                    "    {:<20} {}",
+                    "skipped last run",
+                    rec.skipped.join(", ").yellow()
+                );
+            }
+        }
+        // Said out loud. An absent record and a job that has never run look the same from
+        // here, and both are worth knowing about.
+        None => println!("    {:<20} {}", "last run", "never recorded".dimmed()),
+    }
+}
+
+/// Jobs this configuration deliberately does not run here.
+///
+/// The gate is the whole point of per-host scheduling, so it has to be visible. "This host has no
+/// prune timer" must be readable as a decision, not inferred from an absence.
+fn print_gated_out(config: &Config) {
+    if config.gated_out.is_empty() {
+        return;
+    }
+    println!("  {}", "not on this host (by config):".dimmed());
+    for g in &config.gated_out {
+        println!(
+            "    {:<20} enabled-on-hosts: {}",
+            g.name,
+            g.enabled_on_hosts.join(", ")
+        );
+    }
+}
+
 fn show_status(args: &StatusArgs) -> ExitCode {
     let (config, _path) = match load_config(args.config.clone(), args.as_host.clone(), None) {
         Ok(v) => v,
@@ -652,6 +713,33 @@ fn show_status(args: &StatusArgs) -> ExitCode {
             "note:".yellow().bold(),
             schedule::unsupported_platform_message()
         );
+        println!();
+
+        // **The record is still printed, and that is the point of this branch.** It does not
+        // come from a service manager — `run` writes it — so a platform without a backend is
+        // not a platform without an answer. `last success` is the field to alert on, because a
+        // run that never happens is silent, and it is exactly as meaningful for a job driven by
+        // hand or by some other scheduler as for one driven by a timer.
+        //
+        // Returning early here also made `status` and `status --json` disagree about the same
+        // machine: the JSON path treats the backend as `Option` and has always emitted these
+        // fields. Two views of one record that differ by output format is the kind of quiet
+        // inconsistency this project treats as a defect.
+        for job in &config.jobs {
+            println!(
+                "  {:<22} {}",
+                job.name,
+                "run by hand (no scheduling backend here)".dimmed()
+            );
+            if let Some(s) = job.schedule {
+                println!(
+                    "    {:<20} {} ({}, {}) — declared, but nothing here can arm it",
+                    "declared", s.at, s.permission, s.priority
+                );
+            }
+            print_recorded_outcome(&config, job);
+        }
+        print_gated_out(&config);
         return ExitCode::SUCCESS;
     };
     println!("{} {backend}", "backend:".bold());
@@ -702,49 +790,10 @@ fn show_status(args: &StatusArgs) -> ExitCode {
             None => {}
         }
 
-        // "When did this last actually work?" is the question a schedule cannot answer.
-        // A timer can be armed, green and firing while every run fails — or be quietly
-        // disabled, in which case nothing fails and nothing reports. Only the recorded
-        // outcome distinguishes those from a job that is fine.
-        {
-            let path = rusticprofile::run::status::path_for(&config.state_dir, &job.name);
-            match rusticprofile::run::status::read(&path) {
-                Some(rec) => {
-                    println!(
-                        "    {:<20} {} ({})",
-                        "last run", rec.last_run, rec.last_verdict
-                    );
-                    match &rec.last_success {
-                        Some(t) => println!("    {:<20} {t}", "last success"),
-                        None => println!("    {:<20} {}", "last success", "never".red().bold()),
-                    }
-                    if !rec.skipped.is_empty() {
-                        println!(
-                            "    {:<20} {}",
-                            "skipped last run",
-                            rec.skipped.join(", ").yellow()
-                        );
-                    }
-                }
-                // Said out loud. An absent record and a job that has never run look the
-                // same from here, and both are worth knowing about.
-                None => println!("    {:<20} {}", "last run", "never recorded".dimmed()),
-            }
-        }
+        print_recorded_outcome(&config, job);
     }
 
-    // The gate is the whole point of per-host scheduling, so it has to be visible. "This
-    // host has no prune timer" must be readable as a decision, not inferred from an absence.
-    if !config.gated_out.is_empty() {
-        println!("  {}", "not on this host (by config):".dimmed());
-        for g in &config.gated_out {
-            println!(
-                "    {:<20} enabled-on-hosts: {}",
-                g.name,
-                g.enabled_on_hosts.join(", ")
-            );
-        }
-    }
+    print_gated_out(&config);
 
     // Repeated here as well as at `schedule` time, because this is the command someone runs
     // when they are wondering whether backups are happening — and "only while you are logged

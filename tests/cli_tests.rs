@@ -141,6 +141,24 @@ filter-hosts = ["host-a", "host-b", "host-c", "THIS_HOST"]
 group-by = "host,label,paths"
 "#;
 
+/// A path as a *config file* must see it: forward slashes, always.
+///
+/// **Windows accepts `/` in every path API, and both config languages here treat `\` as an
+/// escape.** Substituting a Windows temp path verbatim produces a file the tool then correctly
+/// refuses, which reads as a rusticprofile bug and is not one. Both halves were measured while
+/// porting:
+///
+/// - TOML: `repository = "C:\Users\…"` → `TOML parse error at line 3, column 19`, because `\U`
+///   is not a valid escape.
+/// - YAML, double-quoted scalars only: `did not find expected hexadecimal number`, because `\U`
+///   opens an 8-digit Unicode escape.
+///
+/// This is the same `replace "\\" "/"` idiom the fleet's chezmoi template already uses to render
+/// the real `rustic.toml`, and the reason a Windows host's profile must be generated that way.
+fn as_config_path(p: &std::path::Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
 /// Write a jobs.yaml and a rustic profile into a fresh temp dir.
 ///
 /// `RUSTIC_DIR` in the YAML is replaced with the temp dir, so fixtures stay hermetic and
@@ -162,7 +180,7 @@ fn fixture(jobs_yaml: &str) -> (tempfile::TempDir, String) {
     )
     .unwrap();
     let jobs = dir.path().join("jobs.yaml");
-    let rendered = jobs_yaml.replace("RUSTIC_DIR", &dir.path().display().to_string());
+    let rendered = jobs_yaml.replace("RUSTIC_DIR", &as_config_path(dir.path()));
     std::fs::write(&jobs, rendered).unwrap();
     let path = jobs.display().to_string();
     (dir, path)
@@ -405,7 +423,18 @@ fn assert_golden(case: &str, job: &str, host: &str) {
     // The argv now carries the resolved profile path, which contains a per-run temp
     // directory. Normalise it back so goldens stay machine-independent while still
     // recording that a resolved path is passed at all.
-    let stdout = stdout.replace(_dir.path().to_string_lossy().as_ref(), "RUSTIC_DIR");
+    //
+    // Both spellings of the directory are substituted, and then the separator that follows the
+    // placeholder is normalised. On Windows the config carries the forward-slash form (see
+    // `as_config_path`) while `Path::join` appends `\p.toml`, so the emitted argv is genuinely
+    // mixed — `C:/…/tmpX\p.toml`. Without this, one golden set cannot serve both platforms and
+    // `just check`'s staleness gate would fail on whichever did not write them, reporting "the
+    // argv rusticprofile would run has changed" when only a separator did.
+    let native = _dir.path().to_string_lossy().into_owned();
+    let stdout = stdout
+        .replace(&native, "RUSTIC_DIR")
+        .replace(&as_config_path(_dir.path()), "RUSTIC_DIR")
+        .replace("RUSTIC_DIR\\", "RUSTIC_DIR/");
 
     let golden_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/golden")
@@ -664,7 +693,7 @@ fn rustic_available() -> bool {
 /// Returns (tempdir, profile path without the `.toml` suffix).
 fn throwaway_repo() -> (tempfile::TempDir, String) {
     let dir = tempfile::tempdir().expect("temp dir");
-    let root = dir.path().display().to_string();
+    let root = as_config_path(dir.path());
     std::fs::create_dir_all(dir.path().join("src/good")).unwrap();
     std::fs::write(dir.path().join("src/good/file.txt"), "contents").unwrap();
 
@@ -673,7 +702,7 @@ fn throwaway_repo() -> (tempfile::TempDir, String) {
         format!(
             r#"
 [repository]
-repository = "{root}/repo"
+repository = "local:{root}/repo"
 password = "test-only-throwaway"
 
 [[backup.snapshots]]
@@ -834,6 +863,7 @@ jobs:
 ///
 /// This is rung 2 of the verification ladder in `PLAN.md` — the rung that proves a job's
 /// argv end to end while rustic never runs.
+#[cfg(unix)]
 fn recording_shim(dir: &std::path::Path) -> String {
     let shim = dir.join("shim.sh");
     let log = dir.join("argv.log");
@@ -845,11 +875,32 @@ fn recording_shim(dir: &std::path::Path) -> String {
         ),
     )
     .unwrap();
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    shim.display().to_string()
+}
+
+/// A recording shim: logs its argv to a file and exits 0 without touching a repository.
+///
+/// **Windows has no shebang**, so the shim is a batch file rather than a `#!/bin/sh` script —
+/// and no execute bit has to be set, because Windows decides executability from the extension.
+/// `%*` is the whole argument list, written on one line: the assertions are `contains` checks,
+/// so the one-per-line shape the Unix shim produces is not something they depend on, and
+/// splitting it in `cmd` would break on any argument containing a space.
+#[cfg(windows)]
+fn recording_shim(dir: &std::path::Path) -> String {
+    let shim = dir.join("shim.cmd");
+    let log = dir.join("argv.log");
+    std::fs::write(
+        &shim,
+        format!(
+            "@echo off\r\necho %*>>\"{}\"\r\nexit /b 0\r\n",
+            log.display()
+        ),
+    )
+    .unwrap();
     shim.display().to_string()
 }
 
@@ -1084,7 +1135,9 @@ fn the_emitted_examples_pass_config_check() {
     )
     .unwrap();
 
-    let rustic_dir = dir.path().display().to_string();
+    // `as_config_path`, not `display()`: this goes into a *double-quoted* YAML scalar, where a
+    // Windows path's `\U` opens a Unicode escape and the file stops being YAML at all.
+    let rustic_dir = as_config_path(dir.path());
     std::fs::write(dir.path().join("dot-files.toml"), &rustic_text).unwrap();
 
     // Only the profile directory is redirected — every other value is the example as
@@ -1142,7 +1195,8 @@ fn the_emitted_examples_plan_a_real_argv() {
         &jobs_path,
         jobs_text.replace(
             r#"rustic-config-dir: "${env:HOME}/.config/rustic""#,
-            &format!("rustic-config-dir: \"{}\"", dir.path().display()),
+            // Forward slashes — see `as_config_path`; this is a double-quoted YAML scalar.
+            &format!("rustic-config-dir: \"{}\"", as_config_path(dir.path())),
         ),
     )
     .unwrap();

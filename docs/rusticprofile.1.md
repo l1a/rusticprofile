@@ -99,6 +99,8 @@ Exit status is **0** for success or partial, **1** for failure, **130** for inte
 
 On **Linux** that means systemd units driven by `systemctl`; on **macOS**, a launchd agent driven by `launchctl`. On a platform with neither, **schedule** refuses and writes nothing — files on disk plus a success message are indistinguishable from a working install, so refusing is the only honest answer. **status** reports the backend it found, and `status --json` names it in a `backend` field.
 
+**Windows is such a platform today.** Everything that does not schedule works there — **config**, **plan**, **run**, **snapshots**, and the recorded half of **status** — so a job can be run by hand or driven from Task Scheduler configured yourself. A native Task Scheduler backend is the next increment. Where there is no backend, **status** still prints each job's `last run` and `last success`, because that record is written by **run** and does not come from a service manager; it is the field to watch in any case, since a run that never happens reports nothing at all.
+
 **-n** *JOB*
 :   The job to act on. Optional for **schedule**, where omitting it installs every job declaring a `schedule:` block. Required for **unschedule** — removal is always named explicitly.
 
@@ -226,7 +228,7 @@ The contract the implemented commands follow:
 **$XDG_STATE_HOME/rusticprofile/**
 :   Where `${state_dir}` points, and where run logs belong. Logs are **state, not configuration** — the XDG Base Directory specification names them as the example of what `XDG_STATE_HOME` is for. Pointing a `log:` at `${config_dir}` instead is also self-defeating when `~/.config` is one of your backup sources: the job then appends to a directory it is in the middle of backing up, and the rustic profile needs an exclusion to compensate.
 
-The variables are honoured where they are set and fall back to `~/.config` and `~/.local/state` where they are not — **on macOS as well as Linux**, rather than `~/Library/Application Support`. A relative value is ignored, as the specification requires. This is deliberate rather than unidiomatic: `jobs.yaml` is meant to be byte-identical across a fleet, and a location that varied by operating system would make one line of one file resolve to two different places.
+The variables are honoured where they are set and fall back to `~/.config` and `~/.local/state` where they are not — **on macOS and Windows as well as Linux**, rather than `~/Library/Application Support` or `%APPDATA%`. A relative value is ignored, as the specification requires; note that on Windows a path without a drive letter counts as relative, so a rooted-but-driveless `log:` is refused there. This is deliberate rather than unidiomatic: `jobs.yaml` is meant to be byte-identical across a fleet, and a location that varied by operating system would make one line of one file resolve to two different places.
 
 # SEE ALSO
 

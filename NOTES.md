@@ -228,7 +228,14 @@ the validator.
 
 ---
 
-## Current State (v0.1.35)
+## Current State (v0.1.36)
+
+**Windows builds and runs as of `0.1.36`** — 323 tests green there (273 unit + 50 integration,
+including the three rustic-backed ones against real rustic 0.11.3 on Windows). `schedule`,
+`unschedule` and the scheduling half of `status` still refuse: Task Scheduler is the next
+increment. Windows was a declared v1 non-goal until 2026-08-06; `PLAN.md` §7.9 records the
+reversal and §5.10 the measurements.
+
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
 
@@ -453,6 +460,29 @@ Smaller items:
       2026-08-03 as a `rustic prune`; it first fires **Mon 2026-08-10**. M4 is defence in
       depth, not permission — invariant 3 in §3a.
 - [ ] Add a Pre-PR Checklist section to `AGENTS.md` Part 2, mirroring retch's §4
+- [ ] **Windows, remaining work after `0.1.36`.** In the order it should land:
+      1. **A Task Scheduler backend** — a third `Backend`, one XML task per job. The vocabulary
+         maps better than launchd's did: `StartWhenAvailable` is `Persistent=true`, `RandomDelay`
+         is `RandomizedDelaySec`, and unlike launchd it **does** report a next fire time, so
+         `next_run` carries real data there. Two things are genuinely harder — `priority` maps
+         only approximately onto a task priority plus `BELOW_NORMAL`, and running with nobody
+         logged on needs stored credentials, which is the analogue of the missing `linger` and
+         worse because a password has to live somewhere. `schtasks /xml` wants **UTF-16**, and the
+         `0.1.26` plist-escaping lesson applies unchanged to task XML.
+      2. **A job object with `KILL_ON_JOB_CLOSE`**, so stopping a scheduled task cannot orphan
+         rustic. Only reachable from a scheduled run — see `PLAN.md` §7.9.
+      3. **`set windows-shell` plus a `windows-latest` CI leg.** The gate itself already works
+         with Git's `usr\bin` on PATH (`just check` and `just man` verified); this is about not
+         depending on which `sh` is first, and on CI running the platform at all.
+      4. **Assert byte-for-byte argv delivery in `tests/cli_tests.rs`**, where
+         `CARGO_BIN_EXE_rusticprofile` gives a cooperating child. The unit test is Unix-only
+         because Windows has no argv; `PLAN.md` §5.10 explains why the guarantee weakens.
+      5. **Decide the `${env:HOME}` question** in the shipped example — `PLAN.md` §7.9 has both
+         options and a recommendation.
+- [ ] **`just check` does not lint test code** — `cargo clippy` runs without `--all-targets`, so
+      every `#[cfg(test)]` module has been unlinted since the scaffold. Adding it found one real
+      lint (`0.1.36`). Not changed in that release because it may surface more across the
+      codebase, and a gate change deserves its own PR.
 - [x] **Decided and done in `0.1.32`.** The operating rules — `PLAN.md` §7.3, §7.5, §7.6,
       §7.7, §7.8 — are promoted to **§3a** above, which is now where they are maintained.
       `PLAN.md` keeps every section number, its full text and its measurements, and gains a
@@ -473,6 +503,113 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.1.36 — Windows builds and runs
+
+**A declared v1 non-goal is reversed.** `PLAN.md` §7.9 carries the decision and §5.10 the
+measurements; both were written before the code, per the §5.9 precedent. The short reason: the
+development machine was reinstalled from Fedora to Windows, so the platform with no support became
+the platform the work is done on and releases are cut from. `crond` and restic-as-a-backend remain
+non-goals.
+
+**Scheduling still refuses on Windows**, and deliberately — `current_backend()` returns `None`, so
+`schedule` writes nothing rather than writing files no service manager reads. Task Scheduler is the
+next increment.
+
+`nix` moves under `[target.'cfg(unix)'.dependencies]`; `windows-sys` is added for exactly one call.
+
+#### The finding that mattered: `%COMPUTERNAME%` is not the hostname
+
+| source | value here |
+|---|---|
+| `%COMPUTERNAME%` (NetBIOS) | **`HOST-A`** |
+| `hostname` / `GetComputerNameExW` | **`host-a`** |
+
+Since `0.1.34` rusticprofile *records* this name, so the upper-cased form would have done two
+silent things: `host_matches` is plain equality, so `enabled-on-hosts` would stop selecting the
+machine and its gated snapshot sets would not run; and under `group-by = "host,label"` the host's
+existing history becomes a **different retention group** — §3a invariant 1 breached by a value that
+reads as cosmetic. Lower-casing the variable was rejected: right here, silently wrong for a host
+genuinely named `Web1`. That single call is why `windows-sys` is a dependency.
+
+#### Three platform mechanisms, each answered rather than stubbed
+
+- **No `flock`.** The lock is a file opened with `share_mode(0)`: the open *is* the exclusion, a
+  second holder gets `ERROR_SHARING_VIOLATION`, and the kernel releases it when the handle closes
+  for any reason. No dependency, no second syscall. `LockFileEx` locks ranges inside a file that is
+  still openable, which is weaker.
+- **No signals — and forwarding is not needed interactively.** A child sharing the console receives
+  `Ctrl+C` from the same keypress. What is absent is the *record*: no handler, so
+  `Outcome::interrupted` stays false and `Verdict::Interrupted` is not reported there. Stated, not
+  papered over. A *scheduled* run has no console and would orphan rustic; that needs a job object
+  with `KILL_ON_JOB_CLOSE` and belongs with the backend.
+- **XDG paths on Windows too** — `~/.config`, `~/.local/state`, not `%APPDATA%`. The `0.1.25`
+  argument unchanged: `jobs.yaml` is byte-identical fleet-wide, so `${state_dir}` must not mean a
+  third place. chezmoi already reads its own config from `~/.config` on Windows.
+
+#### `status` now reports the record with no backend, and that was a real gap
+
+`show_status` returned early on a backendless platform after printing only the host — so `last run`
+and `last success` were invisible, while `status --json` treated the backend as an `Option` and had
+always emitted them. **Two views of one record disagreeing by output format.** The record does not
+come from a service manager, and `last success` is the field to alert on precisely because a run
+that never happens is silent — as true for a job driven by hand as for one driven by a timer. The
+printer is extracted so both paths share it.
+
+#### Four traps found by porting the tests, all of which bite real configs
+
+Each was a test failure whose cause is a genuine Windows behaviour, so the fixes are documented
+where the next person meets them rather than buried in a fixture:
+
+| trap | consequence |
+|---|---|
+| rustic splits the repository string on `:`, and a **drive letter is that shape** — `C:/…/repo` gives ``The backend type `C` is not supported`` | a local or removable-drive repository needs `local:C:/…`. `opendal:gcs` is unaffected, so production never sees it |
+| `\` in a **TOML** string | `TOML parse error` — `\U` is not a valid escape |
+| `\` in a **double-quoted YAML** scalar | `did not find expected hexadecimal number` — `\U` opens a Unicode escape |
+| `Path::is_absolute()` needs a drive prefix | `/var/log/x.log` is *relative* on Windows and `check_log_is_absolute` refuses it — correctly. A shared `jobs.yaml` with a rooted-but-driveless `log:` loads on Unix and is refused here |
+
+The first three all surface as rusticprofile refusing a config, which reads as a validator defect
+and is not one. The `\` → `/` fix is the same idiom the fleet's chezmoi template already applies.
+
+Two test-oracle corrections in the same family the project keeps finding: a golden expectation
+comparing a literal `"/cfg/rustic/p.toml"` was asserting a Unix separator rather than asking
+`paths::profile_toml` — the `v0.1.5` defect — and the golden harness now normalises the separator
+after the placeholder so **one golden set serves every platform**, instead of `just check`
+reporting "the argv rusticprofile would run has changed" when only a separator did.
+
+#### Two gaps left open on purpose, both named rather than fixed quietly
+
+- **The shipped `config --example jobs` still uses `${env:HOME}`, and `HOME` is normally unset on
+  Windows.** A user copying it verbatim gets an unset-variable error. Not fixed here because the
+  choice is a small design decision with a fleet echo — `PLAN.md` §7.9 records both options and
+  recommends simply dropping the line, since the key's default is already the same path.
+- **`rusticprofile status | more` can still print a panic on Windows.** There is no `SIGPIPE` to
+  restore; the print macros panic on a closed pipe there exactly as on Unix. "The fix does not
+  apply here" and "the bug does not happen here" are different claims, and only the first is true.
+
+#### The workflow gate needs a PATH entry on Windows, and nothing more
+
+With the **default** PATH it does not run at all: `bash`, `sha256sum`, `date` and `install` are
+absent, and `find` resolves to `C:\Windows\system32\find.exe` — a text-search tool, the same
+shadowing trap `~/AGENTS.md` records for `bfs`/`find` and `eza`/`ls`. Every shebang recipe fails,
+including `golden-is-current`, which `check` depends on.
+
+**Git for Windows ships every one of them in `usr\bin`, and that is the whole fix.** With that
+directory prepended, `just check` (including the golden staleness gate) and `just man` were both
+run green on this machine — so the Justfile needs no rewrite and the recipes are not the problem.
+`set windows-shell` is still worth adding so the non-shebang recipes do not depend on which `sh`
+happens to be first on PATH; that lands with the Task Scheduler increment, along with a
+`windows-latest` CI leg.
+
+*Stated this way deliberately: the first draft of this entry said the gate was "unavailable on this
+machine", which was true of the default environment and false of the machine. A tool that is one
+PATH entry away from working is a setup step, not a missing capability, and the difference decides
+whether the next person tries.*
+
+*Platform-independent finding from the same pass: `just check` runs `cargo clippy` **without**
+`--all-targets`, so test code has never been linted. Adding it found one real lint.*
+
+323 tests, up from 313.
 
 ### v0.1.35 — support non-interactive open-pr
 
