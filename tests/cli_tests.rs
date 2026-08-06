@@ -1294,7 +1294,7 @@ fn expected_schedule_files() -> Option<usize> {
         Some(2)
     } else if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
         // One launchd agent, or one Task Scheduler definition. Windows joined this list in
-        // `0.1.36`; before that it was the `None` arm, and the `None` arm is still the case that
+        // `0.2.0`; before that it was the `None` arm, and the `None` arm is still the case that
         // must never regress on a platform with no backend at all.
         Some(1)
     } else {

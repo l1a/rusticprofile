@@ -86,6 +86,14 @@ costs real complexity in the publish recipes.
   error, not a silent surprise. The CLI is expected to move before 1.0; say so in the release
   entry rather than in the version number.
 
+  **`0.2.0` is the precedent for the other side of that rule**, and it is worth recording
+  because "a whole new platform" is *not* by itself the reason. Windows support added a variant
+  to the public `schedule::Backend` enum, which breaks any exhaustive match downstream — that
+  is the library API breaking, the documented trigger. It also reversed a declared v1 non-goal,
+  which is milestone-shaped in a way `0.1.26`/`0.1.27` were not: those added a *backend* for a
+  platform already in scope, and were correctly patch bumps. If a future change adds a platform
+  without touching a public type, it is a patch.
+
   Tag `v$VERSION` from a clean `main`; never `cargo publish --allow-dirty`.
 - **Deliberate absences.** No `rustfmt.toml`, `clippy.toml`, `deny.toml`,
   `rust-toolchain.toml`, MSRV declaration, `[lints]` table, `#![deny(...)]` or
@@ -228,9 +236,9 @@ the validator.
 
 ---
 
-## Current State (v0.1.36)
+## Current State (v0.2.0)
 
-**Windows is a fully supported platform as of `0.1.36`**, including scheduling: `schedule`,
+**Windows is a fully supported platform as of `0.2.0`**, including scheduling: `schedule`,
 `unschedule` and `status` drive **Task Scheduler**, the third backend. 344 tests green there (294
 unit + 50 integration, including the three rustic-backed ones against real rustic 0.11.3), and the
 whole loop is verified end to end on a real machine against a throwaway repository.
@@ -462,18 +470,18 @@ Smaller items:
       2026-08-03 as a `rustic prune`; it first fires **Mon 2026-08-10**. M4 is defence in
       depth, not permission — invariant 3 in §3a.
 - [ ] Add a Pre-PR Checklist section to `AGENTS.md` Part 2, mirroring retch's §4
-- [x] **A Task Scheduler backend — done in `0.1.36`**, verified end to end on a real machine.
+- [x] **A Task Scheduler backend — done in `0.2.0`**, verified end to end on a real machine.
       Found and fixed a §7.5 violation no unit test could have caught: a repeating trigger with a
       past boundary runs on registration, so `schedule` took a backup and ran `forget` as a side
       effect. Hourly is 24 plain triggers instead.
-- [x] **A job object with `KILL_ON_JOB_CLOSE` — done in `0.1.36`**, verified by
+- [x] **A job object with `KILL_ON_JOB_CLOSE` — done in `0.2.0`**, verified by
       `TerminateProcess`-ing the parent and confirming the child tree died with it.
-- [x] **`set windows-shell` — done in `0.1.36`.** The shebang recipes need Git's `usr\bin` on
+- [x] **`set windows-shell` — done in `0.2.0`.** The shebang recipes need Git's `usr\bin` on
       PATH, which the Justfile now documents at the top.
-- [x] **The `${env:HOME}` question — decided and done in `0.1.36`**, the way `PLAN.md` §7.9
+- [x] **The `${env:HOME}` question — decided and done in `0.2.0`**, the way `PLAN.md` §7.9
       recommended: the key is commented out in the example, since its default is already that
       path on all three platforms.
-- [ ] **Windows, remaining work after `0.1.36`.** Neither is a gap in the platform's function:
+- [ ] **Windows, remaining work after `0.2.0`.** Neither is a gap in the platform's function:
       1. **Assert byte-for-byte argv delivery in `tests/cli_tests.rs`**, where
          `CARGO_BIN_EXE_rusticprofile` gives a cooperating child. The unit test is Unix-only
          because Windows has no argv; `PLAN.md` §5.10 explains why the guarantee weakens. Note
@@ -488,7 +496,7 @@ Smaller items:
       no longer does. Separate decision, separate repository.
 - [ ] **`just check` does not lint test code** — `cargo clippy` runs without `--all-targets`, so
       every `#[cfg(test)]` module has been unlinted since the scaffold. Adding it found one real
-      lint (`0.1.36`). Not changed in that release because it may surface more across the
+      lint (`0.2.0`). Not changed in that release because it may surface more across the
       codebase, and a gate change deserves its own PR.
 - [x] **Decided and done in `0.1.32`.** The operating rules — `PLAN.md` §7.3, §7.5, §7.6,
       §7.7, §7.8 — are promoted to **§3a** above, which is now where they are maintained.
@@ -511,7 +519,14 @@ and were renumbered in place. No tags existed, so nothing had to be unwound — 
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
 
-### v0.1.36 — Windows builds and runs
+### v0.2.0 — Windows is a supported platform
+
+**A minor bump, and the first since `v0.1.0`.** The trigger is §3's documented one: the public
+`schedule::Backend` enum gained a `TaskScheduler` variant, which breaks an exhaustive match
+downstream. The scale of the change is the secondary argument, not the primary one — `0.1.26` and
+`0.1.27` added the whole launchd backend as patch bumps, correctly, because they touched no public
+type and macOS was already in scope. `status --json`'s `backend` field also gains a third value;
+that alone would not bump the schema, since a consumer ignoring unknown values keeps working.
 
 **A declared v1 non-goal is reversed.** `PLAN.md` §7.9 carries the decision and §5.10 the
 measurements; both were written before the code, per the §5.9 precedent. The short reason: the

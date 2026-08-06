@@ -10,7 +10,7 @@ A local, per-machine scheduler and orchestrator for [rustic](https://rustic.cli.
 
 **Milestones 1, 2, 3 and 5 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — schedule itself with **systemd on Linux, launchd on macOS or Task Scheduler on Windows**, and **report what it has been doing**: a per-run log, a status file recording when each job last *succeeded*, and `--json` for anything automated.
 
-**Linux, macOS and Windows.** `schedule` installs systemd units on Linux, a launchd agent on macOS, or a Task Scheduler task on Windows, and refuses anywhere else rather than writing units nothing will run. One limitation is worth knowing before you rely on it, and it applies to **both macOS and Windows**: a user-level schedule runs only while you are logged on, because neither platform has an equivalent of systemd's `linger`. So a Mac at the login window or a PC at the lock screen takes no backups — nothing fails, and the only evidence is an absence. Watch `last success`, or use `permission: system`. See *What it does not do yet* below, which you should read before pointing several machines at one repository. One macOS limitation is worth knowing before you rely on it: a user LaunchAgent runs **only while you are logged in**, because launchd has no equivalent of systemd's `linger`. See *What it does not do yet* below, which you should read before pointing several machines at one repository.
+**Linux, macOS and Windows.** `schedule` installs systemd units on Linux, a launchd agent on macOS, or a Task Scheduler task on Windows, and refuses anywhere else rather than writing units nothing will run. One limitation is worth knowing before you rely on it, and it applies to **both macOS and Windows**: a user-level schedule runs only while you are logged on, because neither platform has an equivalent of systemd's `linger`. So a Mac at the login window or a PC at the lock screen takes no backups — nothing fails, and the only evidence is an absence. Watch `last success`, or use `permission: system`. See *What it does not do yet* below, which you should read before pointing several machines at one repository.
 
 Today:
 
@@ -60,14 +60,17 @@ These are planned and not written. They are listed here rather than in the secti
 because a backup tool's README is a safety surface, and an aspirational feature list is a
 way to lose data.
 
-- **Backups while nobody is logged in, on macOS.** launchd has no equivalent of systemd's
-  `linger`: a user LaunchAgent runs only inside a login session, so a Mac at the login
-  window takes no backups — nothing fails, and the only evidence is an absence. Watch
-  `last_success`, or use `permission: system` for a LaunchDaemon, which runs regardless of
-  login as root. `schedule` and `status` both state this.
+- **Backups while nobody is logged in, on macOS *or Windows*.** Only systemd has `linger`. A
+  user LaunchAgent runs only inside a login session, and a Windows user task only while you
+  are logged on — so a Mac at the login window or a PC at the lock screen takes no backups.
+  Nothing fails, and the only evidence is an absence. Watch `last_success`, or use
+  `permission: system`, which runs regardless of login as root or SYSTEM. `schedule` and
+  `status` both state this. On Windows, running as *yourself* without a login session would
+  need a stored password or S4U, which relocates the credential problem rather than removing
+  it — so it is deliberately not offered.
 - **A next-fire time on macOS.** launchd does not report one, so `next_run` is `null` there
   and `status` says why. `status --json` names the backend so a monitor can tell "launchd
-  never tells" from "could not read the timer".
+  never tells" from "could not read the timer". Windows and Linux both report a real one.
 - **Repository lock coordination.** `run` takes a local per-job lock so two runs on *one*
   machine cannot overlap. There is **no cross-machine coordination**, and you should read
   the next paragraph before pointing several machines at one repository.
@@ -111,7 +114,7 @@ That is the whole contract. A wrapper that re-specified rustic's options would m
 
 Also out of scope for v1: reading resticprofile config, a `migrate` command, restic as a backend, cron, groups, hooks, metrics, and templating in any form — including a "just one small conditional" escape hatch.
 
-*Windows was on that list until 0.1.36 and is not any more: the machine this project is developed and released from now runs it. `PLAN.md` §7.9 records the reversal, and §5.10 what had to be measured to make it work. `cron` is still out.*
+*Windows was on that list until 0.2.0 and is not any more: the machine this project is developed and released from now runs it. `PLAN.md` §7.9 records the reversal, and §5.10 what had to be measured to make it work. `cron` is still out.*
 
 **Restore is not here either.** Use `rustic restore` directly. Putting a restore path behind a scheduler adds a layer between you and your data at the exact moment you least want one.
 
@@ -174,7 +177,7 @@ Note what is *not* in there: no source paths, no excludes, no retention numbers,
 
 `${state_dir}` is `$XDG_STATE_HOME/rusticprofile` — logs are state, not configuration. Pointing them at `${config_dir}` is also self-defeating if `~/.config` is one of your backup sources: the job then appends to a directory it is busy backing up.
 
-The XDG variables are honoured **on macOS and Windows too**, falling back to `~/.config` and `~/.local/state` rather than `~/Library/Application Support` or `%APPDATA%` (0.1.25+, Windows in 0.1.36+). On Windows note that a path with no drive letter counts as relative, so a rooted-but-driveless `log:` is refused there — and `HOME` is normally unset, so a `jobs.yaml` written around `${env:HOME}` will not load until you set it. That is deliberate, and it follows from the box below: a `jobs.yaml` meant to be byte-identical across a fleet cannot have `${state_dir}` resolve to a different place depending on the operating system reading it.
+The XDG variables are honoured **on macOS and Windows too**, falling back to `~/.config` and `~/.local/state` rather than `~/Library/Application Support` or `%APPDATA%` (0.1.25+, Windows in 0.2.0+). On Windows note that a path with no drive letter counts as relative, so a rooted-but-driveless `log:` is refused there — and `HOME` is normally unset, so a `jobs.yaml` written around `${env:HOME}` will not load until you set it. That is deliberate, and it follows from the box below: a `jobs.yaml` meant to be byte-identical across a fleet cannot have `${state_dir}` resolve to a different place depending on the operating system reading it.
 
 **`default-job` is honoured by `run`, `plan`, `snapshots` and `config --show`** — not by `unschedule`, where removal is always named explicitly, nor by `schedule`, where omitting `-n` already means "every job that declares a schedule".
 
