@@ -8,9 +8,9 @@ A local, per-machine scheduler and orchestrator for [rustic](https://rustic.cli.
 
 ## Status
 
-**Milestones 1, 2, 3 and 5 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — schedule itself with **systemd on Linux or launchd on macOS**, and **report what it has been doing**: a per-run log, a status file recording when each job last *succeeded*, and `--json` for anything automated.
+**Milestones 1, 2, 3 and 5 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — schedule itself with **systemd on Linux, launchd on macOS or Task Scheduler on Windows**, and **report what it has been doing**: a per-run log, a status file recording when each job last *succeeded*, and `--json` for anything automated.
 
-**Linux, macOS and Windows.** `schedule` installs systemd units on Linux and a launchd agent on macOS, and refuses anywhere else rather than writing units nothing will run — **which today includes Windows**, where a native Task Scheduler backend is the next increment. Everything that does not schedule works there: `config`, `plan`, `run`, `snapshots`, and the recorded half of `status`, so a job can be run by hand or driven from a Task Scheduler entry you create yourself. One macOS limitation is worth knowing before you rely on it: a user LaunchAgent runs **only while you are logged in**, because launchd has no equivalent of systemd's `linger`. See *What it does not do yet* below, which you should read before pointing several machines at one repository.
+**Linux, macOS and Windows.** `schedule` installs systemd units on Linux, a launchd agent on macOS, or a Task Scheduler task on Windows, and refuses anywhere else rather than writing units nothing will run. One limitation is worth knowing before you rely on it, and it applies to **both macOS and Windows**: a user-level schedule runs only while you are logged on, because neither platform has an equivalent of systemd's `linger`. So a Mac at the login window or a PC at the lock screen takes no backups — nothing fails, and the only evidence is an absence. Watch `last success`, or use `permission: system`. See *What it does not do yet* below, which you should read before pointing several machines at one repository. One macOS limitation is worth knowing before you rely on it: a user LaunchAgent runs **only while you are logged in**, because launchd has no equivalent of systemd's `linger`. See *What it does not do yet* below, which you should read before pointing several machines at one repository.
 
 Today:
 
@@ -44,7 +44,7 @@ rusticprofile unschedule -n dot-files                # remove the units
 
 rusticprofile owns **when** backups run, **which** jobs exist, and **on which hosts**:
 
-- **systemd** units on Linux, **launchd** agents on macOS — install, remove, status. Windows builds and runs, but has no scheduling backend yet
+- **systemd** units on Linux, **launchd** agents on macOS, **Task Scheduler** tasks on Windows — install, remove, status
 - per-host job gating, so one machine runs the prune job and the others do not
 - operation sequencing within a job (backup, then forget)
 - exit classification, including telling a partial backup apart from a failed one

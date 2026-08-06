@@ -180,7 +180,9 @@ fn fixture(jobs_yaml: &str) -> (tempfile::TempDir, String) {
     )
     .unwrap();
     let jobs = dir.path().join("jobs.yaml");
-    let rendered = jobs_yaml.replace("RUSTIC_DIR", &as_config_path(dir.path()));
+    let rendered = jobs_yaml
+        .replace("RUSTIC_DIR", &as_config_path(dir.path()))
+        .replace("RUSTIC_STANDIN", rustic_standin());
     std::fs::write(&jobs, rendered).unwrap();
     let path = jobs.display().to_string();
     (dir, path)
@@ -1222,23 +1224,24 @@ fn the_emitted_examples_plan_a_real_argv() {
 
 // --- platform guard ----------------------------------------------------------------
 //
-// Only systemd is implemented. Without a guard, `schedule` on macOS writes systemd units
-// into a directory launchd never reads, prints the files it created and exits 0 — which is
-// exactly what a working install looks like. CI runs `cargo test` on macOS, so this test
-// verifies the real behaviour on whichever platform it runs on rather than asserting one.
+// All three backends are implemented now — systemd, launchd and Task Scheduler. The guard still
+// matters for a platform with none: without it, `schedule` would write files into a directory no
+// service manager reads, print what it created and exit 0, which is exactly what a working
+// install looks like. CI runs `cargo test` on Linux, macOS and Windows, so this test verifies the
+// real behaviour on whichever platform it runs on rather than asserting one.
 
 /// Like `GOOD_CONFIG`, but naming a rustic that exists on every runner.
 ///
 /// `schedule` resolves the rustic binary to an absolute path so the generated unit does not
 /// depend on the service manager's `PATH`, and refuses when it cannot — CI has no rustic
-/// installed. `/bin/sh` is present on Linux and macOS alike and is never executed here; only
-/// its existence is checked. Weakening the resolver for tests would remove the guarantee
+/// installed. `RUSTIC_STANDIN` becomes something that certainly exists and is never executed;
+/// only its existence is checked. Weakening the resolver for tests would remove the guarantee
 /// this test is meant to protect.
 const SCHEDULABLE_CONFIG: &str = "
 schema: 1
 defaults:
   rustic-config-dir: RUSTIC_DIR
-  rustic-binary: /bin/sh
+  rustic-binary: RUSTIC_STANDIN
 jobs:
   dot-files:
     profile: p
@@ -1248,6 +1251,19 @@ jobs:
     schedule:
       at: hourly
 ";
+
+/// An executable that certainly exists and is never run — `schedule` resolves the configured
+/// rustic to an absolute path and checks it exists, so the fixture needs a real file.
+///
+/// `/bin/sh` on Unix; on Windows `cmd.exe`, since there is no `/bin`. Weakening the resolver for
+/// tests was rejected when this was introduced (`0.1.10`) and is still rejected: the resolver is
+/// the guarantee the test exists to protect.
+fn rustic_standin() -> &'static str {
+    #[cfg(unix)]
+    return "/bin/sh";
+    #[cfg(windows)]
+    return r"C:\Windows\System32\cmd.exe";
+}
 
 /// What `schedule` should produce on the platform running this test.
 ///
@@ -1262,7 +1278,10 @@ fn schedule_backend_exists() -> bool {
 fn expected_schedule_files() -> Option<usize> {
     if cfg!(target_os = "linux") {
         Some(2)
-    } else if cfg!(target_os = "macos") {
+    } else if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
+        // One launchd agent, or one Task Scheduler definition. Windows joined this list in
+        // `0.1.36`; before that it was the `None` arm, and the `None` arm is still the case that
+        // must never regress on a platform with no backend at all.
         Some(1)
     } else {
         None
@@ -1381,10 +1400,14 @@ fn schedule_writes_a_plist_launchd_would_accept() {
 
 #[test]
 fn rescheduling_reports_no_change_rather_than_moving_the_spread() {
-    // The offset is chosen at schedule time on launchd, so without reuse a second `schedule`
-    // would rewrite an unchanged agent, move this host's slot and report `installed` — and
-    // then `unchanged` would never mean anything. Asserted through the binary because the
-    // reuse happens in the command, not in the generator.
+    // The offset is chosen at schedule time on launchd and Task Scheduler, so without reuse a
+    // second `schedule` would rewrite an unchanged definition, move this host's slot and report
+    // `installed` — and then `unchanged` would never mean anything. Asserted through the binary
+    // because the reuse happens in the command, not in the generator.
+    //
+    // Read as **bytes**, not as text: a Task Scheduler definition is UTF-16LE (`schtasks` rejects
+    // UTF-8), so `read_to_string` fails outright there. Bytes are also the stronger assertion the
+    // comment below already claimed to be making.
     if expected_schedule_files().is_none() {
         return;
     }
@@ -1403,9 +1426,9 @@ fn rescheduling_reports_no_change_rather_than_moving_the_spread() {
     assert_eq!(code, 0, "stderr:\n{stderr}");
     assert!(first.contains("installed:"), "{first}");
 
-    let before: Vec<String> = std::fs::read_dir(&unit_dir)
+    let before: Vec<Vec<u8>> = std::fs::read_dir(&unit_dir)
         .unwrap()
-        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .map(|e| std::fs::read(e.unwrap().path()).unwrap())
         .collect();
 
     let (second, stderr, code) = run_code(&args);
@@ -1415,9 +1438,9 @@ fn rescheduling_reports_no_change_rather_than_moving_the_spread() {
         "re-running must report no change: {second}"
     );
 
-    let after: Vec<String> = std::fs::read_dir(&unit_dir)
+    let after: Vec<Vec<u8>> = std::fs::read_dir(&unit_dir)
         .unwrap()
-        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .map(|e| std::fs::read(e.unwrap().path()).unwrap())
         .collect();
     assert_eq!(before, after, "the files must be byte-identical");
 }
@@ -1433,10 +1456,16 @@ fn status_reports_the_backend_rather_than_failing() {
 
     if cfg!(target_os = "linux") {
         assert!(stdout.contains("systemd"), "stdout:\n{stdout}");
-    } else if cfg!(target_os = "macos") {
-        assert!(stdout.contains("launchd"), "stdout:\n{stdout}");
-        // The one thing a macOS schedule cannot promise has to be visible here, because this
-        // is the command someone runs to ask whether backups are happening.
+    } else if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
+        let backend = if cfg!(target_os = "macos") {
+            "launchd"
+        } else {
+            "taskscheduler"
+        };
+        assert!(stdout.contains(backend), "stdout:\n{stdout}");
+        // The one thing neither a macOS nor a Windows schedule can promise has to be visible
+        // here, because this is the command someone runs to ask whether backups are happening.
+        // Only systemd has `linger`.
         assert!(
             stdout.contains("linger"),
             "the login limitation must be stated: {stdout}"
@@ -1465,6 +1494,8 @@ fn status_json_names_the_backend_so_a_null_next_run_is_explicable() {
         serde_json::json!("systemd")
     } else if cfg!(target_os = "macos") {
         serde_json::json!("launchd")
+    } else if cfg!(target_os = "windows") {
+        serde_json::json!("taskscheduler")
     } else {
         serde_json::Value::Null
     };

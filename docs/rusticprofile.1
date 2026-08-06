@@ -116,7 +116,7 @@ Exit status is \fB0\fP for success or partial, \fB1\fP for failure, \fB130\fP fo
 .PP
 On \fBLinux\fP that means systemd units driven by `\f[CR]systemctl\fP`; on \fBmacOS\fP, a launchd agent driven by `\f[CR]launchctl\fP`\. On a platform with neither, \fBschedule\fP refuses and writes nothing \-\- files on disk plus a success message are indistinguishable from a working install, so refusing is the only honest answer\. \fBstatus\fP reports the backend it found, and `\f[CR]status \-\-json\fP` names it in a `\f[CR]backend\fP` field\.
 .PP
-\fBWindows is such a platform today\.\fP Everything that does not schedule works there \-\- \fBconfig\fP, \fBplan\fP, \fBrun\fP, \fBsnapshots\fP, and the recorded half of \fBstatus\fP \-\- so a job can be run by hand or driven from Task Scheduler configured yourself\. A native Task Scheduler backend is the next increment\. Where there is no backend, \fBstatus\fP still prints each job's `\f[CR]last run\fP` and `\f[CR]last success\fP`, because that record is written by \fBrun\fP and does not come from a service manager; it is the field to watch in any case, since a run that never happens reports nothing at all\.
+On \fBWindows\fP it means one Task Scheduler task under `\f[CR]\rusticprofile\\fP`\fIJOB\fP, driven by `\f[CR]schtasks\fP`\. Where there is no backend at all, \fBstatus\fP still prints each job's `\f[CR]last run\fP` and `\f[CR]last success\fP`, because that record is written by \fBrun\fP and does not come from a service manager; it is the field to watch in any case, since a run that never happens reports nothing\.
 \fB\fB\-n\fP \fIJOB\fP\fP
 .RS
 The job to act on\. Optional for \fBschedule\fP, where omitting it installs every job declaring a `\f[CR]schedule:\fP` block\. Required for \fBunschedule\fP \-\- removal is always named explicitly\.
@@ -139,6 +139,20 @@ Nothing generated contains a \fBlog path or a date\fP\. A unit or agent written 
 A scheduled job is \fBtwo\fP units, `\f[CR]rusticprofile\-\fP`\fIJOB\fP`\f[CR]\.service\fP` and `\f[CR]\.timer\fP`\. systemd offers no way for a timer to run a command directly, so this is not a choice rusticprofile makes\. Only the timer carries an `\f[CR][Install]\fP` section; the service is reported as `\f[CR]static\fP`, meaning it can be started by its timer and not enabled independently \-\- a service that could be enabled on its own would run the backup at every login, with no schedule to explain it\.
 .PP
 The timer sets \fBPersistent=true\fP, so a run missed while the machine was asleep is caught up rather than silently skipped, and \fBRandomizedDelaySec\fP, so several machines sharing one repository do not all wake on the same instant\. Priority is expressed as `\f[CR]Nice=\fP` and `\f[CR]IOSchedulingClass=\fP` in the unit rather than applied in\-process\.
+
+.SS "Task Scheduler (Windows)"
+.PP
+A scheduled job is \fBone\fP task, registered at `\f[CR]\rusticprofile\\fP`\fIJOB\fP rather than written into a directory a service manager reads: `\f[CR]schtasks /Create /XML\fP` copies the definition into the service's own store\. rusticprofile keeps the definition it generated under `\f[CR]$XDG_STATE_HOME/rusticprofile/tasks\fP` as a record, and the service remains the authority on what is actually scheduled\. `\f[CR]permission: system\fP` registers the task under the LocalSystem account instead of your own\.
+.PP
+Three things differ from the Unix backends, each measured rather than assumed:
+.PP
+\fBHourly is twenty\-four triggers, not one repeating trigger\.\fP A repeating trigger whose start boundary lies in the past is treated by Task Scheduler as \fIcurrently due\fP and runs the task the moment it is registered \-\- which would make \fBschedule\fP take a backup, and run retention, as a side effect of scheduling\. Twenty\-four plain daily triggers, one per hour, avoid that while still firing within the hour\.
+.PP
+\fBBoth priorities are written out\.\fP `\f[CR]priority: standard\fP` emits `\f[CR]<Priority>5</Priority>\fP` rather than nothing, because Task Scheduler's own default is 7 \-\- already below normal \-\- so silence would quietly mean "de\-prioritised" here while meaning "leave the default alone" on the other two platforms\.
+.PP
+\fBTwo Task Scheduler defaults are overridden\fP, because both would stop backups without reporting anything: `\f[CR]DisallowStartIfOnBatteries\fP` and `\f[CR]StopIfGoingOnBatteries\fP` are `\f[CR]true\fP` by default, so a laptop on battery would take no backups and unplugging mid\-run would kill one\. `\f[CR]ExecutionTimeLimit\fP` is also cleared, since the default of three days would terminate a long first backup rather than let it finish\.
+.PP
+A user task, like a launchd agent, runs \fBonly while you are logged on\fP \-\- there is no `\f[CR]linger\fP` equivalent\. `\f[CR]permission: system\fP` runs regardless, as SYSTEM; running as yourself without a login session would need a stored password or S4U, which relocates the credential problem rather than removing it\.
 
 .SS "launchd (macOS)"
 .PP

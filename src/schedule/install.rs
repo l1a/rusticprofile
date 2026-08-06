@@ -33,7 +33,7 @@ use crate::config::schedule::{Permission, Schedule};
 
 use super::UnitContext;
 use super::calendar::Offset;
-use super::{launchd, systemd};
+use super::{launchd, schtasks, systemd};
 
 /// What an install did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -396,6 +396,232 @@ pub fn agent_status(job: &Job, permission: Permission, dir: &Path) -> TimerStatu
         enabled: loaded.map(|l| l && !disabled),
         active: loaded,
         next_elapse: None,
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Task Scheduler (Windows)
+//
+// The same three jobs again — write, remove, inspect — against `schtasks.exe`. One structural
+// difference from both Unix backends is worth stating here rather than discovering: on Linux and
+// macOS the *file is the installation*, so writing it into the right directory is most of the
+// work. On Windows the file is only an input. `schtasks /Create /XML` copies the definition into
+// the service's own store, so the file rusticprofile writes is a **record of what was
+// registered**, and the service is the authority on what is actually scheduled.
+//
+// That is why `--unit-dir` still means something here (write the definition and register
+// nothing — an inspection target), and why `task_status` asks the service rather than trusting
+// the file for anything but presence.
+// ---------------------------------------------------------------------------------------
+
+/// What installing a Task Scheduler definition did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledTask {
+    /// The definition rusticprofile wrote — an input to registration and a record of it, not
+    /// the installation itself.
+    pub definition: PathBuf,
+    /// Whether anything on disk actually changed.
+    pub changed: bool,
+    /// The offset this job's runs land on, past its interval's base time.
+    pub offset: Offset,
+}
+
+/// Write the task definition for `job`, creating the directory if needed.
+///
+/// **The file is UTF-16LE with a BOM, and that is not a stylistic choice.** `schtasks /Create
+/// /XML` rejects a UTF-8 definition — the failure is a generic *"The task XML is malformed"*,
+/// which points at the XML rather than at its encoding and is why this is worth a comment
+/// instead of a shrug. The generator declares `encoding="UTF-16"` to match.
+///
+/// Idempotent on the same terms as the other two backends, including reusing an offset already
+/// present so re-scheduling neither moves this host's slot nor reports a spurious change.
+pub fn write_task(
+    job: &Job,
+    schedule: &Schedule,
+    ctx: &UnitContext,
+    dir: &Path,
+    arbitrary: u64,
+) -> io::Result<InstalledTask> {
+    fs::create_dir_all(dir)?;
+    let definition = dir.join(schtasks::task_file_name(&job.name));
+
+    // The registered task is the authority on the current offset; the file on disk is only a
+    // record and may have been left behind by an earlier version. Fall back to it, then to a
+    // fresh choice.
+    let offset = query_task_xml(&job.name)
+        .and_then(|xml| schtasks::installed_offset(&xml, schedule.at))
+        .or_else(|| {
+            read_utf16(&definition)
+                .ok()
+                .and_then(|existing| schtasks::installed_offset(&existing, schedule.at))
+        })
+        .unwrap_or_else(|| Offset::within(schedule.at, arbitrary));
+
+    let xml = schtasks::task_xml(job, schedule, offset, ctx);
+    let changed = write_utf16_if_changed(&definition, &xml)?;
+
+    Ok(InstalledTask {
+        definition,
+        changed,
+        offset,
+    })
+}
+
+/// Encode `contents` as UTF-16LE with a BOM.
+fn utf16le_with_bom(contents: &str) -> Vec<u8> {
+    let mut bytes = vec![0xFF, 0xFE];
+    for unit in contents.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
+}
+
+/// Read a UTF-16LE file back to a `String`, tolerating a BOM.
+fn read_utf16(path: &Path) -> io::Result<String> {
+    let bytes = fs::read(path)?;
+    let body = bytes.strip_prefix(&[0xFF, 0xFE]).unwrap_or(&bytes);
+    let units: Vec<u16> = body
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16(&units).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// Write UTF-16LE only if the decoded contents differ, so timestamps stay meaningful.
+fn write_utf16_if_changed(path: &Path, contents: &str) -> io::Result<bool> {
+    if let Ok(existing) = read_utf16(path)
+        && existing == contents
+    {
+        return Ok(false);
+    }
+    fs::write(path, utf16le_with_bom(contents))?;
+    Ok(true)
+}
+
+/// Remove the task definition file for `job`. Returns the paths that existed and were deleted.
+///
+/// **Deleting the file does not unschedule anything** — the registration lives in the service.
+/// [`delete_task`] is what removes the schedule; this only cleans up the record, and it is
+/// separate for the same reason writing is separate from arming everywhere else in this module.
+pub fn remove_task_definition(job_name: &str, dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let path = dir.join(schtasks::task_file_name(job_name));
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(vec![path]),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Run `schtasks` and return (success, trimmed stdout).
+///
+/// Stdout is captured for the same reason as `systemctl`'s: the query forms answer through it and
+/// exit non-zero for ordinary states — a task that is simply not registered is a fact, not a
+/// failure, so the exit code alone must not be read as an error.
+pub fn schtasks_run(args: &[&str]) -> io::Result<(bool, String)> {
+    let output = Command::new("schtasks.exe").args(args).output()?;
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
+}
+
+/// Register a job's task from a definition file, replacing any existing registration.
+///
+/// `/F` is what makes re-scheduling work: without it `schtasks` refuses when the task already
+/// exists, and `schedule` would have to delete first — a window in which the job is not
+/// scheduled at all. Replacing in one step has no such window.
+pub fn register_task(job_name: &str, definition: &Path) -> io::Result<(bool, String)> {
+    schtasks_run(&[
+        "/Create",
+        "/TN",
+        &schtasks::task_name(job_name),
+        "/XML",
+        &definition.to_string_lossy(),
+        "/F",
+    ])
+}
+
+/// Remove a job's task from the service.
+///
+/// Not an error when it was never registered: `unschedule` describes an end state, and that end
+/// state is reached either way — the same rule the other two backends follow.
+pub fn delete_task(job_name: &str) -> io::Result<(bool, String)> {
+    schtasks_run(&["/Delete", "/TN", &schtasks::task_name(job_name), "/F"])
+}
+
+/// The registered definition for a job, as the service holds it.
+///
+/// `None` when the task is not registered or cannot be read — which is what makes it usable as
+/// the idempotence source in [`write_task`] without a separate existence check.
+pub fn query_task_xml(job_name: &str) -> Option<String> {
+    schtasks_run(&["/Query", "/TN", &schtasks::task_name(job_name), "/XML"])
+        .ok()
+        .filter(|(ok, _)| *ok)
+        .map(|(_, out)| out)
+}
+
+/// Inspect one job's task, in the shape [`TimerStatus`] already describes.
+///
+/// **Reuses the systemd status type**, like [`agent_status`], because it is what `status --json`
+/// emits and a monitor written against one platform should not break on another. The mapping:
+///
+/// | field | Task Scheduler meaning |
+/// |---|---|
+/// | `units_present` | the definition file rusticprofile wrote is on disk |
+/// | `enabled` | the registered task's `Scheduled Task State` is `Enabled` |
+/// | `active` | the task is registered and its status is not `Disabled` |
+/// | `next_elapse` | **a real value** — `Next Run Time`, which launchd never reports |
+///
+/// That last row is the one place this backend is better than launchd rather than merely
+/// different, so `status` shows a genuine next fire time on Windows.
+pub fn task_status(job: &Job, _permission: Permission, dir: &Path) -> TimerStatus {
+    let units_present = dir.join(schtasks::task_file_name(&job.name)).exists();
+
+    let query = schtasks_run(&[
+        "/Query",
+        "/TN",
+        &schtasks::task_name(&job.name),
+        "/FO",
+        "LIST",
+        "/V",
+    ])
+    .ok()
+    .filter(|(ok, _)| *ok)
+    .map(|(_, out)| out);
+
+    let Some(text) = query else {
+        // Not registered, or `schtasks` could not be run. `None` rather than `Some(false)` for
+        // the tri-state fields: "could not tell" and "not enabled" are different answers.
+        return TimerStatus {
+            job: job.name.clone(),
+            units_present,
+            enabled: None,
+            active: None,
+            next_elapse: None,
+        };
+    };
+
+    let field = |name: &str| -> Option<String> {
+        text.lines()
+            .find_map(|line| line.split_once(':').filter(|(k, _)| k.trim() == name))
+            .map(|(_, v)| v.trim().to_string())
+    };
+
+    let state = field("Scheduled Task State");
+    let status = field("Status");
+
+    // `Next Run Time` is `N/A` for a task that is disabled or has no future run. Reporting that
+    // string as a time would be worse than reporting nothing, since `status` prints it verbatim.
+    let next_elapse = field("Next Run Time").filter(|v| {
+        !v.is_empty() && !v.eq_ignore_ascii_case("N/A") && !v.eq_ignore_ascii_case("Disabled")
+    });
+
+    TimerStatus {
+        job: job.name.clone(),
+        units_present,
+        enabled: state.map(|s| s.eq_ignore_ascii_case("Enabled")),
+        active: status.map(|s| !s.eq_ignore_ascii_case("Disabled")),
+        next_elapse,
     }
 }
 

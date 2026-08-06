@@ -1024,6 +1024,39 @@ cooperating child.
 The architectural conclusion does not change — a shell would be worse on Windows too, and there
 is still no quoting logic in this crate — only the strength of the claim.
 
+### A repeating trigger with a past boundary runs the moment it is registered
+
+Found by registering a real task and reading `Last Run Time` back, not by reading the schema —
+and it is the finding that would have shipped a §7.5 violation. The obvious way to say "every
+hour" is a daily `<CalendarTrigger>` with `<Repetition><Interval>PT1H</Interval></Repetition>`.
+With a `StartBoundary` in the past, **Task Scheduler treats that as currently due and runs the
+task immediately.** For this tool that means `schedule` takes a backup *and runs `forget`* as a
+side effect of scheduling — exactly what launchd's absent `RunAtLoad` exists to prevent.
+
+Measured on Windows 11, `Last Run Time` read seconds after registering:
+
+| trigger | ran on registration? | next fire |
+|---|---|---|
+| past boundary + `<Repetition>` | **yes, immediately** | next hour |
+| past boundary, no repetition | no — never ran | tomorrow |
+| future boundary + `<Repetition>` | no | **tomorrow** — loses hourly for a day |
+| **24 × past boundary, one per hour, no repetition** | **no** | **the next hour** |
+
+`StartWhenAvailable` was the first suspect and is **not** the cause: with it set to `false` the
+task still ran on registration. Worth recording, because it is the setting that *sounds*
+responsible and disabling it would have cost the `Persistent=true` equivalent for nothing.
+
+So hourly is emitted as **24 plain daily triggers**, one per hour, all sharing the fixed
+boundary date. It is the only construction that gets all three properties at once: no run at
+registration, a correct next fire time inside the hour, and a boundary that never changes — so
+generation stays pure, needs no clock, and re-scheduling is byte-identical.
+
+Verified end to end afterwards, on this machine, against a throwaway local repository:
+`schedule` → `last run: never`, `0 snapshots`, next fire at the next hour; **three** successive
+`schedule` runs → still `0 snapshots`, reporting `installed` then `unchanged` twice; a manual
+`schtasks /Run` → one snapshot written, `status` reporting `last success`; `unschedule` → task
+gone and definition removed.
+
 ### The gate is one PATH entry away from working — not a rewrite
 
 Not a code problem, but it decides whether the house workflow survives on this machine. With the

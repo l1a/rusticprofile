@@ -293,6 +293,13 @@ fn resolve_unit_dir(
         match backend {
             Backend::Systemd => systemd::unit_dir(permission, &home),
             Backend::Launchd => launchd::agent_dir(permission, &home),
+            // Not a directory a service manager reads — Windows registrations live inside the
+            // Task Scheduler service, and this only holds the definition rusticprofile wrote.
+            // So it belongs under the state directory rather than beside units and agents, and
+            // it honours `$XDG_STATE_HOME` for the same reason everything else does.
+            Backend::TaskScheduler => rusticprofile::config::paths::user_state_dir()
+                .unwrap_or_else(|_| home.join(".local/state/rusticprofile"))
+                .join("tasks"),
         }
     })
 }
@@ -445,6 +452,12 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
                 install::write_agent(job, &schedule, &ctx, &dir, install::arbitrary_offset_seed())
                     .map(|done| (done.changed, Some(done.offset)))
             }
+            // One definition, like launchd's one agent — but writing it installs nothing. The
+            // registration happens when the task is armed below.
+            Backend::TaskScheduler => {
+                install::write_task(job, &schedule, &ctx, &dir, install::arbitrary_offset_seed())
+                    .map(|done| (done.changed, Some(done.offset)))
+            }
         };
 
         match written {
@@ -512,6 +525,11 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
                 .unwrap_or(Permission::User);
             let (verb, armed) = match backend {
                 Backend::Systemd => ("enabled", install::enable_timer(&job.name, permission)),
+                Backend::TaskScheduler => {
+                    let dir = resolve_unit_dir(None, permission, backend);
+                    let definition = dir.join(schedule::schtasks::task_file_name(&job.name));
+                    ("registered", install::register_task(&job.name, &definition))
+                }
                 Backend::Launchd => {
                     let dir = resolve_unit_dir(None, permission, backend);
                     let plist = dir.join(schedule::launchd::plist_name(&job.name));
@@ -548,12 +566,8 @@ fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
         // agent runs only while somebody is logged in. A schedule that quietly does nothing
         // while a Mac sits at the login window is exactly the silent non-event this project
         // exists to surface.
-        if backend == Backend::Launchd {
-            println!(
-                "  {} {}",
-                "note:".yellow().bold(),
-                schedule::launchd_login_caveat()
-            );
+        if let Some(caveat) = schedule::login_caveat(backend) {
+            println!("  {} {}", "note:".yellow().bold(), caveat);
         }
     } else {
         println!(
@@ -598,12 +612,18 @@ fn unschedule_job(args: &UnscheduleArgs) -> ExitCode {
             Backend::Launchd => {
                 let _ = install::bootout_agent(&args.name, permission);
             }
+            // Deleting the registration is the disarm *and* the uninstall here: the schedule
+            // lives in the service, not in the file removed below.
+            Backend::TaskScheduler => {
+                let _ = install::delete_task(&args.name);
+            }
         }
     }
 
     let removed = match backend {
         Backend::Systemd => install::remove_units(&args.name, &dir),
         Backend::Launchd => install::remove_agent(&args.name, &dir),
+        Backend::TaskScheduler => install::remove_task_definition(&args.name, &dir),
     };
 
     match removed {
@@ -753,6 +773,7 @@ fn show_status(args: &StatusArgs) -> ExitCode {
         let st = match backend {
             Backend::Systemd => install::timer_status(job, permission, &dir),
             Backend::Launchd => install::agent_status(job, permission, &dir),
+            Backend::TaskScheduler => install::task_status(job, permission, &dir),
         };
 
         let state = match (
@@ -798,13 +819,9 @@ fn show_status(args: &StatusArgs) -> ExitCode {
     // Repeated here as well as at `schedule` time, because this is the command someone runs
     // when they are wondering whether backups are happening — and "only while you are logged
     // in" is the answer they need in front of them at that moment.
-    if backend == Backend::Launchd {
+    if let Some(caveat) = schedule::login_caveat(backend) {
         println!();
-        println!(
-            "  {} {}",
-            "note:".yellow().bold(),
-            schedule::launchd_login_caveat()
-        );
+        println!("  {} {}", "note:".yellow().bold(), caveat);
     }
 
     ExitCode::SUCCESS
@@ -1024,6 +1041,11 @@ fn status_as_json(config: &Config, args: &StatusArgs) -> ExitCode {
                 Some(Backend::Launchd) => {
                     let dir = resolve_unit_dir(args.unit_dir.clone(), permission, Backend::Launchd);
                     install::agent_status(job, permission, &dir)
+                }
+                Some(Backend::TaskScheduler) => {
+                    let dir =
+                        resolve_unit_dir(args.unit_dir.clone(), permission, Backend::TaskScheduler);
+                    install::task_status(job, permission, &dir)
                 }
                 None => install::TimerStatus {
                     job: job.name.clone(),

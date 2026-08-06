@@ -63,7 +63,13 @@ use anyhow::{Context, Result};
 fn xdg_dir(configured: Option<&OsStr>, home: &Path, fallback: &str) -> PathBuf {
     match configured {
         Some(value) if Path::new(value).is_absolute() => PathBuf::from(value),
-        _ => home.join(fallback),
+        // Joined component by component rather than as one `".local/state"` string. Both work —
+        // Windows accepts `/` in every path API — but a single join produces
+        // `C:\Users\u\.local/state`, which is what the tool then *prints* in its own output. A
+        // path that looks malformed invites someone to "fix" a path that is not broken.
+        _ => fallback
+            .split('/')
+            .fold(home.to_path_buf(), |path, part| path.join(part)),
     }
 }
 
@@ -175,6 +181,28 @@ mod tests {
         // depend on where launchd or systemd started it.
         let dir = xdg_dir(Some(OsStr::new("config")), Path::new("/home/u"), ".config");
         assert_eq!(dir, PathBuf::from("/home/u/.config"));
+    }
+
+    #[test]
+    fn the_fallback_uses_this_platforms_separator_throughout() {
+        // Not cosmetic-only: this path is printed by `schedule` and `status`, and a displayed
+        // `C:\Users\u\.local/state` reads as a bug in the tool.
+        let dir = xdg_dir(None, Path::new("/home/u"), ".local/state");
+        assert_eq!(dir, PathBuf::from("/home/u").join(".local").join("state"));
+
+        // Asserted from a platform-shaped home, so the only separators under test are the ones
+        // this function introduced — an earlier version of this test used a Unix home on Windows
+        // and failed on slashes that came straight from its own input.
+        #[cfg(windows)]
+        {
+            let dir = xdg_dir(None, Path::new(r"C:\Users\u"), ".local/state");
+            assert_eq!(dir, PathBuf::from(r"C:\Users\u\.local\state"));
+            assert!(
+                !dir.display().to_string().contains('/'),
+                "no forward slash may survive on Windows: {}",
+                dir.display()
+            );
+        }
     }
 
     #[test]

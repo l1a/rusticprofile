@@ -230,11 +230,13 @@ the validator.
 
 ## Current State (v0.1.36)
 
-**Windows builds and runs as of `0.1.36`** — 323 tests green there (273 unit + 50 integration,
-including the three rustic-backed ones against real rustic 0.11.3 on Windows). `schedule`,
-`unschedule` and the scheduling half of `status` still refuse: Task Scheduler is the next
-increment. Windows was a declared v1 non-goal until 2026-08-06; `PLAN.md` §7.9 records the
-reversal and §5.10 the measurements.
+**Windows is a fully supported platform as of `0.1.36`**, including scheduling: `schedule`,
+`unschedule` and `status` drive **Task Scheduler**, the third backend. 344 tests green there (294
+unit + 50 integration, including the three rustic-backed ones against real rustic 0.11.3), and the
+whole loop is verified end to end on a real machine against a throwaway repository.
+
+Windows was a declared v1 non-goal until 2026-08-06; `PLAN.md` §7.9 records the reversal and §5.10
+the measurements. **`M4` (repository lock coordination) is still the only unbuilt milestone.**
 
 
 **Milestone 1 is COMPLETE** — all seven steps, v0.0.1 through v0.0.7.
@@ -460,25 +462,26 @@ Smaller items:
       2026-08-03 as a `rustic prune`; it first fires **Mon 2026-08-10**. M4 is defence in
       depth, not permission — invariant 3 in §3a.
 - [ ] Add a Pre-PR Checklist section to `AGENTS.md` Part 2, mirroring retch's §4
+- [x] **A Task Scheduler backend — done in `0.1.36`**, verified end to end on a real machine.
+      Found and fixed a §7.5 violation no unit test could have caught: a repeating trigger with a
+      past boundary runs on registration, so `schedule` took a backup and ran `forget` as a side
+      effect. Hourly is 24 plain triggers instead.
 - [ ] **Windows, remaining work after `0.1.36`.** In the order it should land:
-      1. **A Task Scheduler backend** — a third `Backend`, one XML task per job. The vocabulary
-         maps better than launchd's did: `StartWhenAvailable` is `Persistent=true`, `RandomDelay`
-         is `RandomizedDelaySec`, and unlike launchd it **does** report a next fire time, so
-         `next_run` carries real data there. Two things are genuinely harder — `priority` maps
-         only approximately onto a task priority plus `BELOW_NORMAL`, and running with nobody
-         logged on needs stored credentials, which is the analogue of the missing `linger` and
-         worse because a password has to live somewhere. `schtasks /xml` wants **UTF-16**, and the
-         `0.1.26` plist-escaping lesson applies unchanged to task XML.
-      2. **A job object with `KILL_ON_JOB_CLOSE`**, so stopping a scheduled task cannot orphan
-         rustic. Only reachable from a scheduled run — see `PLAN.md` §7.9.
-      3. **`set windows-shell`**, so the non-shebang recipes stop depending on which `sh` is
+      1. **A job object with `KILL_ON_JOB_CLOSE`**, so stopping a scheduled task cannot orphan
+         rustic. Only reachable from a scheduled run — see `PLAN.md` §7.9. This is the one
+         genuinely unfinished mechanism on the platform.
+      2. **`set windows-shell`**, so the non-shebang recipes stop depending on which `sh` is
          first on PATH. The gate itself already works with Git's `usr\bin` prepended (`just
          check` and `just man` verified), and CI covers the platform as of `0.1.36`.
-      4. **Assert byte-for-byte argv delivery in `tests/cli_tests.rs`**, where
+      3. **Assert byte-for-byte argv delivery in `tests/cli_tests.rs`**, where
          `CARGO_BIN_EXE_rusticprofile` gives a cooperating child. The unit test is Unix-only
          because Windows has no argv; `PLAN.md` §5.10 explains why the guarantee weakens.
-      5. **Decide the `${env:HOME}` question** in the shipped example — `PLAN.md` §7.9 has both
-         options and a recommendation.
+      4. **Decide the `${env:HOME}` question** in the shipped example — `PLAN.md` §7.9 has both
+         options and a recommendation. Until then a Windows host needs `HOME` set to load the
+         fleet's `jobs.yaml`.
+      5. **Consider `permission: system` verification.** The SYSTEM principal is generated and
+         unit-tested but has never been registered and run; it is the answer to the login caveat,
+         so it is the half of the platform still resting on reasoning rather than measurement.
 - [ ] **`just check` does not lint test code** — `cargo clippy` runs without `--all-targets`, so
       every `#[cfg(test)]` module has been unlinted since the scaffold. Adding it found one real
       lint (`0.1.36`). Not changed in that release because it may surface more across the
@@ -512,11 +515,79 @@ development machine was reinstalled from Fedora to Windows, so the platform with
 the platform the work is done on and releases are cut from. `crond` and restic-as-a-backend remain
 non-goals.
 
-**Scheduling still refuses on Windows**, and deliberately — `current_backend()` returns `None`, so
-`schedule` writes nothing rather than writing files no service manager reads. Task Scheduler is the
-next increment.
-
 `nix` moves under `[target.'cfg(unix)'.dependencies]`; `windows-sys` is added for exactly one call.
+
+#### Task Scheduler is the third backend
+
+`schedule`, `unschedule` and `status` work on Windows. `Backend` gains `TaskScheduler`, and
+`schedule/schtasks.rs` generates one task definition per job as a **pure function**, exactly as
+`systemd.rs` and `launchd.rs` do — nothing written, `schtasks.exe` never consulted, so a definition
+can be read before it exists anywhere.
+
+**It maps onto systemd better than launchd did**, which was a pleasant surprise: `StartWhenAvailable`
+*is* `Persistent=true`, `RandomDelay` *is* `RandomizedDelaySec=`, and unlike launchd **a real next
+fire time is reported** — so `status` shows a genuine `next run` on Windows and `status --json` a
+non-null `next_run`.
+
+**Verified end to end on a real machine**, not asserted from unit tests: a throwaway local rustic
+repository, a real task registered under `\rusticprofile\win-verify`, `schtasks /Run`, one snapshot
+in the repository, `status` reading `last success`, then `unschedule` removing both the registration
+and the definition and a repeat being a no-op. Nothing touched the shared repository.
+
+##### The bug that end-to-end verification caught, and unit tests could not
+
+**`schedule` took a backup — and ran `forget` — as a side effect of scheduling.** The obvious way to
+express "every hour" is a daily trigger with `<Repetition><Interval>PT1H</Interval></Repetition>`,
+and with a `StartBoundary` in the past Task Scheduler treats that as *currently due* and runs it
+immediately. That is exactly what launchd's absent `RunAtLoad` exists to prevent (§7.5: do not add a
+writer to a shared repository as a side effect), and no assertion about the generated XML would ever
+have noticed — the file was correct, the platform's reading of it was not.
+
+`StartWhenAvailable` was the first suspect and is **not** the cause: with it `false`, the task still
+ran on registration. Worth recording, because it is the setting that sounds responsible, and
+disabling it would have cost the `Persistent=true` equivalent for nothing.
+
+**Hourly is now 24 plain daily triggers**, one per hour, sharing the fixed boundary date — the only
+construction measured to get all three properties at once: no run at registration, a correct next
+fire time *within the hour* (a future boundary pushes it to tomorrow), and an unchanging boundary so
+generation stays pure and re-scheduling is byte-identical. Measurements in `PLAN.md` §5.10.
+
+Re-verified afterwards: `schedule` three times in a row against a fresh repository leaves **zero**
+snapshots and reports `installed`, `unchanged`, `unchanged`.
+
+##### Three deliberate departures from the other two backends
+
+- **Both priorities are emitted, breaking the "Standard emits nothing" convention.** On systemd and
+  launchd, omitting `Nice=`/`ProcessType` leaves a neutral default alone. **Task Scheduler's default
+  priority is 7 — already below normal** — so silence would not mean "normal", it would mean
+  "de-prioritised", and `Priority::Standard` would quietly stop meaning what it means elsewhere. So
+  `Standard` is 5 and `Background` is 7.
+- **Two defaults are overridden because they would stop backups silently.**
+  `DisallowStartIfOnBatteries` and `StopIfGoingOnBatteries` both default to **true**, so out of the
+  box a laptop on battery takes no backups and unplugging mid-run kills one — nothing failing,
+  nothing reported. Both are set `false`, and `ExecutionTimeLimit` is `PT0S` because the default of
+  three days would terminate a long first backup rather than report it.
+- **The definition file is UTF-16LE with a BOM.** `schtasks /Create /XML` rejects UTF-8 with a
+  generic *"The task XML is malformed"*, which points at the XML rather than its encoding.
+
+##### The one place this crate composes a command line
+
+`<Arguments>` is a single string, because Windows has no argv — so `schtasks.rs` has the only
+argument-quoting code in the project, implementing the MSVCRT rules (`2n+1` backslashes before an
+embedded quote, `2n` at the end). Two things make that safe rather than merely tolerable: **the
+child is our own binary**, so the parser on the other side is known, and `<Exec>` is `CreateProcess`
+rather than `cmd /c`, so no shell expands anything. A trailing-backslash bug here would silently
+merge two arguments — for `--config` that means a scheduled run reading a different file than the one
+`schedule` validated.
+
+##### Also here
+
+`login_caveat(backend)` replaces the pair of `if backend == Launchd` checks: **two of the three
+backends cannot run a user's job with nobody logged on**, and a third backend arriving is exactly
+when a caller forgets one. systemd's `linger` remains the only answer to it. On Windows the way out
+is worse than on macOS and says so — `permission: system` runs as SYSTEM, and running as yourself
+without a login session needs a stored password or S4U, which relocates the credential problem
+rather than solving it.
 
 #### The finding that mattered: `%COMPUTERNAME%` is not the hostname
 
