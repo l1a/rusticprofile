@@ -471,9 +471,9 @@ Smaller items:
          `0.1.26` plist-escaping lesson applies unchanged to task XML.
       2. **A job object with `KILL_ON_JOB_CLOSE`**, so stopping a scheduled task cannot orphan
          rustic. Only reachable from a scheduled run — see `PLAN.md` §7.9.
-      3. **`set windows-shell` plus a `windows-latest` CI leg.** The gate itself already works
-         with Git's `usr\bin` on PATH (`just check` and `just man` verified); this is about not
-         depending on which `sh` is first, and on CI running the platform at all.
+      3. **`set windows-shell`**, so the non-shebang recipes stop depending on which `sh` is
+         first on PATH. The gate itself already works with Git's `usr\bin` prepended (`just
+         check` and `just man` verified), and CI covers the platform as of `0.1.36`.
       4. **Assert byte-for-byte argv delivery in `tests/cli_tests.rs`**, where
          `CARGO_BIN_EXE_rusticprofile` gives a cooperating child. The unit test is Unix-only
          because Windows has no argv; `PLAN.md` §5.10 explains why the guarantee weakens.
@@ -598,8 +598,28 @@ including `golden-is-current`, which `check` depends on.
 directory prepended, `just check` (including the golden staleness gate) and `just man` were both
 run green on this machine — so the Justfile needs no rewrite and the recipes are not the problem.
 `set windows-shell` is still worth adding so the non-shebang recipes do not depend on which `sh`
-happens to be first on PATH; that lands with the Task Scheduler increment, along with a
-`windows-latest` CI leg.
+happens to be first on PATH; that lands with the Task Scheduler increment.
+
+#### CI builds and tests on Windows, at pull-request time
+
+**`windows-latest` is in all three matrices** — `build`, `full-test` and `build-release` — and a
+release now ships `rusticprofile-windows-x86_64.exe` alongside the other three binaries.
+
+This was very nearly deferred to "the increment after", and deferring it would have been the
+`v0.1.21` failure restated: Windows support verified on exactly one developer's machine, green
+everywhere CI actually ran, and never run where it ships. The Windows leg is also the only one that
+can reach the `share_mode(0)` lock, `GetComputerNameExW`, and the `cfg(not(unix))` branches of
+`exec` and `main` — no Unix runner exercises a line of it.
+
+The stale comment that stood at the top of the `build` job — *"Windows is absent from every matrix
+here on purpose … adding a Windows runner would only prove the crate compiles somewhere it is not
+meant to run"* — is replaced rather than deleted, since it read as a settled decision and would
+have been quoted as one.
+
+One step needed `shell: bash` to be honest on Windows: the smoke test's `> /dev/null` would, under
+the runner's default PowerShell, create a *file* named `dev\null` rather than discard output — so
+it would either fail on the missing directory or quietly leave a file behind, and in neither case
+be the smoke test it claims to be.
 
 *Stated this way deliberately: the first draft of this entry said the gate was "unavailable on this
 machine", which was true of the default environment and false of the machine. A tool that is one
