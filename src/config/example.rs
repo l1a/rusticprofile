@@ -106,7 +106,16 @@ defaults:
   # <this dir>/dot-files.toml, and rusticprofile passes it to rustic as an absolute path:
   # a bare profile name would make rustic search its own paths, which need not include the
   # directory that was just validated.
-  rustic-config-dir: "${env:HOME}/.config/rustic"
+  #
+  # Commented out because the DEFAULT IS ALREADY THIS: $XDG_CONFIG_HOME/rustic, or
+  # ~/.config/rustic — on Linux, macOS and Windows alike. Set it only if your profiles live
+  # somewhere else.
+  #
+  # It used to read "${env:HOME}/.config/rustic", which is the same path spelled less portably.
+  # HOME is normally unset on Windows, so this line made the shipped example itself fail to load
+  # there with an unset-variable error. `${env:…}` is for values only the environment knows; a
+  # path this tool already resolves is not one of them.
+  # rustic-config-dir: /home/user/.config/rustic
 
 jobs:
   # A backup followed by retention. This is the ordinary shape.

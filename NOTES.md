@@ -466,22 +466,26 @@ Smaller items:
       Found and fixed a §7.5 violation no unit test could have caught: a repeating trigger with a
       past boundary runs on registration, so `schedule` took a backup and ran `forget` as a side
       effect. Hourly is 24 plain triggers instead.
-- [ ] **Windows, remaining work after `0.1.36`.** In the order it should land:
-      1. **A job object with `KILL_ON_JOB_CLOSE`**, so stopping a scheduled task cannot orphan
-         rustic. Only reachable from a scheduled run — see `PLAN.md` §7.9. This is the one
-         genuinely unfinished mechanism on the platform.
-      2. **`set windows-shell`**, so the non-shebang recipes stop depending on which `sh` is
-         first on PATH. The gate itself already works with Git's `usr\bin` prepended (`just
-         check` and `just man` verified), and CI covers the platform as of `0.1.36`.
-      3. **Assert byte-for-byte argv delivery in `tests/cli_tests.rs`**, where
+- [x] **A job object with `KILL_ON_JOB_CLOSE` — done in `0.1.36`**, verified by
+      `TerminateProcess`-ing the parent and confirming the child tree died with it.
+- [x] **`set windows-shell` — done in `0.1.36`.** The shebang recipes need Git's `usr\bin` on
+      PATH, which the Justfile now documents at the top.
+- [x] **The `${env:HOME}` question — decided and done in `0.1.36`**, the way `PLAN.md` §7.9
+      recommended: the key is commented out in the example, since its default is already that
+      path on all three platforms.
+- [ ] **Windows, remaining work after `0.1.36`.** Neither is a gap in the platform's function:
+      1. **Assert byte-for-byte argv delivery in `tests/cli_tests.rs`**, where
          `CARGO_BIN_EXE_rusticprofile` gives a cooperating child. The unit test is Unix-only
-         because Windows has no argv; `PLAN.md` §5.10 explains why the guarantee weakens.
-      4. **Decide the `${env:HOME}` question** in the shipped example — `PLAN.md` §7.9 has both
-         options and a recommendation. Until then a Windows host needs `HOME` set to load the
-         fleet's `jobs.yaml`.
-      5. **Consider `permission: system` verification.** The SYSTEM principal is generated and
-         unit-tested but has never been registered and run; it is the answer to the login caveat,
-         so it is the half of the platform still resting on reasoning rather than measurement.
+         because Windows has no argv; `PLAN.md` §5.10 explains why the guarantee weakens. Note
+         `schtasks.rs`'s `quote_argument` *is* unit-tested against the MSVCRT rules, so what is
+         missing is the round trip through a real process rather than the rules themselves.
+      2. **`permission: system` has never been registered and run.** The SYSTEM principal is
+         generated and unit-tested, and it is the answer to the login caveat — so it is the one
+         part of the platform still resting on reasoning rather than measurement. It needs an
+         elevated shell.
+- [ ] **The fleet's own `jobs.yaml` still uses `${env:HOME}`** (chezmoi-managed, not in this
+      repo), so a Windows host needs `HOME` set until that file changes too. The shipped example
+      no longer does. Separate decision, separate repository.
 - [ ] **`just check` does not lint test code** — `cargo clippy` runs without `--all-targets`, so
       every `#[cfg(test)]` module has been unlinted since the scaffold. Adding it found one real
       lint (`0.1.36`). Not changed in that release because it may surface more across the
@@ -579,6 +583,44 @@ child is our own binary**, so the parser on the other side is known, and `<Exec>
 rather than `cmd /c`, so no shell expands anything. A trailing-backslash bug here would silently
 merge two arguments — for `--config` that means a scheduled run reading a different file than the one
 `schedule` validated.
+
+##### A job object closes the last unfinished mechanism
+
+Windows has no signal to forward, and the interactive case needs none — the console delivers
+`Ctrl+C` to every process on it. The case that needed closing is a **scheduled** run: Task
+Scheduler's "End" terminates only the process it started, so stopping a job would leave rustic
+running against the repository with nothing supervising it.
+
+The child is now put in a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the *kernel*
+terminates it when the last handle closes — on a normal return, on a panic, and on this process
+being killed outright, which no in-process handler could ever cover.
+
+**Verified the harshest way available:** `Stop-Process -Force` (i.e. `TerminateProcess`) on
+`rusticprofile.exe` while a stand-in rustic slept, and both the shim and its grandchild were gone
+afterwards. A failure to create or assign the job warns on stderr rather than failing the run —
+the same rule a failed log write follows — because the guarantee's absence is otherwise invisible
+until the day something is stopped mid-backup.
+
+##### The shipped example no longer depends on `HOME`
+
+`config --example jobs` set `rustic-config-dir: "${env:HOME}/.config/rustic"`, and `HOME` is
+normally unset on Windows — so **the shipped example itself failed to load there**. The key is now
+commented out, because its default is already that exact path on all three platforms; it was the
+same path spelled less portably. `${env:…}` is for values only the environment knows.
+
+Verified with `HOME` genuinely unset: `config --check` against the emitted example exits 0. The
+`${env:HOME}` text that remains in the file is inside a *comment*, which is harmless precisely
+because of the load order — YAML is parsed before anything is interpolated, so a comment cannot
+contribute a variable. That order was chosen to make the predecessor's two templating traps
+impossible, and this is it paying off in a third way.
+
+##### `just` runs on Windows
+
+`set windows-shell := ["bash", "-cu"]`, so non-shebang recipes stop depending on which `sh` is
+first on PATH. The shebang recipes need one setup step rather than a change — Git for Windows
+ships `bash`, `sha256sum`, `date`, `install`, `grep`, `sed`, `cut` and a real `find` in `usr\bin`,
+and prepending that directory makes the whole gate work. The Justfile now says so at the top,
+including that a default-PATH `find` is `C:\Windows\system32\find.exe`, a text-search tool.
 
 ##### Also here
 

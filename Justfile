@@ -8,6 +8,24 @@
 # losing quoting via textual {{ARGS}} interpolation (see open-pr).
 set positional-arguments := true
 
+# On Windows, run non-shebang recipes under Git's bash rather than whatever `sh` happens to be
+# first on PATH — every recipe here is written for a POSIX shell.
+#
+# **The shebang recipes need more than this, and it is a setup step rather than a Justfile
+# problem.** They are executed by their own interpreter, so they need `bash` findable, and they
+# use `sha256sum`, `date`, `install`, `grep`, `sed` and `cut`. None of those are on a default
+# Windows PATH, and `find` there resolves to `C:\Windows\system32\find.exe` — a text-search tool,
+# which is the same shadowing trap `~/AGENTS.md` records for `bfs`/`find` and `eza`/`ls`.
+#
+# Git for Windows ships all of them in `usr\bin`, so prepending that directory makes the whole
+# gate work — verified: `just check` (golden staleness gate included) and `just man` both run
+# green there. Add it to PATH once:
+#
+#     $env:PATH = "$env:USERPROFILE\scoop\apps\git\current\usr\bin;$env:PATH"
+#
+# Adjust the prefix for a non-scoop install (typically `C:\Program Files\Git\usr\bin`).
+set windows-shell := ["bash", "-cu"]
+
 BASH_COMP  := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"`
 ZSH_COMP   := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"`
 FISH_COMP  := `echo "${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions"`

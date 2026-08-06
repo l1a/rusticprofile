@@ -142,6 +142,78 @@ fn restore_handlers() {
 #[cfg(not(unix))]
 fn restore_handlers() {}
 
+/// A job object holding the child, set to kill it when the handle closes.
+///
+/// **This is the Windows answer to signal forwarding, and it is stronger than one.** There is no
+/// signal to relay, and the interactive case needs none — the console delivers `Ctrl+C` to every
+/// process attached to it. The case that needs closing is a *scheduled* run: Task Scheduler's
+/// "End" terminates only the process it started, so without this, stopping a job would leave
+/// rustic running against the repository with nothing supervising it.
+///
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` makes the kernel terminate every process still in the job
+/// when the last handle to it closes. That happens on a normal return, on a panic, and — the
+/// reason this exists — when this process is killed outright, which no in-process handler could
+/// cover.
+#[cfg(windows)]
+struct ChildJob(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl Drop for ChildJob {
+    fn drop(&mut self) {
+        // SAFETY: the handle came from `CreateJobObjectW` and is closed exactly once.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+/// Put `child` in a kill-on-close job object.
+///
+/// `None` when the job could not be created or the child could not be assigned. Nested jobs have
+/// been permitted since Windows 8, so assignment is expected to succeed even under Task
+/// Scheduler, which runs tasks in a job of its own — but a failure here is reported rather than
+/// swallowed, because the difference it makes is invisible until the day something is stopped
+/// mid-backup.
+#[cfg(windows)]
+fn confine_child(child: &std::process::Child) -> Option<ChildJob> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+
+    // SAFETY: every pointer below is either null (the documented "no attributes / no name" form)
+    // or points at a live local of the matching type and size.
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return None;
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let set = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_ref(&info).cast(),
+            u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap_or(0),
+        );
+        if set == 0 {
+            CloseHandle(job);
+            return None;
+        }
+
+        if AssignProcessToJobObject(job, child.as_raw_handle()) == 0 {
+            CloseHandle(job);
+            return None;
+        }
+
+        Some(ChildJob(job))
+    }
+}
+
 /// Run `argv` to completion.
 ///
 /// `argv[0]` is the program; the rest are its arguments, passed as separate argv elements
@@ -174,6 +246,24 @@ pub fn run(argv: &[OsString], stdout_mode: Stdout) -> io::Result<Outcome> {
             }
             return Err(e);
         }
+    };
+
+    // Held until after the wait below: dropping it early would kill the child we are waiting on.
+    #[cfg(windows)]
+    let _job = {
+        let job = confine_child(&child);
+        if job.is_none() {
+            // Stated rather than swallowed, on stderr where a task's log catches it — the same
+            // rule the log-write failure follows: it must not change the exit code, and it must
+            // not be silent. Without the job, stopping a scheduled run leaves rustic behind.
+            // Uncoloured on purpose: colour belongs to `report.rs`, and pulling a formatting
+            // dependency into the module that spawns processes buys nothing.
+            eprintln!(
+                "warning: could not confine rustic to a job object; if this run is stopped, \
+                 rustic may keep running"
+            );
+        }
+        job
     };
 
     #[cfg(unix)]
@@ -401,6 +491,43 @@ mod tests {
             Some(nix::libc::SIGTERM),
             "the child should have been terminated by the forwarded signal"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_child_is_confined_to_a_kill_on_close_job() {
+        // The mechanism has to be *available*, not merely written: nested jobs are permitted from
+        // Windows 8 on, but if `AssignProcessToJobObject` ever started failing here the warning
+        // path would fire on every run and the guarantee would be gone. Asserting `Some` is what
+        // notices that.
+        let _guard = exclusive();
+        let child = Command::new("cmd")
+            .args(["/c", "exit", "0"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("cmd should be available");
+        let job = confine_child(&child);
+        assert!(
+            job.is_some(),
+            "the child must be confined, or stopping a scheduled run orphans rustic"
+        );
+        let mut child = child;
+        let status = child.wait().expect("child should be reapable");
+        // Confinement must not change what the child does — a job that killed it early would
+        // turn every run into a failure.
+        assert_eq!(status.code(), Some(0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_confined_child_still_reports_its_own_exit_code() {
+        // The job is a supervision mechanism, not an execution one. If it interfered, `run`
+        // would misclassify rustic's result — and exit classification is the whole of step 5.
+        let out = run_locked(&fail_argv(), Stdout::Capture).unwrap();
+        assert_eq!(out.code, Some(1));
+        let ok = run_locked(&ok_argv(), Stdout::Capture).unwrap();
+        assert_eq!(ok.code, Some(0));
     }
 
     #[cfg(unix)]

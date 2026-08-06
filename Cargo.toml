@@ -55,13 +55,24 @@ nix = { version = "0.31.3", features = [
     "user",
 ] }
 
-# Only for `GetComputerNameExW`, and it earns a dependency because the obvious alternative is
-# wrong: `%COMPUTERNAME%` is the *NetBIOS* name, which Windows reports upper-cased. Emitting
-# `HOST-A` where every other host in a fleet records `host-a` would put one machine in its own
-# retention group under `group-by = "host,label"` and strand its history — invariant 1 in
+# Two uses, both of which earn the dependency because the obvious alternative is wrong.
+#
+# `GetComputerNameExW`: `%COMPUTERNAME%` is the *NetBIOS* name, which Windows reports upper-cased.
+# Emitting `HOST-A` where every other host in a fleet records `host-a` would put one machine in its
+# own retention group under `group-by = "host,label"` and strand its history — invariant 1 in
 # `NOTES.md` §3a, breached by a value that looks merely cosmetic. See `PLAN.md` §5.10.
+#
+# Job objects: Windows has no signal to forward, so the only way to guarantee rustic dies with
+# rusticprofile is `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Without it, a scheduled task that is
+# stopped kills the parent and leaves rustic writing to the repository.
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",             # SECURITY_ATTRIBUTES, in CreateJobObjectW's signature
+    "Win32_System_JobObjects",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",     # gates JOBOBJECT_EXTENDED_LIMIT_INFORMATION itself
+] }
 
 # Optimised like release but with full debug symbols, so samply / cargo-flamegraph
 # produce useful annotated stacks.

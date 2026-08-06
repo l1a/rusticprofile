@@ -159,6 +159,23 @@ fn as_config_path(p: &std::path::Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
+/// Point the shipped example's `rustic-config-dir` at `dir`, and prove the edit landed.
+///
+/// The example ships that key commented out, because its default is already the same path. So the
+/// tests below have to *uncomment* it rather than replace a value — and the assertion matters more
+/// than the substitution: a silent no-match would leave the example resolving profiles from the
+/// developer's real `~/.config/rustic`, which is both non-hermetic and a test that passes for the
+/// wrong reason on exactly one machine. Same defect class as `v0.1.29`'s hard-coded home path.
+fn uncomment_rustic_config_dir(jobs_text: &str, dir: &str) -> String {
+    const COMMENTED: &str = "  # rustic-config-dir: /home/user/.config/rustic";
+    assert!(
+        jobs_text.contains(COMMENTED),
+        "the shipped example no longer contains `{COMMENTED}`, so this fixture would silently \
+         read the real ~/.config/rustic"
+    );
+    jobs_text.replace(COMMENTED, &format!("  rustic-config-dir: \"{dir}\""))
+}
+
 /// Write a jobs.yaml and a rustic profile into a fresh temp dir.
 ///
 /// `RUSTIC_DIR` in the YAML is replaced with the temp dir, so fixtures stay hermetic and
@@ -1147,10 +1164,11 @@ fn the_emitted_examples_pass_config_check() {
     let jobs_path = dir.path().join("jobs.yaml");
     std::fs::write(
         &jobs_path,
-        jobs_text.replace(
-            r#"rustic-config-dir: "${env:HOME}/.config/rustic""#,
-            &format!("rustic-config-dir: \"{rustic_dir}\""),
-        ),
+        // The example ships this key *commented out*, because its default is already the same
+        // path — see `config/example.rs`. Uncommenting it is what redirects the profile lookup
+        // here. If this substitution ever stops matching, the test falls back to the real
+        // `~/.config/rustic` and stops being hermetic, so it asserts the match below.
+        uncomment_rustic_config_dir(&jobs_text, &rustic_dir),
     )
     .unwrap();
 
@@ -1195,11 +1213,7 @@ fn the_emitted_examples_plan_a_real_argv() {
     let jobs_path = dir.path().join("jobs.yaml");
     std::fs::write(
         &jobs_path,
-        jobs_text.replace(
-            r#"rustic-config-dir: "${env:HOME}/.config/rustic""#,
-            // Forward slashes — see `as_config_path`; this is a double-quoted YAML scalar.
-            &format!("rustic-config-dir: \"{}\"", as_config_path(dir.path())),
-        ),
+        uncomment_rustic_config_dir(&jobs_text, &as_config_path(dir.path())),
     )
     .unwrap();
 
