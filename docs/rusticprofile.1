@@ -266,22 +266,32 @@ Interrupted\.
 .SH "FILES"
 \fB\fB$XDG_CONFIG_HOME/rusticprofile/jobs\.yaml\fP\fP
 .RS
+.PP
 Job definitions: which jobs exist, their operations, host gating and schedule\.
 .RE
 \fB\fB$XDG_CONFIG_HOME/rustic/PROFILE\.toml\fP\fP
 .RS
+.PP
 rustic's own configuration, which owns all backup detail\. rusticprofile reads it read\-only, to verify that every snapshot\-set name it is about to pass actually exists\.
 .RE
 \fB\fB~/Library/LaunchAgents/local\.rusticprofile\.\fBJOB\fP\.plist\fP\fP
 .RS
+.PP
 The launchd agent on macOS, written by \fBschedule\fP and removed by \fBunschedule\fP\. `\f[CR]permission: system\fP` uses `\f[CR]/Library/LaunchDaemons\fP` instead\. On Linux the equivalents are `\f[CR]~/\.config/systemd/user/rusticprofile\-\fP`\fIJOB\fP`\f[CR]\.{service,timer}\fP`\.
+.RE
+\fB\fB$XDG_STATE_HOME/rusticprofile/tasks/\fBJOB\fP\.xml\fP\fP
+.RS
+.PP
+On Windows, the task definition \fBschedule\fP generated\. Unlike the Unix backends this file is \fInot\fP the installation \-\- `\f[CR]schtasks\fP` copies the definition into the Task Scheduler service's own store, and the registration at `\f[CR]\rusticprofile\\fP`\fIJOB\fP is what actually runs\. This copy is a record of what was registered, and deleting it does not unschedule anything\.
 .RE
 \fB\fB$XDG_STATE_HOME/rusticprofile/status/\fBJOB\fP\.json\fP\fP
 .RS
+.PP
 When \fIJOB\fP last ran, and when it last \fBsucceeded\fP\. Written after every run, atomically\. `\f[CR]last_success\fP` is carried forward across a failed run on purpose: the useful question is not "did the last attempt work?" but "when did this last actually work?", and only that field can reveal a job which has quietly stopped working \-\- a failing run is loud, a run that never happens is not\. \fBstatus\fP displays both\.
 .RE
 \fB\fB$XDG_STATE_HOME/rusticprofile/\fP\fP
 .RS
+.PP
 Where `\f[CR]${state_dir}\fP` points, and where run logs belong\. Logs are \fBstate, not configuration\fP \-\- the XDG Base Directory specification names them as the example of what `\f[CR]XDG_STATE_HOME\fP` is for\. Pointing a `\f[CR]log:\fP` at `\f[CR]${config_dir}\fP` instead is also self\-defeating when `\f[CR]~/\.config\fP` is one of your backup sources: the job then appends to a directory it is in the middle of backing up, and the rustic profile needs an exclusion to compensate\.
 .RE
 .PP

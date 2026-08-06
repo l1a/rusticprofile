@@ -162,6 +162,21 @@ jobs:
     #   - launchd has no equivalent of systemd's `linger`: a user agent runs only while you
     #     are logged in, so a Mac at the login window takes no backups. `permission: system`
     #     installs a LaunchDaemon instead, which runs regardless -- as root.
+    #
+    # On Windows it becomes ONE registered task at \rusticprofile\<job>. The definition
+    # rusticprofile writes under ${state_dir}/tasks is only an input and a record: `schtasks`
+    # copies it into the Task Scheduler service, and the registration is what runs.
+    #   - Same login limitation as macOS, for the same reason -- only systemd has `linger`. A
+    #     user task runs while you are logged on, so a PC at the lock screen takes no backups.
+    #     `permission: system` runs as SYSTEM instead. Running as YOURSELF without a login
+    #     session would need a stored password or S4U, which relocates the credential problem
+    #     rather than removing it, so it is deliberately not offered.
+    #   - Two Task Scheduler defaults are overridden, because both would stop backups without
+    #     reporting anything: it will not start on battery, and it stops a running task when
+    #     you unplug. Both are off in what rusticprofile generates.
+    #   - `priority: standard` is written out as a real value rather than omitted, because Task
+    #     Scheduler's own default is already below-normal -- so silence would not mean "normal"
+    #     here the way it does on the other two platforms.
     schedule:
       at: hourly           # hourly | daily | weekly | monthly -- these four and nothing else
       permission: user     # user | system

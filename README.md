@@ -28,7 +28,7 @@ rusticprofile run -n dot-files --dry-run             # what a run would do, writ
 rusticprofile run -n dot-files                       # actually run it
 rusticprofile run -n dot-files --json                # ...reporting as JSON, for a wrapper
 
-rusticprofile schedule -n dot-files                  # install and arm a systemd timer
+rusticprofile schedule -n dot-files                  # install and arm this platform's schedule
 rusticprofile schedule -n dot-files --write-only     # install it inert, to read first
 rusticprofile status                                 # what is scheduled here, plus last run / last success
 rusticprofile status --json                          # ...for a monitor; alert on last_success
@@ -36,9 +36,9 @@ rusticprofile snapshots -n dot-files                 # list snapshots (read-only
 rusticprofile unschedule -n dot-files                # remove the units
 ```
 
-`schedule` and `unschedule` are each a single step, and each fully undoes the other. A job becomes **two** systemd units — a `.timer` and the `.service` it activates — because systemd has no way for a timer to run a command directly; that is true of every tool that schedules with systemd. Only the timer is enable-able: the service is `static`, so it cannot be armed on its own and run outside its schedule.
+`schedule` and `unschedule` are each a single step, and each fully undoes the other. What a job becomes depends on the platform: **two** systemd units on Linux — a `.timer` and the `.service` it activates, because systemd has no way for a timer to run a command directly, which is true of every tool that schedules with systemd — **one** launchd agent on macOS, or **one** registered task on Windows. On Linux only the timer is enable-able: the service is `static`, so it cannot be armed on its own and run outside its schedule.
 
-`config` and `plan` are hermetic — no rustic binary, no repository, no network — so they are safe to run anywhere. `run` is the one that actually invokes rustic, and `schedule` is the one that touches systemd. Running the binary with no arguments exits non-zero and says so rather than doing anything by default.
+`config` and `plan` are hermetic — no rustic binary, no repository, no network — so they are safe to run anywhere. `run` is the one that actually invokes rustic, and `schedule` is the one that talks to the service manager (`systemctl`, `launchctl` or `schtasks`). Running the binary with no arguments exits non-zero and says so rather than doing anything by default.
 
 ## What it does
 
@@ -195,6 +195,8 @@ just install       # binary + man page + completions for six shells
 Requires [just](https://github.com/casey/just) and, for the man page, [mandown](https://crates.io/crates/mandown).
 
 `install-completions` tells you whether each shell will actually load them. **zsh is the one that usually will not**: unlike fish and bash-completion, it reads no user directory unless `fpath` names it, so the recipe checks and prints the `fpath+=(…)` line to add rather than claiming success.
+
+**PowerShell** is in the set and works on Windows — verified by generating the script, dot-sourcing it and asking `TabExpansion2`, not merely by the file appearing. It needs one explicit step and the recipe says so: PowerShell loads nothing automatically, so dot-source the file from your `$PROFILE`. `just install-completions` itself runs on Windows once Git's `usr\bin` is on `PATH` (see the Justfile header).
 
 ## Development
 

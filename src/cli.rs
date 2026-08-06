@@ -58,10 +58,10 @@ pub enum Command {
     /// Run a job's operations in order
     Run(RunArgs),
 
-    /// Install the OS schedule for a job (systemd units, or a launchd agent on macOS)
+    /// Install the OS schedule for a job (systemd units, a launchd agent, or a scheduled task)
     Schedule(ScheduleArgs),
 
-    /// Remove a job's OS schedule (systemd units, or its launchd agent)
+    /// Remove a job's OS schedule (its systemd units, launchd agent, or scheduled task)
     Unschedule(UnscheduleArgs),
 
     /// Show what is scheduled on this host, and what is deliberately not

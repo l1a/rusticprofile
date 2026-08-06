@@ -236,6 +236,10 @@ The contract the implemented commands follow:
 **~/Library/LaunchAgents/local.rusticprofile.**JOB**.plist**
 :   The launchd agent on macOS, written by **schedule** and removed by **unschedule**. `permission: system` uses `/Library/LaunchDaemons` instead. On Linux the equivalents are `~/.config/systemd/user/rusticprofile-`*JOB*`.{service,timer}`.
 
+**$XDG_STATE_HOME/rusticprofile/tasks/**JOB**.xml**
+
+:   On Windows, the task definition **schedule** generated. Unlike the Unix backends this file is *not* the installation — `schtasks` copies the definition into the Task Scheduler service's own store, and the registration at `\rusticprofile\`*JOB* is what actually runs. This copy is a record of what was registered, and deleting it does not unschedule anything.
+
 **$XDG_STATE_HOME/rusticprofile/status/**JOB**.json**
 :   When *JOB* last ran, and when it last **succeeded**. Written after every run, atomically. `last_success` is carried forward across a failed run on purpose: the useful question is not "did the last attempt work?" but "when did this last actually work?", and only that field can reveal a job which has quietly stopped working — a failing run is loud, a run that never happens is not. **status** displays both.
 

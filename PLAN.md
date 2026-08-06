@@ -480,6 +480,7 @@ src/
   report.rs     M1  owo-colors output
   schedule/{mod,calendar,systemd}.rs                         M2
   schedule/launchd.rs                                        M3
+  schedule/schtasks.rs                                       0.2.0 (Windows; §7.9)
 ```
 
 **No shell, ever** — see §2.3 for why this is architecture rather than preference.

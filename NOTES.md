@@ -42,7 +42,7 @@ src/
   exec/           M1  spawn, forward signals, mask secrets in logs
   run/            M1  operation ordering; LockBudget seam
   report.rs       M1  owo-colors output
-  schedule/       M2  systemd units; M3 launchd plists
+  schedule/       M2  systemd units; M3 launchd plists; 0.2.0 Task Scheduler tasks
 
 tests/cli_tests.rs   one integration test file, driving the real binary
 docs/rusticprofile.1.md   man page source (mandown); .1 is generated, never edited
