@@ -484,9 +484,11 @@ Smaller items:
 - [ ] **Windows, remaining work after `0.2.0`.** Neither is a gap in the platform's function:
       1. **Assert byte-for-byte argv delivery in `tests/cli_tests.rs`**, where
          `CARGO_BIN_EXE_rusticprofile` gives a cooperating child. The unit test is Unix-only
-         because Windows has no argv; `PLAN.md` §5.10 explains why the guarantee weakens. Note
-         `schtasks.rs`'s `quote_argument` *is* unit-tested against the MSVCRT rules, so what is
-         missing is the round trip through a real process rather than the rules themselves.
+         because Windows has no argv; `PLAN.md` §5.10 explains why the guarantee weakens. What
+         remains is only the *automated* form: `quote_argument` is unit-tested against the MSVCRT
+         rules, and the round trip through a real process was verified by hand in `0.2.0` — a
+         config path containing a space registered, ran under Task Scheduler, and was found. The
+         gap is that nothing re-checks it.
       2. **`permission: system` has never been registered and run.** The SYSTEM principal is
          generated and unit-tested, and it is the answer to the login caveat — so it is the one
          part of the platform still resting on reasoning rather than measurement. It needs an
@@ -598,6 +600,11 @@ child is our own binary**, so the parser on the other side is known, and `<Exec>
 rather than `cmd /c`, so no shell expands anything. A trailing-backslash bug here would silently
 merge two arguments — for `--config` that means a scheduled run reading a different file than the one
 `schedule` validated.
+
+**Verified through a real task, not only by unit test**: a job whose config lived under a directory
+with a space in its name registered with `--config "C:\…\rp space test\jobs.yaml"` quoted and
+`--rustic-binary` left bare, then ran and found the file. Wrong quoting would have truncated the
+path at the space and the run would have failed to load its configuration.
 
 ##### A job object closes the last unfinished mechanism
 
