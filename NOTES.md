@@ -602,8 +602,17 @@ happens to be first on PATH; that lands with the Task Scheduler increment.
 
 #### CI builds and tests on Windows, at pull-request time
 
-**`windows-latest` is in all three matrices** — `build`, `full-test` and `build-release` — and a
-release now ships `rusticprofile-windows-x86_64.exe` alongside the other three binaries.
+**`windows-latest` is in all three matrices** — `build`, `full-test` and `build-release` — and
+**`windows-11-arm` joins `full-test` and `build-release`**, so a release ships both
+`rusticprofile-windows-x86_64.exe` and `rusticprofile-windows-arm64.exe` alongside the other three
+binaries. Windows now has the same two-architecture coverage Linux does.
+
+`windows-arm` is tag-time only, following the `fedora-arm` precedent: it is the second
+architecture of a platform already covered at pull-request time, and there is no
+architecture-dependent code in this crate, so what it uniquely exercises is the toolchain on
+aarch64. It earns a *release artefact* on a different argument from its CI leg — an arm64 Windows
+laptop is precisely the machine least likely to have a Rust toolchain on it, so "supported"
+without a binary would mean supported for nobody who needs it.
 
 This was very nearly deferred to "the increment after", and deferring it would have been the
 `v0.1.21` failure restated: Windows support verified on exactly one developer's machine, green

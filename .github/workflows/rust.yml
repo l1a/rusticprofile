@@ -171,7 +171,7 @@ jobs:
 
     strategy:
       matrix:
-        platform: [ubuntu-x64, ubuntu-arm, fedora-x64, fedora-arm, macos, windows]
+        platform: [ubuntu-x64, ubuntu-arm, fedora-x64, fedora-arm, macos, windows, windows-arm]
         include:
           - platform: ubuntu-x64
             os: ubuntu-latest
@@ -187,10 +187,16 @@ jobs:
             container: fedora:latest
           - platform: macos
             os: macos-latest
-          # No container equivalent, so this is the release-shaped environment for Windows —
-          # the same runner `build-release` uses.
+          # No container equivalent, so these are the release-shaped environments for Windows —
+          # the same runners `build-release` uses.
           - platform: windows
             os: windows-latest
+          # aarch64-pc-windows-msvc. Tag-time only, like `fedora-arm`: it is the second
+          # architecture of a platform already covered at pull-request time, and the only
+          # thing it uniquely exercises is the toolchain on aarch64 — there is no
+          # architecture-dependent code in this crate.
+          - platform: windows-arm
+            os: windows-11-arm
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -234,7 +240,7 @@ jobs:
 
     strategy:
       matrix:
-        platform: [fedora-x64, fedora-arm, macos, windows]
+        platform: [fedora-x64, fedora-arm, macos, windows, windows-arm]
         include:
           - platform: fedora-x64
             os: ubuntu-latest
@@ -248,10 +254,15 @@ jobs:
             os: macos-latest
             artifact_name: release-assets-macos-arm64
           # A platform that is supported but has no downloadable binary is supported only for
-          # people who already have a Rust toolchain, so this ships alongside the others.
+          # people who already have a Rust toolchain, so these ship alongside the others. Both
+          # architectures, matching what Linux gets — an arm64 Windows laptop is exactly the
+          # machine least likely to have a toolchain on it.
           - platform: windows
             os: windows-latest
             artifact_name: release-assets-windows-x86_64
+          - platform: windows-arm
+            os: windows-11-arm
+            artifact_name: release-assets-windows-arm64
 
     steps:
       - name: Install system dependencies (Fedora)
@@ -283,7 +294,8 @@ jobs:
             macos)      cp target/release/rusticprofile release/rusticprofile-macos-arm64 ;;
             # Keeps the `.exe` suffix: Windows needs it to execute the file at all, so
             # renaming it to match the others' bare names would ship something unrunnable.
-            windows)    cp target/release/rusticprofile.exe release/rusticprofile-windows-x86_64.exe ;;
+            windows)     cp target/release/rusticprofile.exe release/rusticprofile-windows-x86_64.exe ;;
+            windows-arm) cp target/release/rusticprofile.exe release/rusticprofile-windows-arm64.exe ;;
           esac
           cp docs/rusticprofile.1 release/ || true
 
@@ -323,6 +335,7 @@ jobs:
             release/rusticprofile-linux-arm64
             release/rusticprofile-macos-arm64
             release/rusticprofile-windows-x86_64.exe
+            release/rusticprofile-windows-arm64.exe
             release/rusticprofile.1
           generate_release_notes: true
 
