@@ -10,7 +10,7 @@ rusticprofile - a local, per-machine scheduler and orchestrator for rustic backu
 
 **rusticprofile config** **--show** **-n** *JOB* [**--as-host** *HOST*] [**--config** *PATH*]
 
-**rusticprofile run** **-n** *JOB* [**--dry-run**] [**--json**] [**--rustic-binary** *PATH*] [**--as-host** *HOST*] [**--config** *PATH*]
+**rusticprofile run** **-n** *JOB* [**--dry-run**] [**--json**] [**--background**] [**--rustic-binary** *PATH*] [**--as-host** *HOST*] [**--config** *PATH*]
 
 **rusticprofile schedule** [**-n** *JOB*] [**--write-only**] [**--config** *PATH*] [**--unit-dir** *DIR*]
 
@@ -83,6 +83,9 @@ Validation rejects, among other things, any key it does not recognise; a snapsho
 
 **--dry-run**
 :   Ask rustic to report what it would do without writing anything. Reports what *would* be saved, never what was saved.
+
+**--background**
+:   Detach from the console so the run shows no window. Windows only; accepted and ignored elsewhere. **schedule** puts this in every generated Task Scheduler definition, and it is the only reason a scheduled run is invisible: Task Scheduler can run a task as the logged-on user only through an interactive logon, which starts it inside that desktop session, where Windows gives a console program a console. The logon types that run outside it need rights an ordinary account does not hold. Typing this by hand discards the run's output — rustic's progress goes nowhere — while the record still reaches the **log:** file.
 
 **--rustic-binary** *PATH*
 :   Use this executable instead of the one the configuration names. A bare name is resolved on `PATH`. Applied after the configuration is validated, so it cannot mask a mistake in the file it overrides. Point it at a script that records its arguments and exits, and a job can be exercised end to end without rustic running at all.

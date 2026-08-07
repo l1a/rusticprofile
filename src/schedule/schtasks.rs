@@ -161,11 +161,21 @@ fn quote_argument(value: &str) -> String {
 ///
 /// Exactly the argv the other two backends pass as separate elements, joined under the rules
 /// above. Kept separate from [`task_xml`] so the quoting can be tested on its own.
+/// The `run` invocation the task executes.
+///
+/// `--background` is unconditional here and is the whole reason a scheduled run is invisible.
+/// It cannot be moved into the task definition instead: a task running as the logged-on user
+/// must use `InteractiveToken`, which starts it inside that desktop session, and the logon
+/// types that run in session 0 — `S4U`, a stored password, `LocalSystem` — all require rights
+/// an ordinary user account does not hold. Measured on Windows 11: registering an otherwise
+/// identical task with `<LogonType>S4U</LogonType>` from a standard account fails with
+/// `Access is denied`.
 fn arguments(job: &Job, ctx: &UnitContext) -> String {
     [
         "run",
         "--name",
         &job.name,
+        "--background",
         "--config",
         &ctx.config.to_string_lossy(),
         "--rustic-binary",
@@ -479,11 +489,44 @@ mod tests {
             x.contains(r"<Command>C:\Users\u\.cargo\bin\rusticprofile.exe</Command>"),
             "{x}"
         );
-        assert!(x.contains("run --name dot-files --config"), "{x}");
+        assert!(
+            x.contains("run --name dot-files --background --config"),
+            "{x}"
+        );
         assert!(
             x.contains(r"--rustic-binary C:\Users\u\.cargo\bin\rustic.exe"),
             "{x}"
         );
+    }
+
+    #[test]
+    fn every_scheduled_run_is_detached_from_its_console() {
+        // The one assertion standing between an hourly job and an hourly window. Task
+        // Scheduler starts a user task through `InteractiveToken`, i.e. inside the desktop
+        // session, where Windows gives a console program a console; the logon types that
+        // avoid that (`S4U`, stored password, LocalSystem) all need rights an ordinary
+        // account does not have — registering an S4U task from a standard account was
+        // measured failing with `Access is denied`. So the flag has to be on the argv, and
+        // it has to be on *every* job regardless of schedule or priority.
+        for at in [At::Hourly, At::Daily, At::Weekly] {
+            for priority in [Priority::Standard, Priority::Background] {
+                let x = task_xml(&job("j"), &schedule(at, priority), Offset::ZERO, &ctx());
+                assert!(
+                    x.contains("--background"),
+                    "{at:?}/{priority:?} would show a console window: {x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_console_flag_is_ours_and_never_reaches_rustic() {
+        // `--background` is rusticprofile's own flag and must not widen the set of flags this
+        // tool emits to rustic (`NOTES.md` §3a invariant 4). It appears in the task's argv,
+        // which is a `rusticprofile run` invocation — rustic's argv is built by
+        // `rustic/invoke.rs` and is asserted separately.
+        let args = arguments(&job("j"), &ctx());
+        assert!(args.starts_with("run --name j --background "), "{args}");
     }
 
     #[test]

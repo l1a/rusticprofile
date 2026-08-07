@@ -83,6 +83,26 @@ static CHILD_PID: AtomicI32 = AtomicI32::new(0);
 /// Set when a forwarded signal has been seen.
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
+/// Set by [`suppress_child_windows`] once this process has detached from its console.
+///
+/// Process-global for the same reason `CHILD_PID` and `INTERRUPTED` are, and deliberately
+/// **not** a parameter on [`run`]: that function is public library API, and adding an argument
+/// to it would break an exhaustive caller — a *minor* bump by `NOTES.md` §3, for what is a
+/// platform detail with one call site. The state is write-once at startup and read per spawn,
+/// so there is nothing to race.
+#[cfg(windows)]
+static NO_CHILD_WINDOW: AtomicBool = AtomicBool::new(false);
+
+/// Spawn every subsequent child without a console of its own.
+///
+/// Call this only after detaching from the console, and only once, at startup. It exists
+/// because the two halves are not separable: detaching alone relocates the window into the
+/// child instead of removing it.
+#[cfg(windows)]
+pub fn suppress_child_windows() {
+    NO_CHILD_WINDOW.store(true, Ordering::SeqCst);
+}
+
 /// Signal handler: record the interrupt and pass it to the child.
 ///
 /// Async-signal-safe by construction — two atomic stores and a `kill(2)`, no allocation,
@@ -224,15 +244,44 @@ pub fn run(argv: &[OsString], stdout_mode: Stdout) -> io::Result<Outcome> {
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty argv"))?;
 
+    // `run --background` detached this process from its console before anything spawned.
+    #[cfg(windows)]
+    let detached = NO_CHILD_WINDOW.load(Ordering::SeqCst);
+    #[cfg(not(windows))]
+    let detached = false;
+
     let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .stdout(match stdout_mode {
-            Stdout::Inherit => Stdio::inherit(),
-            Stdout::Capture => Stdio::piped(),
-        });
+    command.args(args);
+
+    if detached {
+        // **Inheriting is not merely pointless once detached, it fails the spawn.** `FreeConsole`
+        // closes this process's standard handles, so `Stdio::inherit()` hands `CreateProcess`
+        // invalid ones and it refuses the whole call with `ERROR_NOT_SUPPORTED` (os error 50) —
+        // measured, as `could not run rustic.EXE: The request is not supported`, which names
+        // neither the console nor the handles and reads like a broken rustic install.
+        command.stdin(Stdio::null()).stderr(Stdio::null());
+    } else {
+        // Stdin stays inherited so a person running this by hand can answer a prompt, and
+        // stderr so they watch rustic's progress live.
+        command.stdin(Stdio::inherit()).stderr(Stdio::inherit());
+    }
+
+    command.stdout(match (stdout_mode, detached) {
+        // Capture is never about the console — `backup` needs the `--json` objects on stdout
+        // regardless of who is watching (§5.8).
+        (Stdout::Capture, _) => Stdio::piped(),
+        (Stdout::Inherit, true) => Stdio::null(),
+        (Stdout::Inherit, false) => Stdio::inherit(),
+    });
+
+    // A child console program started from a process that has no console gets a **new** one, so
+    // without this the window would move to rustic rather than go away — later, and harder to
+    // attribute. Detaching and this flag are two halves of one change.
+    #[cfg(windows)]
+    if detached {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
 
     INTERRUPTED.store(false, Ordering::SeqCst);
     let handlers_installed = install_handlers();

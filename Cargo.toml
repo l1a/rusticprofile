@@ -1,6 +1,6 @@
 [package]
 name = "rusticprofile"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 authors = ["Ken Tobias"]
 description = "A local, per-machine scheduler and orchestrator for rustic backups"
@@ -69,6 +69,7 @@ nix = { version = "0.31.3", features = [
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Security",             # SECURITY_ATTRIBUTES, in CreateJobObjectW's signature
+    "Win32_System_Console",       # FreeConsole, for `run --background`
     "Win32_System_JobObjects",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",     # gates JOBOBJECT_EXTENDED_LIMIT_INFORMATION itself

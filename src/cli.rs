@@ -184,6 +184,22 @@ pub struct RunArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Detach from the console so a scheduled run shows no window (Windows; no-op elsewhere)
+    ///
+    /// `schedule` puts this in the generated Task Scheduler definition. Task Scheduler can
+    /// only run a task as the logged-on user through `InteractiveToken`, which starts it *in*
+    /// that desktop session — and Windows gives a console-subsystem program a console, so an
+    /// hourly job means an hourly window appearing and vanishing. The logon types that run in
+    /// the non-interactive session 0 (`S4U`, a stored password, or LocalSystem) all need
+    /// rights an ordinary user account does not have, so this cannot be fixed in the task
+    /// definition alone.
+    ///
+    /// **Typing this by hand throws your output away.** The console is detached, so rustic's
+    /// progress on stderr goes nowhere. The run's record still reaches the `log:` file, which
+    /// is what a scheduled run is read from anyway.
+    #[arg(long)]
+    pub background: bool,
+
     /// Emit the outcome as JSON instead of the human summary
     ///
     /// For anything automated. Matching the human summary would mean matching English —
@@ -433,6 +449,22 @@ mod tests {
         let Some(Command::Run(args)) = cli.command else {
             panic!("expected the run subcommand");
         };
+        assert!(!args.dry_run);
+        // Detaching the console throws output away, so a hand-typed run must never get it by
+        // default — only the generated Task Scheduler definition asks for it.
+        assert!(!args.background);
+    }
+
+    #[test]
+    fn a_run_can_be_asked_to_detach_its_console() {
+        let cli = Cli::try_parse_from(["rusticprofile", "run", "-n", "j", "--background"]).unwrap();
+        let Some(Command::Run(args)) = cli.command else {
+            panic!("expected the run subcommand");
+        };
+        assert!(args.background);
+        // Accepted on every platform even though it only acts on Windows: `schedule` generates
+        // the same argv shape everywhere, and a flag that parsed on one OS and not another
+        // would make a task definition untestable from the host that writes it.
         assert!(!args.dry_run);
     }
 

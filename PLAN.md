@@ -1058,6 +1058,54 @@ Verified end to end afterwards, on this machine, against a throwaway local repos
 `schtasks /Run` → one snapshot written, `status` reporting `last success`; `unschedule` → task
 gone and definition removed.
 
+### A scheduled run opens a terminal window, and no task setting can stop it (2026-08-07)
+
+Not found until the schedule had been armed for a day and a person watched the machine: every
+hourly run popped a terminal window that appeared and vanished. Measured by enumerating visible
+top-level windows during a real scheduled run —
+
+```
+class=CASCADIA_HOSTING_WINDOW_CLASS  proc=WindowsTerminal  title='C:\Users\user\.cargo\bin\rusticprofile.exe'
+```
+
+— and the cause is structural rather than a setting. Task Scheduler can run a task as the
+logged-on user **only** through `<LogonType>InteractiveToken</LogonType>`, which starts it inside
+that desktop session, and Windows gives a console-subsystem program a console there.
+
+**`<Hidden>` is the setting that sounds responsible and is not.** It hides the task in the Task
+Scheduler UI; it has no bearing on the process's window.
+
+**The logon types that run outside the interactive session all need rights an ordinary account
+does not hold**, which is what makes this a code problem rather than a definition problem:
+
+| logon type | runs in | why not |
+|---|---|---|
+| `InteractiveToken` | the desktop session | the only one available; gets a console |
+| `S4U` | session 0 | needs `SeBatchLogonRight` — **measured: `ERROR: Access is denied.`** registering from an account whose only groups are `Users` and `Authenticated Users` |
+| stored password | session 0 | same right, plus it relocates a credential |
+| `LocalSystem` | session 0 | needs elevation to register, and changes the state dir and credential store |
+
+So the fix is `run --background`: `FreeConsole` at startup plus `CREATE_NO_WINDOW` on every child,
+emitted into the task's argv by `schedule`. Three things about it were measured rather than
+assumed, and each would have been got wrong by reasoning:
+
+1. **`FreeConsole`, not `ShowWindow(GetConsoleWindow(), SW_HIDE)`.** Where the default terminal is
+   Windows Terminal the console is a pseudoconsole, and `GetConsoleWindow` returns the
+   pseudoconsole's own window rather than the visible one — hiding it hides the wrong window.
+2. **Both halves are required.** A child console program started from a process with no console
+   gets a *new* one, so detaching alone moves the window to rustic rather than removing it.
+3. **`FreeConsole` closes this process's standard handles**, so leaving `Stdio::inherit()` in place
+   makes `CreateProcess` refuse the spawn outright with `ERROR_NOT_SUPPORTED` — surfacing as
+   `could not run rustic.EXE: The request is not supported. (os error 50)`, which names neither the
+   console nor the handles. A detached run uses `Stdio::null()` for stdin and stderr; `Capture` is
+   untouched, because §5.8's `--json` objects are needed regardless of who is watching.
+
+**A sub-50 ms flash remains and is accepted.** The console exists from process start, before any of
+this crate's code runs. Sampling every 50 ms across a run: visible in **1 sample of ~900**, against
+every sample for the whole ~7 s run beforehand. Removing it entirely means the task launching
+something that is not a console program — a GUI-subsystem launcher binary — which is a second
+artefact through build, release, packaging and crates.io, for one frame.
+
 ### The gate is one PATH entry away from working — not a rewrite
 
 Not a code problem, but it decides whether the house workflow survives on this machine. With the
