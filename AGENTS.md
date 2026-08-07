@@ -138,11 +138,19 @@ the same standing knowledge — an agent-specific memory entry does not satisfy 
 
 ## 0. Start of session — REQUIRED READING
 
-**Read `PLAN.md` in full before anything else in this repository.** It is not a summary —
-it is the complete design, the reasoning behind it, and the record of what was already
-tested. Nothing here will make sense without it, and re-deriving it is expensive: it took a
-long session including three parallel codebase explorations and live testing against a
-production backup repository.
+**Read `PLAN.md` *and* `NOTES.md` in full before anything else in this repository.** Neither
+is a summary and neither substitutes for the other:
+
+| file | what it is | read it for |
+|---|---|---|
+| `NOTES.md` | living state — **rewritten as the project moves** | what is built, released and next; the release log; **§3a, the operating invariants that can destroy data if broken** |
+| `PLAN.md` | the historical design record — **not rewritten** | *why* the design is shaped this way and what was rejected (Parts 1–3); the measurements against rustic 0.11.3 (Parts 5, 7) |
+
+**`PLAN.md` is not a status page.** Its own header has said so since `0.1.32`, and reading it
+as one is how the section below came to claim this project was pre-code for thirty-five
+releases. Re-deriving either file is expensive: `PLAN.md` took a long session including three
+parallel codebase explorations and live testing against a production backup repository, and
+`NOTES.md` §3a is a list of rules each of which was found the hard way, by losing something.
 
 `PLAN.md` is structured as:
 
@@ -161,13 +169,32 @@ Companion document, for the Go tool this project descends from:
 
 ## 1. Current state
 
-**Pre-code.** Nothing is implemented. The repository contains this file, `CLAUDE.md`,
-`.gitignore` and `PLAN.md`. Scaffolding is step 1 of Milestone 1 (`PLAN.md` §4).
+**`NOTES.md` is authoritative for this, and this section deliberately does not repeat it.**
+Read its "Current State" heading and the top of its release log. What belongs here is only the
+shape of the project, which changes rarely:
+
+**Milestones 1, 2, 3 and 5 are complete; M6 is effectively delivered; Windows and its Task
+Scheduler backend landed in `0.2.0`.** The tool schedules and runs real backups on systemd,
+launchd and Task Scheduler, and is released on GitHub and crates.io. **M4 — repository lock
+coordination — is the only unbuilt milestone**, and it is deferred by decision: it is defence in
+depth, not a precondition for anything (`NOTES.md` §3a invariant 3).
+
+> *The text that stood here until 2026-08-07 read:* "**Pre-code.** Nothing is implemented. The
+> repository contains this file, `CLAUDE.md`, `.gitignore` and `PLAN.md`. Scaffolding is step 1 of
+> Milestone 1." *It was written on 2026-07-30, before the first commit, and survived roughly
+> thirty-five releases — in the first section of the first file every session is instructed to read
+> in full, so it was the opening claim of most of this project's history and false for nearly all of
+> it.*
+>
+> *Recorded rather than quietly deleted, because `PLAN.md`'s header carries the identical
+> correction for the identical reason (`NOTES.md` `0.1.32`), and one of the two was fixed while the
+> other was not. **That is the finding:** duplicated state goes stale one copy at a time, and the
+> copy nobody re-reads is the one that survives. Hence the first paragraph above — this section now
+> points at `NOTES.md` instead of restating it.*
 
 **The Part 7 decision is settled** (2026-07-30): **option B**, named `[[backup.snapshots]]` sets
 selected per host. rusticprofile owns *no* part of the backup source list — `rustic.toml` keeps
-every path, and jobs list which named sets run on which host. Code is unblocked; Milestone 1 step 1
-(scaffolding) is the next action.
+every path, and jobs list which named sets run on which host.
 
 One consequence to know before touching `config/`: rustic **silently ignores an unknown `--name`**
 whenever at least one valid name is also given (exit 0, no diagnostic), so rusticprofile validates
@@ -228,14 +255,25 @@ shared by 7 machines, and currently holds the only copy of several years of data
 This project follows the same scaffolding conventions as `~/git/retch` and `~/git/etr`,
 documented in full in `PLAN.md` §2.5. In particular: `just` is the only task runner; the
 `check`/`pr`/`open-pr`/`merge-pr` gate triad; `NOTES.md` is the changelog and living state,
-not a `CHANGELOG.md`; version bump on every PR — but **`0.0.x` only until Milestone 1 ships a
-tool that can actually run a backup, since `v0.1.0` is reserved for that**, so bump the patch
-component even for features; and the deliberate *absence* of
+not a `CHANGELOG.md`; a version bump on every PR; and the deliberate *absence* of
 `rustfmt.toml`, `clippy.toml`, `deny.toml`, `rust-toolchain.toml` and an MSRV is itself the
 convention — do not add them.
 
-Once scaffolding exists, Part 2 should gain a Pre-PR Checklist section mirroring retch's
-§4, and `NOTES.md` becomes required reading alongside `PLAN.md`.
+**The version rule is maintained in `NOTES.md` §3, not here.** In short: **every PR from
+`v0.1.0` to `v1.0.0` is a patch bump**, whatever it adds or changes — this supersedes the
+sibling repos' "minor for features". A *minor* bump means the library API broke or a milestone
+landed; `0.2.0` is the precedent (a new `schedule::Backend` variant breaks an exhaustive match
+downstream), and `0.1.26`/`0.1.27` are the counter-precedent — a whole launchd backend, correctly
+patch bumps, because no public type moved.
+
+*Superseded text, kept because it is the kind of rule that gets copied without checking:*
+"`0.0.x` only until Milestone 1 ships a tool that can actually run a backup, since `v0.1.0` is
+reserved for that." *M1 shipped at `v0.0.7` and `v0.1.0` was released; that clause expired long
+ago and would now give the wrong answer.*
+
+**A Pre-PR Checklist section mirroring retch's §4 is still outstanding** — it is a live item in
+`NOTES.md` §4's backlog. Until it exists, `just pr` is the checklist, and it is the one that
+actually binds.
 
 ## 5. Opening pull requests
 

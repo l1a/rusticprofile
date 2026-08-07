@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.3)
+## Current State (v0.2.4)
 
 **`v0.2.2` is released on GitHub *and* on crates.io** as of 2026-08-07 — the registry had been
 stuck on `0.1.34` since 2026-08-04, which mattered more than usual because `0.2.2` is the first
@@ -527,6 +527,53 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.4 — `AGENTS.md` said this project was pre-code, for thirty-five releases
+
+**Documentation only. The same defect `0.1.32` fixed in `PLAN.md`, in the other file, found
+because only one of the two copies was ever corrected.**
+
+`AGENTS.md` Part 2 §1 "Current state" opened with:
+
+> **Pre-code.** Nothing is implemented. The repository contains this file, `CLAUDE.md`,
+> `.gitignore` and `PLAN.md`. Scaffolding is step 1 of Milestone 1.
+
+Written 2026-07-30, before the first commit. It survived to `0.2.3` — through five milestones,
+three scheduling backends, two platforms added and eight releases — **in the first section of the
+file Part 1 §STEP ONE orders every agent to read in full before touching anything.** So for
+almost the whole life of the project, the first factual claim any new session read was false.
+
+#### The finding is not "a file went stale", it is *why this one did*
+
+`0.1.32` corrected the identical sentence in `PLAN.md`'s header and wrote the rule that produced
+this file's split. It did not occur to anyone to check whether the same claim existed elsewhere,
+and it did — one file was fixed, its duplicate was not.
+
+**Duplicated state goes stale one copy at a time, and the copy that survives is the one nobody
+re-reads.** A header is re-read least of all: it is what you scroll past on the way to the part
+you came for. So the fix is not just a corrected sentence — §1 no longer *holds* the current
+state at all. It states the milestone shape, which changes rarely, and points at `NOTES.md` for
+everything that moves.
+
+#### Two more expired clauses in the same file, same cause
+
+- **§0 said "read `PLAN.md` in full before anything else"** and never mentioned `NOTES.md` —
+  even though `PLAN.md`'s own header has said since `0.1.32` that it is *not* where you look for
+  what is true, and even though §4 promised `NOTES.md` would "become required reading" once
+  scaffolding existed. Scaffolding existed at `v0.0.1`. **Sending every session to the historical
+  record and not to the living one is precisely how §1 stayed wrong without being noticed.** §0 now
+  requires both and carries a two-row table saying which answers which question.
+- **§4 still carried the `0.0.x` versioning rule** — "patch bumps only until Milestone 1 ships a
+  tool that can run a backup, since `v0.1.0` is reserved for that". M1 shipped at `v0.0.7`. Left
+  in place it gives the wrong answer today, so the current rule is now stated with `0.2.0` and
+  `0.1.26`/`0.1.27` as the precedents on either side, and the authority pointed at `NOTES.md` §3.
+
+Both superseded passages are kept inline rather than deleted, per the `0.1.16` / `0.1.30` /
+`0.1.32` precedent: the mistake is the useful part.
+
+**The Pre-PR Checklist §4 promises is still not written** — it stays a backlog item rather than
+being invented here, because smuggling unreviewed process into a staleness fix is its own version
+of the problem.
 
 ### v0.2.3 — ignore Syncthing conflict copies
 
