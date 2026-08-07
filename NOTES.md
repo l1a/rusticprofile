@@ -236,7 +236,14 @@ the validator.
 
 ---
 
-## Current State (v0.2.2)
+## Current State (v0.2.3)
+
+**`v0.2.2` is released on GitHub *and* on crates.io** as of 2026-08-07 — the registry had been
+stuck on `0.1.34` since 2026-08-04, which mattered more than usual because `0.2.2` is the first
+crate that builds on Windows: until it landed, `cargo install rusticprofile` handed a Windows user
+a version that could not compile. Verified three ways rather than from the publish command's own
+report: the registry API (`max_version 0.2.2`, 179,984 bytes, not yanked), `cargo install --locked`
+into a throwaway root **on Windows**, and running that binary.
 
 **Windows is a fully supported platform as of `0.2.0`**, including scheduling: `schedule`,
 `unschedule` and `status` drive **Task Scheduler**, the third backend. 344 tests green there (294
@@ -520,6 +527,30 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.3 — ignore Syncthing conflict copies
+
+**One line of `.gitignore`, and it blocked a release.**
+
+`.gitignore` has carried `.syncthing.*` since PR #49 committed one by accident. Syncthing writes a
+**second**, differently-shaped artefact that the pattern does not catch:
+`<name>.sync-conflict-<date>-<time>-<deviceid>.<ext>`. Now ignored as `*.sync-conflict-*` — no
+slash, so git applies it at every depth, verified by creating probe files at the root and under
+`docs/` and confirming neither reaches `git status`.
+
+**The two artefacts are not the same risk, which is why the comment says so.** An in-progress
+transfer file is byte-identical to what it shadows, so committing one is noise. A conflict copy is
+*by definition a different version* of the file. The one found on 2026-08-07 was a generated
+`docs/rusticprofile.1` built from **0.1.31** sitting beside the real 0.2.2 one — commit that and
+the tree carries a stale man page under a name that reads as authoritative.
+
+**It also cost a release.** `cargo publish` refuses on an unclean working directory and an
+*untracked* file counts, so the `0.2.2` publish failed on a file nobody had written, in a directory
+nobody had edited, for a reason the error does not connect to Syncthing. Deleting it by hand
+unblocked the upload; this stops the next one arriving.
+
+Checked before adding: no tracked path in the repository contains `sync-conflict`, so the pattern
+shadows nothing that exists.
 
 ### v0.2.2 — `@` leaked into three shebang recipes
 
