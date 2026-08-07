@@ -8,23 +8,49 @@
 # losing quoting via textual {{ARGS}} interpolation (see open-pr).
 set positional-arguments := true
 
-# On Windows, run non-shebang recipes under Git's bash rather than whatever `sh` happens to be
-# first on PATH — every recipe here is written for a POSIX shell.
+# **There is deliberately no `set windows-shell` here. Adding one broke Windows in `0.2.0`.**
 #
-# **The shebang recipes need more than this, and it is a setup step rather than a Justfile
-# problem.** They are executed by their own interpreter, so they need `bash` findable, and they
-# use `sha256sum`, `date`, `install`, `grep`, `sed` and `cut`. None of those are on a default
-# Windows PATH, and `find` there resolves to `C:\Windows\system32\find.exe` — a text-search tool,
-# which is the same shadowing trap `~/AGENTS.md` records for `bfs`/`find` and `eza`/`ls`.
+# `0.2.0` set it to `["bash", "-cu"]`, reasoning that the recipes are POSIX and should not depend
+# on whichever `sh` is first on PATH. That was wrong in the worst direction: `bash` is *not* on a
+# default Windows PATH, while `sh` often is — so the setting turned a Justfile that worked into
+# one where **every backtick variable below failed to evaluate**, taking down `just install` and
+# anything else that reads them:
 #
-# Git for Windows ships all of them in `usr\bin`, so prepending that directory makes the whole
-# gate work — verified: `just check` (golden staleness gate included) and `just man` both run
-# green there. Add it to PATH once:
+#     error: backtick could not be run because just could not find the shell: program not found
 #
+# just's own default is already `sh -cu`, which resolves. So the setting bought nothing and cost
+# the whole file. It shipped because it was only ever tested in a shell that had already been
+# fixed up with the PATH entry below — the environment the fix creates, never the one users have.
+#
+# **The shebang recipes are a separate matter and do need a setup step.** Three things, and the
+# first has the least helpful error message of the three:
+#
+#   1. **`cygpath`** — on Windows, just translates a shebang recipe's temporary script path with
+#      it, for *any* interpreter. Without it every shebang recipe dies before running a line:
+#
+#          error: could not find `cygpath` executable to translate recipe
+#          `install-completions` shebang interpreter path: program not found
+#
+#      That names neither PATH nor Git, so it reads as a just bug rather than a missing tool.
+#   2. **`bash`** — the interpreter the shebang recipes actually ask for.
+#   3. The **coreutils they call**: `sha256sum`, `date`, `install`, `grep`, `sed`, `cut`. None are
+#      on a default Windows PATH, and `find` there resolves to `C:\Windows\system32\find.exe` — a
+#      text-search tool, the same shadowing trap `~/AGENTS.md` records for `bfs`/`find` and
+#      `eza`/`ls`.
+#
+# Git for Windows ships all of them in `usr\bin`, so prepending that one directory satisfies all
+# three — verified: `just check` (golden staleness gate included), `just man` and
+# `just install-completions` all run green there. Add it to PATH once, in whichever shell you
+# actually use:
+#
+#   PowerShell:
 #     $env:PATH = "$env:USERPROFILE\scoop\apps\git\current\usr\bin;$env:PATH"
 #
+#   nushell — note the FORWARD slashes. nu treats `\` as an escape inside double quotes, so the
+#   backslash form fails with `unrecognized escape sequence '\s'`. Windows accepts `/` in PATH.
+#     $env.PATH = ($env.PATH | prepend ($env.USERPROFILE + "/scoop/apps/git/current/usr/bin"))
+#
 # Adjust the prefix for a non-scoop install (typically `C:\Program Files\Git\usr\bin`).
-set windows-shell := ["bash", "-cu"]
 
 BASH_COMP  := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"`
 ZSH_COMP   := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"`
@@ -125,54 +151,62 @@ install-man: man
 
 # Install shell completions for all supported shells to XDG user locations
 install-completions: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p "{{BASH_COMP}}" "{{ZSH_COMP}}" "{{FISH_COMP}}" "{{ELVISH_COMP}}" "{{NU_COMP}}" "{{PS_COMP}}"
-    BIN="{{justfile_directory()}}/target/debug/rusticprofile"
-    "$BIN" --completions bash        > "{{BASH_COMP}}/rusticprofile"
-    "$BIN" --completions zsh         > "{{ZSH_COMP}}/_rusticprofile"
-    "$BIN" --completions fish        > "{{FISH_COMP}}/rusticprofile.fish"
-    "$BIN" --completions elvish      > "{{ELVISH_COMP}}/rusticprofile.elv"
-    "$BIN" --completions nushell     > "{{NU_COMP}}/50rusticprofile-completions.nu"
-    "$BIN" --completions power-shell > "{{PS_COMP}}/rusticprofile.ps1"
-    echo "Installed completions for rusticprofile"
-    echo ""
-
-    # zsh only reads completion functions from directories on `fpath`, and
-    # ~/.local/share/zsh/site-functions is NOT on it by default on every distribution.
-    # Writing the file there and printing "auto-loaded" was a lie on any such machine —
-    # the completion silently never loaded, and `rusticprofile config --<tab>` produced
-    # nothing with no indication why. Check instead of claiming.
-    #
-    # `zsh -i` is required, not optional. A non-interactive zsh sources neither .zshrc nor
-    # anything it includes, so `fpath` there is the built-in default and this check reported
-    # NOT ACTIVE on a machine where completion was working perfectly — a false alarm telling
-    # the user to fix something already correct, which is the mirror of the bug it replaced.
-    if command -v zsh >/dev/null 2>&1; then
-        if zsh -i -c 'print -l $fpath' 2>/dev/null | grep -qx "{{ZSH_COMP}}"; then
-            echo "  zsh        auto-loaded from {{ZSH_COMP}}"
-        else
-            echo "  zsh        NOT ACTIVE — {{ZSH_COMP}} is not on your \$fpath."
-            echo "             The file is written but zsh will never read it. Add this to"
-            echo "             ~/.zshrc BEFORE compinit runs, then restart the shell:"
-            echo ""
-            echo "                 fpath+=({{ZSH_COMP}})"
-            echo ""
-        fi
-    fi
-
-    echo "Notes:"
-    echo "  bash       source {{BASH_COMP}}/rusticprofile  (or restart shell)"
-    echo "  fish       auto-loaded from {{FISH_COMP}}"
-    echo "  elvish     add to rc.elv:  eval (slurp < {{ELVISH_COMP}}/rusticprofile.elv)"
-    echo "  nushell    auto-loaded from {{NU_COMP}}"
-    echo "  powershell add to \$PROFILE:  . {{PS_COMP}}/rusticprofile.ps1"
-    echo ""
-    echo "  Shell aliases do not inherit completions automatically. For an alias like"
-    echo "  \`rp\`, tell your shell they are the same command:"
-    echo "      zsh   compdef rp=rusticprofile"
-    echo "      fish  complete -c rp -w rusticprofile"
-    echo "      bash  complete -o default -F _rusticprofile rp"
+    @# Rationale lives INSIDE the body, prefixed `@#`, for two reasons that pull together here.
+    @# just takes the last contiguous comment block ABOVE a recipe as its `--list` description, so
+    @# putting this there replaces the description with its own last line — the v0.1.2 bug. And in
+    @# a non-shebang recipe an unprefixed `#` line is echoed as if it were a command, so the `@`
+    @# is what keeps it quiet. `@#` gives a comment that neither displaces the description nor
+    @# prints: just suppresses the echo, and `sh` treats the rest as a comment.
+    @#
+    @# **This is deliberately NOT a shebang recipe, and that is a portability fix rather than a
+    @# style choice.** On Windows, just translates a shebang recipe's temporary script path with
+    @# `cygpath`, so this recipe used to fail before running a single line:
+    @#
+    @#     error: could not find `cygpath` executable to translate recipe
+    @#     `install-completions` shebang interpreter path: program not found
+    @#
+    @# Identically from PowerShell and from nushell — the calling shell was never the variable,
+    @# and the per-shell PATH workarounds suggested along the way were treating the symptom. A
+    @# plain recipe runs through just's own default `sh -cu`, needs neither `cygpath` nor `bash`,
+    @# and therefore works with no setup at all, from any shell. Measured on a default Windows
+    @# PATH: `mkdir -p` runs, and `sh` resolves the extensionless `.exe`. `install-man` was always
+    @# a plain recipe, which is exactly why it kept working while this one did not.
+    @#
+    @# The cost is that each line is its own shell, so nothing here may depend on state from the
+    @# line above — hence the zsh check being one long line, and the binary path being
+    @# interpolated rather than held in a variable.
+    @mkdir -p "{{BASH_COMP}}" "{{ZSH_COMP}}" "{{FISH_COMP}}" "{{ELVISH_COMP}}" "{{NU_COMP}}" "{{PS_COMP}}"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions bash        > "{{BASH_COMP}}/rusticprofile"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions zsh         > "{{ZSH_COMP}}/_rusticprofile"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions fish        > "{{FISH_COMP}}/rusticprofile.fish"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions elvish      > "{{ELVISH_COMP}}/rusticprofile.elv"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions nushell     > "{{NU_COMP}}/50rusticprofile-completions.nu"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions power-shell > "{{PS_COMP}}/rusticprofile.ps1"
+    @echo "Installed completions for rusticprofile"
+    @echo ""
+    @# zsh only reads completion functions from directories on `fpath`, and
+    @# ~/.local/share/zsh/site-functions is NOT on it by default on every distribution.
+    @# Writing the file there and printing "auto-loaded" was a lie on any such machine —
+    @# the completion silently never loaded, and `rusticprofile config --<tab>` produced
+    @# nothing with no indication why. Check instead of claiming.
+    @#
+    @# `zsh -i` is required, not optional. A non-interactive zsh sources neither .zshrc nor
+    @# anything it includes, so `fpath` there is the built-in default and this check reported
+    @# NOT ACTIVE on a machine where completion was working perfectly — a false alarm telling
+    @# the user to fix something already correct, which is the mirror of the bug it replaced.
+    @if command -v zsh >/dev/null 2>&1; then if zsh -i -c 'print -l $fpath' 2>/dev/null | grep -qx "{{ZSH_COMP}}"; then echo "  zsh        auto-loaded from {{ZSH_COMP}}"; else printf '  zsh        NOT ACTIVE — %s is not on your $fpath.\n             The file is written but zsh will never read it. Add this to\n             ~/.zshrc BEFORE compinit runs, then restart the shell:\n\n                 fpath+=(%s)\n\n' "{{ZSH_COMP}}" "{{ZSH_COMP}}"; fi; fi
+    @echo "Notes:"
+    @echo "  bash       source {{BASH_COMP}}/rusticprofile  (or restart shell)"
+    @echo "  fish       auto-loaded from {{FISH_COMP}}"
+    @echo "  elvish     add to rc.elv:  eval (slurp < {{ELVISH_COMP}}/rusticprofile.elv)"
+    @echo "  nushell    auto-loaded from {{NU_COMP}}"
+    @echo "  powershell add to \$PROFILE:  . {{PS_COMP}}/rusticprofile.ps1"
+    @echo ""
+    @echo "  Shell aliases do not inherit completions automatically. For an alias like"
+    @echo "  \`rp\`, tell your shell they are the same command:"
+    @echo "      zsh   compdef rp=rusticprofile"
+    @echo "      fish  complete -c rp -w rusticprofile"
+    @echo "      bash  complete -o default -F _rusticprofile rp"
 
 # Run criterion micro-benchmarks (none yet — see the NOTES.md backlog)
 bench:
@@ -333,7 +367,7 @@ aur-publish:
     echo
     echo -e "${BOLD}About to publish rusticprofile $PKGVER to the AUR.${NC}"
     echo "This is public and immediate."
-    echo ""
+    @echo ""
     # Same three-way answer as the pre-PR gate: an env var for non-interactive callers, a
     # terminal for humans, piped input otherwise — and never a block that hangs.
     if [ -n "${AUR_CONFIRM:-}" ]; then
@@ -385,6 +419,25 @@ merge-pr:
     echo "Checking CI on this branch..."
     STATES=$(gh pr view --json statusCheckRollup \
         --jq '[.statusCheckRollup[]? | select(.conclusion != "SKIPPED") | .conclusion]' 2>/dev/null || echo '[]')
+
+    # NO checks at all is not "green", and this arm exists because the gate below cannot tell
+    # the difference. An empty rollup matches neither `""` nor FAILURE, so without this the
+    # recipe printed "CI is green." and merged a commit CI had never seen — the v0.1.5 failure
+    # one layer up, where "nothing ran" is indistinguishable from "everything passed".
+    #
+    # Hit for real on 2026-08-06: GitHub was not creating runs for pushed commits (a
+    # close/reopen of the PR did not trigger one either), so the head sat with an empty rollup
+    # while the branch looked mergeable. Recovered with `gh workflow run rust.yml --ref <branch>`.
+    # Compared as a string rather than piped through `jq -e length`: `gh --jq` is gh's *built-in*
+    # jq, but an external `jq` is not on a default Windows PATH (it happens to be here via scoop),
+    # and a gate that silently degrades where its dependency is missing is worse than no gate.
+    if [ "$(printf '%s' "$STATES" | tr -d '[:space:]')" = "[]" ]; then
+        echo "Error: no checks have reported for this commit at all."
+        echo "       That is not the same as passing. GitHub sometimes fails to create a run;"
+        echo "       force one with: gh workflow run rust.yml --ref $BRANCH"
+        exit 1
+    fi
+
     if echo "$STATES" | grep -q '""'; then
         echo "Error: checks are still running. Wait for them, or merge deliberately with gh."
         exit 1
@@ -406,7 +459,7 @@ merge-pr:
     echo "Deleting local branch $BRANCH..."
     git branch -D "$BRANCH" 2>/dev/null || true
     git fetch --prune
-    echo ""
+    @echo ""
     echo "Reminder: update WIP.md (active branch, latest commit, open tasks) before"
     echo "ending the session or switching machines — AGENTS.md Part 1 section 3."
 
@@ -487,7 +540,7 @@ pr:
     echo "  [ ] PLAN.md updated if a design decision changed (it is the design record)"
     echo "  [ ] No live infrastructure identifiers added to tracked files (see WIP.md)"
     echo "  [ ] Safety rules observed: no prune against the shared repo, no snapshots deleted"
-    echo ""
+    @echo ""
 
     # The checklist is a human gate, so it must stay a deliberate act — but it must not
     # deadlock a caller that has no terminal. An agent shell, a CI step or a pipeline all

@@ -59,10 +59,17 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
-    # Skipped on version tags AND on the weekly schedule — `full-test` covers both, and on a
-    # schedule event `github.ref_type` is 'branch', so without the second clause this job would
-    # run alongside it and test the same commit twice.
-    if: github.ref_type != 'tag' && github.event_name != 'schedule'
+    # This is the **pull-request** gate. It is skipped wherever `full-test` runs instead — on
+    # version tags, on the weekly schedule, and (since `0.2.1`) on a push to `main` — because on
+    # all of those `github.ref_type` is 'branch' for two of the three, so without naming the
+    # events explicitly this job would run alongside `full-test` and test the same commit twice.
+    #
+    # It still runs on `workflow_dispatch`, deliberately: a dispatch is how someone asks for
+    # everything, and that is the one case where the overlap is the point.
+    if: >-
+      github.ref_type != 'tag'
+      && github.event_name != 'schedule'
+      && github.event_name != 'push'
     # Two platforms are deliberately absent from this matrix and present in `full-test`, so
     # every one of them still runs on every tag and manual dispatch. Both removals follow the
     # same rule: **drop a leg only when it is the intersection of two things each already
@@ -162,12 +169,26 @@ jobs:
   full-test:
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
-    # Version tags, the weekly schedule, or a manual dispatch.
+    # Version tags, a push to a branch (i.e. a merge to `main`), the weekly schedule, or a manual
+    # dispatch.
     #
-    # The schedule is what makes this job worth having before a release rather than during one;
-    # see the `on:` block. `build-release` and `release` stay tag-only, so a weekly run tests
-    # and publishes nothing.
-    if: (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    # **A merge runs this, as of `0.2.1`.** Before, a merge ran only `build` — four host-runner
+    # legs — so `main` was never checked in the release-shaped containers between one release and
+    # the next. That is the `v0.1.21` gap seen from a third angle: the suite that ships was not
+    # run on the branch it ships from. The weekly schedule (`0.1.31`) narrowed the window; this
+    # closes it, at the cost of a 7-platform matrix per merge, which is the right trade for the
+    # one branch releases are cut from.
+    #
+    # `ref_type == 'branch'` is load-bearing on the push clause: a **tag** push is also
+    # `event_name == 'push'`, and without it a tag would match twice.
+    #
+    # `build-release` and `release` stay tag-only, so a merge or a weekly run tests everything and
+    # publishes nothing.
+    if: >-
+      (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v'))
+      || (github.event_name == 'push' && github.ref_type == 'branch')
+      || github.event_name == 'workflow_dispatch'
+      || github.event_name == 'schedule'
 
     strategy:
       matrix:
@@ -231,6 +252,29 @@ jobs:
 
     - name: Format check
       run: cargo fmt -- --check
+
+    # Duplicated from `build` rather than left there, and the duplication is the cheaper half of
+    # the trade. `build` no longer runs on a merge and never ran on a tag, so these two checks
+    # would otherwise be absent from exactly the commits that ship: a stale golden could reach a
+    # release, and nothing would have run the binary at all.
+    #
+    # They are seconds each. Losing them on the release path to avoid repeating them would be
+    # optimising the wrong thing.
+    - name: Golden argv files are current
+      shell: bash
+      run: |
+        RP_UPDATE_GOLDEN=1 cargo test --test cli_tests golden_ -q
+        if [ -n "$(git status --porcelain -- tests/golden)" ]; then
+          echo "::error::tests/golden is stale — run 'just golden' and commit the result"
+          git --no-pager diff -- tests/golden
+          exit 1
+        fi
+
+    - name: Smoke test the binary
+      # `shell: bash` for the same reason as in `build`: the Windows runner's default shell is
+      # PowerShell, where `> /dev/null` creates a file called `dev\null` instead of discarding.
+      shell: bash
+      run: cargo run --release -- --completions bash > /dev/null
 
   build-release:
     needs: full-test
