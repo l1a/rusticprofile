@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.0)
+## Current State (v0.2.1)
 
 **Windows is a fully supported platform as of `0.2.0`**, including scheduling: `schedule`,
 `unschedule` and `status` drive **Task Scheduler**, the third backend. 344 tests green there (294
@@ -520,6 +520,67 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.1 — a merge now runs the suite it ships from, and two gates that could not fail
+
+**CI configuration and tooling only; no product code changed.** Both halves are the same defect in
+different clothes: **a check that cannot fail is not a check.**
+
+#### A merge to `main` now runs `full-test`
+
+Before this, a merge ran `build` and nothing else — four host-runner legs. `full-test` ran on tags,
+on the weekly schedule and on dispatch, but never on the branch releases are cut from, so between
+one release and the next `main` was never checked in the release-shaped containers.
+
+That is the `v0.1.21` gap from a third angle. `0.1.30` narrowed the pull-request matrix and named
+the risk; `0.1.31` added the weekly schedule and called the gap closed. It was not: a merge on
+Monday afternoon had six days before anything ran the containers over it.
+
+`full-test` now also triggers on a push to a branch. **`ref_type == 'branch'` is load-bearing** on
+that clause, because a tag push is *also* `event_name == 'push'` and would otherwise match twice.
+
+**`build` is skipped on push in exchange**, so a merge runs seven jobs rather than eleven. The
+workflow already stated that rule for the `schedule` event — "without the second clause this job
+would run alongside it and test the same commit twice" — and this applies it to the new case. The
+resulting matrix, verified by evaluating both expressions over every event shape this repo
+produces:
+
+| event | `build` | `full-test` |
+|---|---|---|
+| pull request | ✅ | — |
+| **merge to `main`** | — | **✅** |
+| version tag | — | ✅ |
+| weekly schedule | — | ✅ |
+| manual dispatch | ✅ | ✅ |
+
+Dispatch deliberately runs both: it is how someone asks for everything.
+
+#### Two checks were about to be lost, and one had never run where it mattered
+
+`build` carries the **golden-staleness gate** and the **binary smoke test**; `full-test` did not.
+Skipping `build` on merges would have dropped both from the release path — and they were *already*
+absent from tags, since `build` has always been skipped there. So a stale golden could have reached
+a release, and nothing would have run the binary at all.
+
+Both now run in `full-test` too. The duplication is seconds; losing them on the path that ships
+would have been the expensive half of that trade.
+
+#### `just merge-pr` reported "CI is green" when nothing had run
+
+The gate refuses on `FAILURE`/`TIMED_OUT`/`CANCELLED`/`ACTION_REQUIRED` and on a still-running
+check. An **empty** rollup matches none of those, so it printed *"CI is green."* and merged.
+
+**Hit for real on 2026-08-06**, which is how it was found rather than reasoned about: GitHub was
+not creating workflow runs for pushed commits — a close/reopen of the PR did not trigger one
+either — so the head sat with an empty rollup while the branch looked perfectly mergeable. That is
+`v0.1.5` one layer up: that release added this gate because a red check had been merged over, and
+"nothing ran" is a state the gate could not distinguish from "everything passed".
+
+It now refuses on an empty rollup and names the recovery (`gh workflow run rust.yml --ref <branch>`).
+The check is a string comparison rather than `jq -e length`: `gh --jq` is gh's *built-in* jq, but an
+external `jq` is not on a default Windows PATH, and a gate that silently degrades where its
+dependency is missing is the thing being fixed, not a way to fix it. Exercised against all four
+rollup shapes — empty, whitespace-only, all-success, and one still running.
 
 ### v0.2.0 — Windows is a supported platform
 

@@ -385,6 +385,25 @@ merge-pr:
     echo "Checking CI on this branch..."
     STATES=$(gh pr view --json statusCheckRollup \
         --jq '[.statusCheckRollup[]? | select(.conclusion != "SKIPPED") | .conclusion]' 2>/dev/null || echo '[]')
+
+    # NO checks at all is not "green", and this arm exists because the gate below cannot tell
+    # the difference. An empty rollup matches neither `""` nor FAILURE, so without this the
+    # recipe printed "CI is green." and merged a commit CI had never seen — the v0.1.5 failure
+    # one layer up, where "nothing ran" is indistinguishable from "everything passed".
+    #
+    # Hit for real on 2026-08-06: GitHub was not creating runs for pushed commits (a
+    # close/reopen of the PR did not trigger one either), so the head sat with an empty rollup
+    # while the branch looked mergeable. Recovered with `gh workflow run rust.yml --ref <branch>`.
+    # Compared as a string rather than piped through `jq -e length`: `gh --jq` is gh's *built-in*
+    # jq, but an external `jq` is not on a default Windows PATH (it happens to be here via scoop),
+    # and a gate that silently degrades where its dependency is missing is worse than no gate.
+    if [ "$(printf '%s' "$STATES" | tr -d '[:space:]')" = "[]" ]; then
+        echo "Error: no checks have reported for this commit at all."
+        echo "       That is not the same as passing. GitHub sometimes fails to create a run;"
+        echo "       force one with: gh workflow run rust.yml --ref $BRANCH"
+        exit 1
+    fi
+
     if echo "$STATES" | grep -q '""'; then
         echo "Error: checks are still running. Wait for them, or merge deliberately with gh."
         exit 1
