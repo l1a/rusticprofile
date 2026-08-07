@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.5)
+## Current State (v0.2.6)
 
 **`v0.2.2` is released on GitHub *and* on crates.io** as of 2026-08-07 — the registry had been
 stuck on `0.1.34` since 2026-08-04, which mattered more than usual because `0.2.2` is the first
@@ -535,6 +535,84 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.6 — every scheduled run opened a terminal window
+
+**Reported by Ken watching his own machine, not by a test:** each hourly backup popped a terminal
+window that appeared and vanished. It had done so since `0.2.0` declared Windows supported.
+
+#### Why it happens, and why it is not a setting
+
+Task Scheduler can run a task as the logged-on user only through `<LogonType>InteractiveToken</LogonType>`,
+which starts it **inside that desktop session** — and Windows gives a console-subsystem program a
+console there. Measured on Windows 11 by enumerating top-level windows during a real scheduled run:
+
+```
+class=CASCADIA_HOSTING_WINDOW_CLASS  proc=WindowsTerminal  title='C:\Users\user\.cargo\bin\rusticprofile.exe'
+```
+
+`<Hidden>` is the setting that *sounds* responsible and is not: it hides the task in the Task
+Scheduler UI, not its window.
+
+**The logon types that avoid the interactive session all need rights an ordinary account does not
+hold.** `S4U` and a stored password both require `SeBatchLogonRight`, granted by default to
+Administrators and Backup Operators; `LocalSystem` needs elevation to register. Measured on a
+standard account whose only groups are `Users` and `Authenticated Users`: registering an otherwise
+identical task with `<LogonType>S4U</LogonType>` fails with `ERROR: Access is denied.` So this
+cannot be fixed in the task definition, and a tool that only worked for administrators would be
+the wrong answer.
+
+#### The fix: `run --background`, emitted by `schedule`
+
+`FreeConsole` at startup, plus `CREATE_NO_WINDOW` on every child. **Both halves are required and
+neither works alone** — a child console program started from a process that has no console gets a
+*new* one, so detaching by itself would move the window to rustic rather than remove it, later and
+harder to attribute.
+
+**`FreeConsole`, not `ShowWindow(GetConsoleWindow(), SW_HIDE)`.** Where the default terminal is
+Windows Terminal the console is a pseudoconsole, and `GetConsoleWindow` returns the pseudoconsole's
+own window rather than the visible terminal window — so hiding it hides the wrong window. Detaching
+does not depend on which terminal is hosting.
+
+**The flag is on the argv rather than in the definition** because it is the process that must
+detach; the definition cannot express it. It is unconditional for every job, schedule and priority,
+and a test asserts that across the matrix — one job generated without it is one job with an hourly
+window.
+
+#### The regression this introduced, caught by running it
+
+The first version detached and left `Stdio::inherit()` in place. **`FreeConsole` closes this
+process's standard handles**, so `CreateProcess` was handed invalid ones and refused the whole
+spawn:
+
+```
+backup   failure  could not run `rustic.EXE`: The request is not supported. (os error 50)
+forget   skipped  did not run, because an earlier operation stopped the job
+```
+
+That message names neither the console nor the handles and reads like a broken rustic install. A
+detached run now uses `Stdio::null()` for stdin and stderr; `Stdout::Capture` is untouched, because
+`backup` needs the `--json` objects regardless of who is watching (§5.8). Nothing is lost that was
+being read: in a scheduled run stderr already went to a console nobody saw, and the run's record
+goes to the `log:` file.
+
+**It was caught only because the run was performed and its outcome checked** — the window had gone,
+the tests were green, and the backup was failing. `status` reporting `failure` with `forget`
+skipped is what surfaced it. *A check is only worth what its oracle is worth*, and "the window is
+gone" is not an oracle for "the backup still works".
+
+#### What this does not do
+
+**A sub-50 ms flash remains.** The console is created by the OS before any of this crate's code
+runs, so the window exists between process start and `FreeConsole`. Measured by sampling every
+50 ms across a run: visible in **1 sample of ~900**, against every sample for the whole ~7 s run
+before the change. Removing it entirely needs the task to launch something that is not a console
+program — a GUI-subsystem launcher binary — which is a second artefact through build, release and
+packaging, and is not obviously worth it for one frame.
+
+`exec::run`'s signature is deliberately unchanged: the suppression state is a process-global in the
+existing `INTERRUPTED` idiom, because adding a parameter to a public function would break an
+exhaustive caller and force a minor bump under §3 for a platform detail with one call site.
 
 ### v0.2.5 — `schedule` could never find rustic on Windows
 

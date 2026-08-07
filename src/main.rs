@@ -53,9 +53,40 @@ fn recorded_host_line(config: &rusticprofile::config::Config) -> Option<String> 
     }
 }
 
+/// Detach from the console this process was given, so no window is shown.
+///
+/// Task Scheduler can only run a task as the logged-on user via `InteractiveToken`, which
+/// starts it in that desktop session, and Windows hands a console-subsystem program a console
+/// there. Measured on Windows 11: a scheduled run produced a visible window owned by the
+/// default terminal, titled with the binary's path.
+///
+/// **`FreeConsole`, not `ShowWindow(GetConsoleWindow(), SW_HIDE)`.** Where the default terminal
+/// is Windows Terminal, the console is a pseudoconsole and `GetConsoleWindow` returns the
+/// pseudoconsole's own window rather than the visible terminal window — so hiding it hides the
+/// wrong window and leaves the visible one alone. Detaching does not depend on which terminal
+/// is hosting.
+///
+/// Returns whether the console was released, so the caller can decide what to tell the user.
+/// A failure is not fatal: the run should still happen, it will just be visible.
+#[cfg(windows)]
+fn detach_console() -> bool {
+    // SAFETY: FreeConsole takes no arguments and only affects this process's console
+    // attachment. Called once, before any child is spawned.
+    unsafe { windows_sys::Win32::System::Console::FreeConsole() != 0 }
+}
+
 fn main() -> ExitCode {
     restore_default_sigpipe();
     let cli = Cli::parse();
+
+    // Before anything writes to stderr, so nothing is half-written to a console that is about
+    // to disappear. Ordering matters the other way too: children must be told not to allocate
+    // a console of their own, or the window moves to rustic instead of going away.
+    #[cfg(windows)]
+    if matches!(&cli.command, Some(Command::Run(a)) if a.background) {
+        detach_console();
+        rusticprofile::exec::suppress_child_windows();
+    }
 
     if let Some(shell) = cli.completions {
         emit_completions(shell);
