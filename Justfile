@@ -367,7 +367,7 @@ aur-publish:
     echo
     echo -e "${BOLD}About to publish rusticprofile $PKGVER to the AUR.${NC}"
     echo "This is public and immediate."
-    @echo ""
+    echo ""
     # Same three-way answer as the pre-PR gate: an env var for non-interactive callers, a
     # terminal for humans, piped input otherwise — and never a block that hangs.
     if [ -n "${AUR_CONFIRM:-}" ]; then
@@ -459,7 +459,7 @@ merge-pr:
     echo "Deleting local branch $BRANCH..."
     git branch -D "$BRANCH" 2>/dev/null || true
     git fetch --prune
-    @echo ""
+    echo ""
     echo "Reminder: update WIP.md (active branch, latest commit, open tasks) before"
     echo "ending the session or switching machines — AGENTS.md Part 1 section 3."
 
@@ -540,7 +540,7 @@ pr:
     echo "  [ ] PLAN.md updated if a design decision changed (it is the design record)"
     echo "  [ ] No live infrastructure identifiers added to tracked files (see WIP.md)"
     echo "  [ ] Safety rules observed: no prune against the shared repo, no snapshots deleted"
-    @echo ""
+    echo ""
 
     # The checklist is a human gate, so it must stay a deliberate act — but it must not
     # deadlock a caller that has no terminal. An agent shell, a CI step or a pipeline all

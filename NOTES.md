@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.1)
+## Current State (v0.2.2)
 
 **Windows is a fully supported platform as of `0.2.0`**, including scheduling: `schedule`,
 `unschedule` and `status` drive **Task Scheduler**, the third backend. 344 tests green there (294
@@ -520,6 +520,56 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.2 — `@` leaked into three shebang recipes
+
+**Tooling only. A regression from `0.2.1`, found by the recipe it broke.**
+
+`0.2.1` converted `install-completions` to a plain recipe and silenced its comment lines with `@#`.
+Both edits were applied with a global regex:
+
+```
+perl -0pi -e 's{^    #$}{    \@#}gm'
+sed  -i    's/^    echo ""$/    @echo ""/'
+```
+
+Each matched **every** such line in the file, not only the ones inside the recipe being edited. In
+a *plain* recipe `@` means "do not echo this line"; in a **shebang** recipe the body is a script,
+so bash receives `@#` and `@echo` as commands:
+
+```
+merge-pr: line 413: @#: command not found
+merge-pr: line 462: @echo: command not found
+```
+
+Landed in `merge-pr`, `pr` and `aur-publish` — the recipes that open and merge pull requests.
+
+**This is `PLAN.md` §7.4's rule** — *do not make structural edits to safety-critical files by
+string matching* — applied to the file that holds the gates rather than to a rustic profile. It is
+the same shape as the scripted edit that once deleted `[snapshot-filter]` by matching `[forget]`
+inside a comment.
+
+#### What is worth keeping is how badly the *checking* went
+
+Three consecutive attempts to find the strays were themselves unreliable, and each failed
+differently:
+
+1. A scan piped through `head -40` **truncated the evidence**, so six of seven were fixed and one
+   at line 595 was missed entirely. A bounded search reporting a partial answer as if it were
+   complete is the emptiness-check failure `~/AGENTS.md` records for `ls <glob>`.
+2. An `awk` state machine tracking "am I inside a shebang recipe" reported **zero** while a known
+   breakage sat at line 462 — blank lines inside a recipe body reset its state.
+3. A regex for recipe headers missed `flamegraph *ARGS="":`, so two *correct* `@` lines in a plain
+   recipe were briefly counted as broken.
+
+The check that finally worked does not parse the file at all: it asks **just** for each recipe body
+(`just --show`), decides whether it is a shebang recipe from that body, and greps only then. **The
+tool that defines the semantics is the only reliable oracle for them** — the same lesson as
+`v0.1.5` (asking `hostname(1)` instead of the function the binary uses) and `v0.1.14` (asking a
+non-interactive shell about an interactive `fpath`), arriving for a third time in a new costume.
+
+Verified after the fix by *running* the recipes that broke: `just merge-pr` and `just pr` on `main`
+now refuse with their own messages and exit 1, rather than dying at exit 127 on a missing command.
 
 ### v0.2.1 — a merge now runs the suite it ships from, and two gates that could not fail
 
