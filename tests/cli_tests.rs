@@ -1519,10 +1519,11 @@ fn status_json_names_the_backend_so_a_null_next_run_is_explicable() {
 #[test]
 fn schedule_refuses_when_rustic_cannot_be_resolved() {
     // The unit must carry an absolute path to rustic, because a service manager's PATH is
-    // not the shell's. Measured on both: with `linger` systemd's user manager starts at boot
-    // with `/usr/local/bin:/usr/bin`, and a launchd agent gets
-    // `/usr/bin:/bin:/usr/sbin:/sbin`. If rustic cannot be found there is no correct
-    // unit or agent to write, so nothing is written.
+    // not the shell's. Measured on all three: with `linger` systemd's user manager starts at
+    // boot with `/usr/local/bin:/usr/bin`, a launchd agent gets
+    // `/usr/bin:/bin:/usr/sbin:/sbin`, and a scheduled task stores an absolute command and
+    // never searches at all. If rustic cannot be found there is no correct unit, agent or
+    // task to write, so nothing is written.
     //
     // Runs on macOS as well now that launchd is implemented — previously it returned early
     // there, because `schedule` refused for an unrelated reason and the check was untestable.
@@ -1547,9 +1548,20 @@ fn schedule_refuses_when_rustic_cannot_be_resolved() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(output.status.code(), Some(2), "stderr:\n{stderr}");
+    // The reason must name THIS platform's scheduler. Asserted against a literal rather than
+    // against the binary's own helper: an expectation computed from the code under test
+    // cannot notice the code saying the wrong thing, which is how a systemd-only message came
+    // to be printed verbatim on Windows for two releases.
+    let expected = if cfg!(windows) {
+        "scheduled task"
+    } else if cfg!(target_os = "macos") {
+        "launchd agent"
+    } else {
+        "linger"
+    };
     assert!(
-        stderr.contains("linger"),
-        "the reason must be named: {stderr}"
+        stderr.contains(expected),
+        "the reason must name this platform's scheduler (expected {expected:?}): {stderr}"
     );
     assert_eq!(
         std::fs::read_dir(&unit_dir).map(|d| d.count()).unwrap_or(0),
