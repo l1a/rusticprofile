@@ -410,7 +410,7 @@ merge-pr:
         exit 1
     fi
     # Refuse to merge over a failing check.
-    @#
+    #
     # `gh pr merge` happily merges a red PR when the repository has no branch protection,
     # and "wait for the checks to settle" is not the same as "wait for them to pass" — a
     # merge went in over a failing fedora-x64 leg on #19 for exactly that reason. The gate
@@ -424,7 +424,7 @@ merge-pr:
     # the difference. An empty rollup matches neither `""` nor FAILURE, so without this the
     # recipe printed "CI is green." and merged a commit CI had never seen — the v0.1.5 failure
     # one layer up, where "nothing ran" is indistinguishable from "everything passed".
-    @#
+    #
     # Hit for real on 2026-08-06: GitHub was not creating runs for pushed commits (a
     # close/reopen of the PR did not trigger one either), so the head sat with an empty rollup
     # while the branch looked mergeable. Recovered with `gh workflow run rust.yml --ref <branch>`.
@@ -547,7 +547,7 @@ pr:
     # reach this line with stdin closed or connected to something that will never answer,
     # and a bare `read` there blocks or dies without saying why. Three sources of an
     # answer, tried in order:
-    @#
+    #
     #   1. PR_CONFIRM in the environment — the explicit answer for any non-interactive
     #      caller. It is not a bypass: setting it is the same act of confirmation as
     #      typing y, just recorded where a script can supply it.
@@ -555,7 +555,7 @@ pr:
     #   3. Neither, so read whatever was piped in, bounded by a timeout. `echo y | just
     #      open-pr` keeps working, and a stdin that never answers costs ten seconds
     #      instead of hanging until someone notices.
-    @#
+    #
     # The failure message names PR_CONFIRM, because a gate that cannot be satisfied from
     # the context it failed in is not a gate, it is a wall.
     if [ -n "${PR_CONFIRM:-}" ]; then
@@ -583,16 +583,16 @@ open-pr *ARGS:
     #   just open-pr --title "..." --body-file body.md      # at a terminal
     #   PR_CONFIRM=y just open-pr --title "..." --fill      # script, CI or agent
     #   PR_CONFIRM=y PR_TITLE="..." PR_BODY="..." just open-pr
-    @#
+    #
     # This recipe is the only thing that can gate PR creation: neither `gh` nor `git`
     # has a hook for "a PR is about to open". Being a Justfile recipe rather than
     # editor or agent configuration, it binds every contributor and tool identically.
-    @#
+    #
     # At a terminal gh keeps stdin, so its interactive flow still works when open-pr is
     # called with no arguments. Without one, gh is given an explicitly empty stdin: it
     # would otherwise inherit whatever the gate's checklist prompt drained (`echo y |
     # just open-pr`), and gh reads stdin itself for `--body-file -`.
-    @#
+    #
     # In non-interactive mode, args passed to open-pr are forwarded. Environment variables
     # PR_TITLE, PR_BODY, PR_BODY_FILE, and PR_FILL can also supply options. If no args or
     # title/body/fill options are supplied, non-interactive mode defaults to --fill so
