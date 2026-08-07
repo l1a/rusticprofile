@@ -22,15 +22,25 @@ set positional-arguments := true
 # the whole file. It shipped because it was only ever tested in a shell that had already been
 # fixed up with the PATH entry below — the environment the fix creates, never the one users have.
 #
-# **The shebang recipes are a separate matter and do need a setup step.** They are executed by
-# their own interpreter, so they need `bash` findable, and they use `sha256sum`, `date`, `install`,
-# `grep`, `sed` and `cut`. None of those are on a default Windows PATH, and `find` there resolves
-# to `C:\Windows\system32\find.exe` — a text-search tool, the same shadowing trap `~/AGENTS.md`
-# records for `bfs`/`find` and `eza`/`ls`.
+# **The shebang recipes are a separate matter and do need a setup step.** Three things, and the
+# first has the least helpful error message of the three:
 #
-# Git for Windows ships all of them in `usr\bin`, so prepending that directory makes the whole
-# gate work — verified: `just check` (golden staleness gate included) and `just man` both run
-# green there. Add it to PATH once:
+#   1. **`cygpath`** — on Windows, just translates a shebang recipe's temporary script path with
+#      it, for *any* interpreter. Without it every shebang recipe dies before running a line:
+#
+#          error: could not find `cygpath` executable to translate recipe
+#          `install-completions` shebang interpreter path: program not found
+#
+#      That names neither PATH nor Git, so it reads as a just bug rather than a missing tool.
+#   2. **`bash`** — the interpreter the shebang recipes actually ask for.
+#   3. The **coreutils they call**: `sha256sum`, `date`, `install`, `grep`, `sed`, `cut`. None are
+#      on a default Windows PATH, and `find` there resolves to `C:\Windows\system32\find.exe` — a
+#      text-search tool, the same shadowing trap `~/AGENTS.md` records for `bfs`/`find` and
+#      `eza`/`ls`.
+#
+# Git for Windows ships all of them in `usr\bin`, so prepending that one directory satisfies all
+# three — verified: `just check` (golden staleness gate included), `just man` and
+# `just install-completions` all run green there. Add it to PATH once:
 #
 #     $env:PATH = "$env:USERPROFILE\scoop\apps\git\current\usr\bin;$env:PATH"
 #

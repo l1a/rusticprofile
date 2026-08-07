@@ -556,6 +556,21 @@ four backtick variables evaluate. The shebang recipes still need that PATH entry
 always true and is documented at the top of the Justfile rather than enforced by a setting that
 breaks the file for everyone else.
 
+**That documentation now names `cygpath`,** because it is the requirement with the least helpful
+failure. On Windows just translates a shebang recipe's temporary script path with `cygpath` — for
+*any* interpreter — so without it every shebang recipe dies before running a line:
+
+```
+error: could not find `cygpath` executable to translate recipe `install-completions`
+shebang interpreter path: program not found
+```
+
+That message names neither PATH nor Git, so it reads as a just bug rather than a missing tool. It
+is the same one directory (`usr\bin`) that supplies `bash` and the coreutils, so the fix is
+unchanged — but "add this to PATH" is only actionable if the error can be connected to it.
+`just install-completions` is now listed alongside `just check` and `just man` as verified working
+once it is set.
+
 #### A merge to `main` now runs `full-test`
 
 Before this, a merge ran `build` and nothing else — four host-runner legs. `full-test` ran on tags,
