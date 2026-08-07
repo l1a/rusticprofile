@@ -11,3 +11,17 @@ __pycache__/
 # byte-identical to the file they shadow, and are pure noise in `git status` — one
 # was accidentally committed to PR #49 by a `git add -A <dir>`.
 .syncthing.*
+
+# Syncthing CONFLICT copies — a different filename shape from the line above, and
+# therefore not caught by it: `<name>.sync-conflict-<date>-<time>-<deviceid>.<ext>`.
+#
+# These are worse than the in-progress files, not merely more of them. An in-progress
+# file is byte-identical to what it shadows; a conflict copy is by definition a
+# DIFFERENT version of it. One found on 2026-08-07 was a generated
+# `docs/rusticprofile.1` built from 0.1.31, sitting beside the real 0.2.2 one — so
+# committing it by accident would put a stale man page in the tree under a name that
+# reads as authoritative.
+#
+# It also blocked a release: `cargo publish` refuses on an unclean working directory,
+# and an untracked file counts, so `just publish` failed until it was deleted by hand.
+*.sync-conflict-*
