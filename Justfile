@@ -40,9 +40,15 @@ set positional-arguments := true
 #
 # Git for Windows ships all of them in `usr\bin`, so prepending that one directory satisfies all
 # three — verified: `just check` (golden staleness gate included), `just man` and
-# `just install-completions` all run green there. Add it to PATH once:
+# `just install-completions` all run green there. Add it to PATH once, in whichever shell you
+# actually use:
 #
+#   PowerShell:
 #     $env:PATH = "$env:USERPROFILE\scoop\apps\git\current\usr\bin;$env:PATH"
+#
+#   nushell — note the FORWARD slashes. nu treats `\` as an escape inside double quotes, so the
+#   backslash form fails with `unrecognized escape sequence '\s'`. Windows accepts `/` in PATH.
+#     $env.PATH = ($env.PATH | prepend ($env.USERPROFILE + "/scoop/apps/git/current/usr/bin"))
 #
 # Adjust the prefix for a non-scoop install (typically `C:\Program Files\Git\usr\bin`).
 
@@ -145,54 +151,62 @@ install-man: man
 
 # Install shell completions for all supported shells to XDG user locations
 install-completions: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p "{{BASH_COMP}}" "{{ZSH_COMP}}" "{{FISH_COMP}}" "{{ELVISH_COMP}}" "{{NU_COMP}}" "{{PS_COMP}}"
-    BIN="{{justfile_directory()}}/target/debug/rusticprofile"
-    "$BIN" --completions bash        > "{{BASH_COMP}}/rusticprofile"
-    "$BIN" --completions zsh         > "{{ZSH_COMP}}/_rusticprofile"
-    "$BIN" --completions fish        > "{{FISH_COMP}}/rusticprofile.fish"
-    "$BIN" --completions elvish      > "{{ELVISH_COMP}}/rusticprofile.elv"
-    "$BIN" --completions nushell     > "{{NU_COMP}}/50rusticprofile-completions.nu"
-    "$BIN" --completions power-shell > "{{PS_COMP}}/rusticprofile.ps1"
-    echo "Installed completions for rusticprofile"
-    echo ""
-
-    # zsh only reads completion functions from directories on `fpath`, and
-    # ~/.local/share/zsh/site-functions is NOT on it by default on every distribution.
-    # Writing the file there and printing "auto-loaded" was a lie on any such machine —
-    # the completion silently never loaded, and `rusticprofile config --<tab>` produced
-    # nothing with no indication why. Check instead of claiming.
-    #
-    # `zsh -i` is required, not optional. A non-interactive zsh sources neither .zshrc nor
-    # anything it includes, so `fpath` there is the built-in default and this check reported
-    # NOT ACTIVE on a machine where completion was working perfectly — a false alarm telling
-    # the user to fix something already correct, which is the mirror of the bug it replaced.
-    if command -v zsh >/dev/null 2>&1; then
-        if zsh -i -c 'print -l $fpath' 2>/dev/null | grep -qx "{{ZSH_COMP}}"; then
-            echo "  zsh        auto-loaded from {{ZSH_COMP}}"
-        else
-            echo "  zsh        NOT ACTIVE — {{ZSH_COMP}} is not on your \$fpath."
-            echo "             The file is written but zsh will never read it. Add this to"
-            echo "             ~/.zshrc BEFORE compinit runs, then restart the shell:"
-            echo ""
-            echo "                 fpath+=({{ZSH_COMP}})"
-            echo ""
-        fi
-    fi
-
-    echo "Notes:"
-    echo "  bash       source {{BASH_COMP}}/rusticprofile  (or restart shell)"
-    echo "  fish       auto-loaded from {{FISH_COMP}}"
-    echo "  elvish     add to rc.elv:  eval (slurp < {{ELVISH_COMP}}/rusticprofile.elv)"
-    echo "  nushell    auto-loaded from {{NU_COMP}}"
-    echo "  powershell add to \$PROFILE:  . {{PS_COMP}}/rusticprofile.ps1"
-    echo ""
-    echo "  Shell aliases do not inherit completions automatically. For an alias like"
-    echo "  \`rp\`, tell your shell they are the same command:"
-    echo "      zsh   compdef rp=rusticprofile"
-    echo "      fish  complete -c rp -w rusticprofile"
-    echo "      bash  complete -o default -F _rusticprofile rp"
+    @# Rationale lives INSIDE the body, prefixed `@#`, for two reasons that pull together here.
+    @# just takes the last contiguous comment block ABOVE a recipe as its `--list` description, so
+    @# putting this there replaces the description with its own last line — the v0.1.2 bug. And in
+    @# a non-shebang recipe an unprefixed `#` line is echoed as if it were a command, so the `@`
+    @# is what keeps it quiet. `@#` gives a comment that neither displaces the description nor
+    @# prints: just suppresses the echo, and `sh` treats the rest as a comment.
+    @#
+    @# **This is deliberately NOT a shebang recipe, and that is a portability fix rather than a
+    @# style choice.** On Windows, just translates a shebang recipe's temporary script path with
+    @# `cygpath`, so this recipe used to fail before running a single line:
+    @#
+    @#     error: could not find `cygpath` executable to translate recipe
+    @#     `install-completions` shebang interpreter path: program not found
+    @#
+    @# Identically from PowerShell and from nushell — the calling shell was never the variable,
+    @# and the per-shell PATH workarounds suggested along the way were treating the symptom. A
+    @# plain recipe runs through just's own default `sh -cu`, needs neither `cygpath` nor `bash`,
+    @# and therefore works with no setup at all, from any shell. Measured on a default Windows
+    @# PATH: `mkdir -p` runs, and `sh` resolves the extensionless `.exe`. `install-man` was always
+    @# a plain recipe, which is exactly why it kept working while this one did not.
+    @#
+    @# The cost is that each line is its own shell, so nothing here may depend on state from the
+    @# line above — hence the zsh check being one long line, and the binary path being
+    @# interpolated rather than held in a variable.
+    @mkdir -p "{{BASH_COMP}}" "{{ZSH_COMP}}" "{{FISH_COMP}}" "{{ELVISH_COMP}}" "{{NU_COMP}}" "{{PS_COMP}}"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions bash        > "{{BASH_COMP}}/rusticprofile"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions zsh         > "{{ZSH_COMP}}/_rusticprofile"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions fish        > "{{FISH_COMP}}/rusticprofile.fish"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions elvish      > "{{ELVISH_COMP}}/rusticprofile.elv"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions nushell     > "{{NU_COMP}}/50rusticprofile-completions.nu"
+    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions power-shell > "{{PS_COMP}}/rusticprofile.ps1"
+    @echo "Installed completions for rusticprofile"
+    @echo ""
+    @# zsh only reads completion functions from directories on `fpath`, and
+    @# ~/.local/share/zsh/site-functions is NOT on it by default on every distribution.
+    @# Writing the file there and printing "auto-loaded" was a lie on any such machine —
+    @# the completion silently never loaded, and `rusticprofile config --<tab>` produced
+    @# nothing with no indication why. Check instead of claiming.
+    @#
+    @# `zsh -i` is required, not optional. A non-interactive zsh sources neither .zshrc nor
+    @# anything it includes, so `fpath` there is the built-in default and this check reported
+    @# NOT ACTIVE on a machine where completion was working perfectly — a false alarm telling
+    @# the user to fix something already correct, which is the mirror of the bug it replaced.
+    @if command -v zsh >/dev/null 2>&1; then if zsh -i -c 'print -l $fpath' 2>/dev/null | grep -qx "{{ZSH_COMP}}"; then echo "  zsh        auto-loaded from {{ZSH_COMP}}"; else printf '  zsh        NOT ACTIVE — %s is not on your $fpath.\n             The file is written but zsh will never read it. Add this to\n             ~/.zshrc BEFORE compinit runs, then restart the shell:\n\n                 fpath+=(%s)\n\n' "{{ZSH_COMP}}" "{{ZSH_COMP}}"; fi; fi
+    @echo "Notes:"
+    @echo "  bash       source {{BASH_COMP}}/rusticprofile  (or restart shell)"
+    @echo "  fish       auto-loaded from {{FISH_COMP}}"
+    @echo "  elvish     add to rc.elv:  eval (slurp < {{ELVISH_COMP}}/rusticprofile.elv)"
+    @echo "  nushell    auto-loaded from {{NU_COMP}}"
+    @echo "  powershell add to \$PROFILE:  . {{PS_COMP}}/rusticprofile.ps1"
+    @echo ""
+    @echo "  Shell aliases do not inherit completions automatically. For an alias like"
+    @echo "  \`rp\`, tell your shell they are the same command:"
+    @echo "      zsh   compdef rp=rusticprofile"
+    @echo "      fish  complete -c rp -w rusticprofile"
+    @echo "      bash  complete -o default -F _rusticprofile rp"
 
 # Run criterion micro-benchmarks (none yet — see the NOTES.md backlog)
 bench:
@@ -353,7 +367,7 @@ aur-publish:
     echo
     echo -e "${BOLD}About to publish rusticprofile $PKGVER to the AUR.${NC}"
     echo "This is public and immediate."
-    echo ""
+    @echo ""
     # Same three-way answer as the pre-PR gate: an env var for non-interactive callers, a
     # terminal for humans, piped input otherwise — and never a block that hangs.
     if [ -n "${AUR_CONFIRM:-}" ]; then
@@ -396,7 +410,7 @@ merge-pr:
         exit 1
     fi
     # Refuse to merge over a failing check.
-    #
+    @#
     # `gh pr merge` happily merges a red PR when the repository has no branch protection,
     # and "wait for the checks to settle" is not the same as "wait for them to pass" — a
     # merge went in over a failing fedora-x64 leg on #19 for exactly that reason. The gate
@@ -410,7 +424,7 @@ merge-pr:
     # the difference. An empty rollup matches neither `""` nor FAILURE, so without this the
     # recipe printed "CI is green." and merged a commit CI had never seen — the v0.1.5 failure
     # one layer up, where "nothing ran" is indistinguishable from "everything passed".
-    #
+    @#
     # Hit for real on 2026-08-06: GitHub was not creating runs for pushed commits (a
     # close/reopen of the PR did not trigger one either), so the head sat with an empty rollup
     # while the branch looked mergeable. Recovered with `gh workflow run rust.yml --ref <branch>`.
@@ -445,7 +459,7 @@ merge-pr:
     echo "Deleting local branch $BRANCH..."
     git branch -D "$BRANCH" 2>/dev/null || true
     git fetch --prune
-    echo ""
+    @echo ""
     echo "Reminder: update WIP.md (active branch, latest commit, open tasks) before"
     echo "ending the session or switching machines — AGENTS.md Part 1 section 3."
 
@@ -526,14 +540,14 @@ pr:
     echo "  [ ] PLAN.md updated if a design decision changed (it is the design record)"
     echo "  [ ] No live infrastructure identifiers added to tracked files (see WIP.md)"
     echo "  [ ] Safety rules observed: no prune against the shared repo, no snapshots deleted"
-    echo ""
+    @echo ""
 
     # The checklist is a human gate, so it must stay a deliberate act — but it must not
     # deadlock a caller that has no terminal. An agent shell, a CI step or a pipeline all
     # reach this line with stdin closed or connected to something that will never answer,
     # and a bare `read` there blocks or dies without saying why. Three sources of an
     # answer, tried in order:
-    #
+    @#
     #   1. PR_CONFIRM in the environment — the explicit answer for any non-interactive
     #      caller. It is not a bypass: setting it is the same act of confirmation as
     #      typing y, just recorded where a script can supply it.
@@ -541,7 +555,7 @@ pr:
     #   3. Neither, so read whatever was piped in, bounded by a timeout. `echo y | just
     #      open-pr` keeps working, and a stdin that never answers costs ten seconds
     #      instead of hanging until someone notices.
-    #
+    @#
     # The failure message names PR_CONFIRM, because a gate that cannot be satisfied from
     # the context it failed in is not a gate, it is a wall.
     if [ -n "${PR_CONFIRM:-}" ]; then
@@ -569,16 +583,16 @@ open-pr *ARGS:
     #   just open-pr --title "..." --body-file body.md      # at a terminal
     #   PR_CONFIRM=y just open-pr --title "..." --fill      # script, CI or agent
     #   PR_CONFIRM=y PR_TITLE="..." PR_BODY="..." just open-pr
-    #
+    @#
     # This recipe is the only thing that can gate PR creation: neither `gh` nor `git`
     # has a hook for "a PR is about to open". Being a Justfile recipe rather than
     # editor or agent configuration, it binds every contributor and tool identically.
-    #
+    @#
     # At a terminal gh keeps stdin, so its interactive flow still works when open-pr is
     # called with no arguments. Without one, gh is given an explicitly empty stdin: it
     # would otherwise inherit whatever the gate's checklist prompt drained (`echo y |
     # just open-pr`), and gh reads stdin itself for `--body-file -`.
-    #
+    @#
     # In non-interactive mode, args passed to open-pr are forwarded. Environment variables
     # PR_TITLE, PR_BODY, PR_BODY_FILE, and PR_FILL can also supply options. If no args or
     # title/body/fill options are supplied, non-interactive mode defaults to --fill so
