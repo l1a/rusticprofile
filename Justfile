@@ -8,14 +8,25 @@
 # losing quoting via textual {{ARGS}} interpolation (see open-pr).
 set positional-arguments := true
 
-# On Windows, run non-shebang recipes under Git's bash rather than whatever `sh` happens to be
-# first on PATH — every recipe here is written for a POSIX shell.
+# **There is deliberately no `set windows-shell` here. Adding one broke Windows in `0.2.0`.**
 #
-# **The shebang recipes need more than this, and it is a setup step rather than a Justfile
-# problem.** They are executed by their own interpreter, so they need `bash` findable, and they
-# use `sha256sum`, `date`, `install`, `grep`, `sed` and `cut`. None of those are on a default
-# Windows PATH, and `find` there resolves to `C:\Windows\system32\find.exe` — a text-search tool,
-# which is the same shadowing trap `~/AGENTS.md` records for `bfs`/`find` and `eza`/`ls`.
+# `0.2.0` set it to `["bash", "-cu"]`, reasoning that the recipes are POSIX and should not depend
+# on whichever `sh` is first on PATH. That was wrong in the worst direction: `bash` is *not* on a
+# default Windows PATH, while `sh` often is — so the setting turned a Justfile that worked into
+# one where **every backtick variable below failed to evaluate**, taking down `just install` and
+# anything else that reads them:
+#
+#     error: backtick could not be run because just could not find the shell: program not found
+#
+# just's own default is already `sh -cu`, which resolves. So the setting bought nothing and cost
+# the whole file. It shipped because it was only ever tested in a shell that had already been
+# fixed up with the PATH entry below — the environment the fix creates, never the one users have.
+#
+# **The shebang recipes are a separate matter and do need a setup step.** They are executed by
+# their own interpreter, so they need `bash` findable, and they use `sha256sum`, `date`, `install`,
+# `grep`, `sed` and `cut`. None of those are on a default Windows PATH, and `find` there resolves
+# to `C:\Windows\system32\find.exe` — a text-search tool, the same shadowing trap `~/AGENTS.md`
+# records for `bfs`/`find` and `eza`/`ls`.
 #
 # Git for Windows ships all of them in `usr\bin`, so prepending that directory makes the whole
 # gate work — verified: `just check` (golden staleness gate included) and `just man` both run
@@ -24,7 +35,6 @@ set positional-arguments := true
 #     $env:PATH = "$env:USERPROFILE\scoop\apps\git\current\usr\bin;$env:PATH"
 #
 # Adjust the prefix for a non-scoop install (typically `C:\Program Files\Git\usr\bin`).
-set windows-shell := ["bash", "-cu"]
 
 BASH_COMP  := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"`
 ZSH_COMP   := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"`

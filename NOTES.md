@@ -526,6 +526,36 @@ renumbering and means the versions below.*
 **CI configuration and tooling only; no product code changed.** Both halves are the same defect in
 different clothes: **a check that cannot fail is not a check.**
 
+#### First: `0.2.0` broke `just` on Windows, and this reverts it
+
+**`set windows-shell := ["bash", "-cu"]` is removed.** It was added in `0.2.0` on the reasoning
+that the recipes are POSIX and should not depend on whichever `sh` is first on PATH. That was
+wrong in the worst available direction: **`bash` is not on a default Windows PATH, while `sh`
+often is** — so it turned a working Justfile into one where every backtick variable failed to
+evaluate, taking `just install` and everything else that reads them down with it:
+
+```
+error: backtick could not be run because just could not find the shell: program not found
+  ——▶ Justfile:29:15
+   │ BASH_COMP  := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"`
+```
+
+just's own default is already `sh -cu`, which resolves. **The setting bought nothing and cost the
+whole file.**
+
+**Why it shipped is the part worth keeping.** Every Windows check during `0.2.0` was run in a shell
+that had already been fixed up with `…/git/current/usr/bin` on PATH — because that is what the
+shebang recipes need. So the Justfile was only ever exercised in *the environment the fix creates*,
+never the one a user has. `just --list` also does not evaluate backticks, so the smoke check that
+looked like it covered this could not have failed. Same family as `0.1.14` asking a
+non-interactive shell about an interactive `fpath`: **a check is only worth what its oracle is
+worth**, and here the oracle was a pre-repaired PATH.
+
+Verified after the revert with a genuinely default PATH — no `bash`, no Git `usr\bin` — that all
+four backtick variables evaluate. The shebang recipes still need that PATH entry; that part was
+always true and is documented at the top of the Justfile rather than enforced by a setting that
+breaks the file for everyone else.
+
 #### A merge to `main` now runs `full-test`
 
 Before this, a merge ran `build` and nothing else — four host-runner legs. `full-test` ran on tags,
