@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.4)
+## Current State (v0.2.5)
 
 **`v0.2.2` is released on GitHub *and* on crates.io** as of 2026-08-07 — the registry had been
 stuck on `0.1.34` since 2026-08-04, which mattered more than usual because `0.2.2` is the first
@@ -500,9 +500,17 @@ Smaller items:
          generated and unit-tested, and it is the answer to the login caveat — so it is the one
          part of the platform still resting on reasoning rather than measurement. It needs an
          elevated shell.
-- [ ] **The fleet's own `jobs.yaml` still uses `${env:HOME}`** (chezmoi-managed, not in this
-      repo), so a Windows host needs `HOME` set until that file changes too. The shipped example
-      no longer does. Separate decision, separate repository.
+- [x] **Done 2026-08-07 — the fleet's own `jobs.yaml` no longer uses `${env:HOME}`.**
+      `defaults.rustic-config-dir` was dropped from the chezmoi-managed file, taking the option
+      `PLAN.md` §7.9 recommended: that key's default is already `$XDG_CONFIG_HOME/rustic` on all
+      three platforms, so the line only restated the default in a form that is unset on Windows.
+      **`HOME` was deliberately not set on the Windows host** — that would have fixed one machine
+      and left the next to rediscover it. Removing a key is safe for a fleet-shared file; adding
+      one is not, which is why §7.9's `${home}` variable stays unbuilt.
+- [x] **Fixed in `0.2.5` — `schedule` could not find rustic on Windows.** `PATH` there holds
+      `rustic.exe` and the resolver joined only the bare name, so it refused on every Windows
+      host with a default config. `PATHEXT` is now honoured. The `0.2.0` end-to-end verification
+      missed it because its throwaway config named rustic explicitly.
 - [ ] **`just check` does not lint test code** — `cargo clippy` runs without `--all-targets`, so
       every `#[cfg(test)]` module has been unlinted since the scaffold. Adding it found one real
       lint (`0.2.0`). Not changed in that release because it may surface more across the
@@ -527,6 +535,72 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.5 — `schedule` could never find rustic on Windows
+
+**`schedule` refused on every Windows host with a default configuration, and had done since
+`0.2.0` declared the platform supported.** Found by running it on the real fleet config rather
+than by a test.
+
+```
+error: could not find `rustic` on PATH, and a unit cannot search PATH for it: with `linger`
+       the systemd user manager starts at boot with a minimal environment that will not
+       include `~/.cargo/bin`.
+```
+
+Every clause of that message is wrong on Windows, and the diagnosis it invites — "rustic is not
+installed" — was wrong too: `rustic.exe` was on `PATH`, at `C:\Users\user\.cargo\bin\rustic.exe`.
+
+#### The defect
+
+`resolve_rustic_binary` searched `PATH` with `dir.join(name)` and nothing else. **Windows `PATH`
+holds `rustic.exe`; there is no file called `rustic`,** so the join tested a path that cannot
+exist and the search always came back empty. `PATHEXT` — the mechanism that makes a bare name
+resolvable at all on Windows — was never consulted.
+
+Candidates are now built by `path_candidates`, a **pure function taking `PATH`, `PATHEXT` and a
+`windows` flag as arguments**. That shape is the `0.1.25` precedent: `std::env::set_var` is
+`unsafe` in edition 2024 and races every other test in the binary, and taking `windows` as a
+parameter means both platforms' behaviour is testable on whichever one runs the suite — the same
+reason `schedule` uses a runtime `cfg!` rather than `#[cfg]`.
+
+**Extensions are tried before the bare name**, because an extensionless file is not something
+`CreateProcess` will launch; the bare name is still tried last, so Unix resolution is unchanged
+and a deliberately extensionless binary is still found. A name that already carries a recognised
+extension is not suffixed again, so `rustic.exe` is not sought as `rustic.exe.exe`. The default
+`PATHEXT` used when the variable is absent is deliberately narrower than the Windows default —
+`.COM;.EXE;.BAT;.CMD`, omitting `.VBS`/`.JS`, which `CreateProcess` will not launch directly, so
+a match on one would bake a path into a task that then fails at run time.
+
+#### Why no test caught it
+
+`0.2.0` verified Task Scheduler end to end on a real machine — register, run, status, unschedule
+— and that verification was genuine. It used a **throwaway config that named rustic explicitly**,
+so the one path a real user takes, a bare `rustic` resolved from `PATH`, was the one path never
+exercised. That is `v0.2.1`'s lesson again in a new costume: *a check is only worth what its
+oracle is worth*, and here the oracle was a config written to make the test convenient.
+
+**The failure was loud, which is the part that worked.** `schedule` refused and wrote nothing,
+exactly as `0.1.10` intended — no task registered against a binary that could not be found, no
+red run at 03:00. The bug cost a person five minutes, not a backup.
+
+#### The error message was systemd-only, on all three platforms
+
+Split into `no_path_fallback_reason()`, which names *this* platform's scheduler: a stored
+absolute command on Windows, `PATH=/usr/bin:/bin:/usr/sbin:/sbin` under launchd, `linger` under
+systemd. A diagnostic that names the wrong subsystem sends the reader to look for a problem that
+does not exist — `~/AGENTS.md` records the same shape as the `bfs`/`find` and `eza`/`ls` traps.
+
+Verified on Windows by generating a real task definition: `Arguments` carries
+`--rustic-binary C:\Users\user\.cargo\bin\rustic.EXE`, with the 24 plain triggers `0.2.0`
+established. 302 unit tests, up from 297.
+
+#### Also here: the `${env:HOME}` backlog item is closed
+
+Not a code change — the fleet's chezmoi-managed `jobs.yaml` dropped `defaults.rustic-config-dir`
+on 2026-08-07, taking the option `PLAN.md` §7.9 recommended, since that key's default is already
+`$XDG_CONFIG_HOME/rustic` on all three platforms. The item is struck below rather than left to go
+stale, which is the `0.2.4` lesson applied to the file `0.2.4` was about.
 
 ### v0.2.4 — `AGENTS.md` said this project was pre-code, for thirty-five releases
 

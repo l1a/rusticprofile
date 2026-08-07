@@ -318,6 +318,88 @@ fn own_binary() -> Result<std::path::PathBuf, ExitCode> {
     })
 }
 
+/// Default `PATHEXT`, used when the variable is absent.
+///
+/// Deliberately shorter than the Windows default, which also lists `.VBS`, `.JS` and friends.
+/// Those are script types `CreateProcess` will not launch directly, so a match on one would
+/// bake a path into a task that then fails at run time — the failure this whole function
+/// exists to move forward to `schedule` time.
+const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD";
+
+/// Every path to try for a bare executable name, in priority order.
+///
+/// Pure, and takes the environment as arguments rather than reading it: `std::env::set_var`
+/// is `unsafe` in edition 2024 and races every other test in the binary, so the `0.1.25`
+/// precedent is to pass the values in. `windows` is a parameter for the same reason — both
+/// behaviours must be testable on whichever platform happens to be running the suite.
+///
+/// **On Windows the extension is not optional.** `PATH` holds `rustic.exe`, never `rustic`,
+/// so joining the bare name finds nothing; extensions are therefore tried *first*, because
+/// an extensionless file on Windows is not something `CreateProcess` will launch. The bare
+/// name is still tried last, so no Unix behaviour changes and a deliberately extensionless
+/// binary is still found.
+fn path_candidates(
+    name: &str,
+    path_var: &std::ffi::OsStr,
+    pathext: Option<&std::ffi::OsStr>,
+    windows: bool,
+) -> Vec<std::path::PathBuf> {
+    let mut suffixes: Vec<String> = Vec::new();
+
+    // A name that already carries a recognised extension is not suffixed again — otherwise
+    // `rustic.exe` would be looked up as `rustic.exe.exe`.
+    let already_extended = windows
+        && std::path::Path::new(name).extension().is_some_and(|e| {
+            let e = format!(".{}", e.to_string_lossy());
+            pathext
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| DEFAULT_PATHEXT.to_string())
+                .split(';')
+                .any(|candidate| candidate.eq_ignore_ascii_case(&e))
+        });
+
+    if windows && !already_extended {
+        let raw = pathext
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| DEFAULT_PATHEXT.to_string());
+        suffixes.extend(
+            raw.split(';')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+        );
+    }
+    // Always last, and on Unix the only one.
+    suffixes.push(String::new());
+
+    let mut out = Vec::new();
+    for dir in std::env::split_paths(path_var) {
+        for suffix in &suffixes {
+            out.push(dir.join(format!("{name}{suffix}")));
+        }
+    }
+    out
+}
+
+/// Why a scheduled run cannot fall back to `PATH`, in the terms of *this* platform's
+/// scheduler.
+///
+/// Split out because the message was systemd-only and was being printed verbatim on Windows,
+/// telling the reader about `linger`, "the systemd user manager" and `~/.cargo/bin` on a
+/// machine that has none of them. A diagnostic that names the wrong subsystem sends the
+/// reader to look for a problem that does not exist.
+fn no_path_fallback_reason() -> &'static str {
+    if cfg!(windows) {
+        "a scheduled task stores an absolute command and cannot search PATH for it"
+    } else if cfg!(target_os = "macos") {
+        "a launchd agent runs with PATH=/usr/bin:/bin:/usr/sbin:/sbin and cannot search \
+         beyond it"
+    } else {
+        "with `linger` the systemd user manager starts at boot with a minimal environment \
+         that will not include `~/.cargo/bin`"
+    }
+}
+
 /// Resolve the configured rustic executable to an absolute path, for a unit file.
 ///
 /// A unit must not depend on the service manager's `PATH`. With `linger` enabled — which it
@@ -348,22 +430,24 @@ fn resolve_rustic_binary(name: &str) -> Result<std::path::PathBuf, ExitCode> {
     // A bare name is resolved against *this* process's PATH — the interactive one, which is
     // the only place we can look. That is the point: what the shell finds now is baked in,
     // rather than left to whatever the service manager happens to have.
-    let found = std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths)
-                .map(|dir| dir.join(name))
-                .find(|p| p.is_file())
-        })
-        .unwrap_or(None);
+    let found = std::env::var_os("PATH").and_then(|paths| {
+        path_candidates(
+            name,
+            &paths,
+            std::env::var_os("PATHEXT").as_deref(),
+            cfg!(windows),
+        )
+        .into_iter()
+        .find(|p| p.is_file())
+    });
 
     match found {
         Some(path) => Ok(path),
         None => {
             eprintln!(
-                "{} could not find `{name}` on PATH, and a unit cannot search PATH for it: \
-                 with `linger` the systemd user manager starts at boot with a minimal \
-                 environment that will not include `~/.cargo/bin`.",
-                "error:".red().bold()
+                "{} could not find `{name}` on PATH, and {}.",
+                "error:".red().bold(),
+                no_path_fallback_reason()
             );
             eprintln!(
                 "       Install rustic, or set `defaults.rustic-binary` to an absolute path."
@@ -1239,4 +1323,80 @@ fn print_job(config: &Config, job: &rusticprofile::config::job::Job) {
         "  profile file   {}",
         config::paths::profile_toml(&config.rustic_config_dir, &job.profile).display()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    fn names(v: &[std::path::PathBuf]) -> Vec<String> {
+        v.iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// The bug this function was rewritten for: `PATH` on Windows holds `rustic.exe`, never
+    /// `rustic`, so joining the bare name found nothing and `schedule` refused on every
+    /// Windows host with a default configuration.
+    #[test]
+    fn windows_looks_for_the_exe_not_only_the_bare_name() {
+        let got = names(&path_candidates("rustic", OsStr::new("/x"), None, true));
+        let exe = got.iter().position(|n| n == "rustic.EXE");
+        let bare = got.iter().position(|n| n == "rustic");
+        assert!(exe.is_some(), "no .EXE candidate at all: {got:?}");
+        assert!(
+            exe < bare,
+            "an extensionless file is not launchable on Windows, so the extension must be \
+             tried first: {got:?}"
+        );
+    }
+
+    /// Unix behaviour must be byte-for-byte what it was, or this fix is a regression on the
+    /// five hosts that were working.
+    #[test]
+    fn unix_resolution_is_exactly_the_bare_name() {
+        let got = names(&path_candidates("rustic", OsStr::new("/x"), None, false));
+        assert_eq!(got, vec!["rustic".to_string()]);
+    }
+
+    #[test]
+    fn an_already_extended_name_is_not_suffixed_twice() {
+        let got = names(&path_candidates("rustic.exe", OsStr::new("/x"), None, true));
+        assert_eq!(
+            got,
+            vec!["rustic.exe".to_string()],
+            "would seek rustic.exe.exe"
+        );
+    }
+
+    #[test]
+    fn pathext_is_honoured_when_the_variable_is_set() {
+        let ext = OsStr::new(".FOO;.BAR");
+        let got = names(&path_candidates(
+            "rustic",
+            OsStr::new("/x"),
+            Some(ext),
+            true,
+        ));
+        assert_eq!(
+            got,
+            vec![
+                "rustic.FOO".to_string(),
+                "rustic.BAR".to_string(),
+                "rustic".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn every_directory_on_the_path_is_tried() {
+        let joined = std::env::join_paths(["/x", "/y"]).unwrap();
+        let got = path_candidates("rustic", &joined, None, false);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(
+            got[0].starts_with("/x") && got[1].starts_with("/y"),
+            "{got:?}"
+        );
+    }
 }
