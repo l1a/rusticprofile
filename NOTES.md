@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.8)
+## Current State (v0.2.9)
 
 **`v0.2.7` is released on GitHub *and* on crates.io** as of 2026-08-07 — registry API
 `max_version 0.2.7`, 185,634 bytes, not yanked, re-confirmed 2026-08-08. It carries `0.2.3`
@@ -541,6 +541,75 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.9 — `just man` half-worked on Windows, and said nothing
+
+**Tooling only; no code changed, and the generated page is byte-identical on this platform.**
+Found while `0.2.8` was being prepared on Linux, because the gate would not pass: `just man`
+regenerated `docs/rusticprofile.1` and `just pr` correctly refused over the diff.
+
+#### The mechanism, measured rather than reasoned about
+
+The committed page had carried 30–31 doubled `\fB\fB` / `\fP\fP` sequences since **`f74e936`
+(#52)** — the release that made Windows the machine this project is cut from. Every page
+generated before that, on Linux and macOS, had zero.
+
+The obvious explanation is a different `mandown`, and it is **wrong**. Regenerating here with
+only the two collapse expressions removed produces a file **byte-identical to what `main`
+carries**, the sole difference being the version in the `.TH` line:
+
+```
+diff <(mandown … | sed -e "s/^[.]TH …/…/")  <(git show main:docs/rusticprofile.1)
+1c1
+< .TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.8" …
+> .TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.7" …
+```
+
+So both hosts' `mandown` emits the same bytes, and within the *same* `sed` invocation the
+`.TH` expression works on Windows while the two collapse expressions do nothing. The
+difference between them is the quoting: `.TH` is written in **double** quotes, the collapses in
+**single** quotes with `\\fB\\fB`.
+
+**A doubled backslash only means "one literal backslash" if every layer between the recipe line
+and `sed` preserves both.** Lose one level anywhere and sed receives `\fB\fB`, where `\f` is a
+**form feed** to GNU sed — so it matches nothing, substitutes nothing, and exits 0. The collapse
+is skipped and the pipeline reports success.
+
+#### The fix is the form, and the guard is the actual repair
+
+`s/[\]fB[\]fB/\\fB/g`. A bracket expression has **no doubling to lose**, so no shell on any
+platform can misread it. Verified idempotent — it is a no-op on already-collapsed input — and
+the regenerated page here is byte-for-byte what the old recipe produced, so this changes the
+mechanism and not the artefact. The `.TH` expression moves to `^[.]TH` for the same reason,
+though it was never the one failing.
+
+**Changing the form is not enough, and this is the part worth keeping.** The defect was never
+that the collapse was wrong — it was that failing to collapse was **silent**. The page still
+built, still rendered, and surfaced weeks later as `just pr` refusing on a different host, with
+nothing connecting the two. So `man` now asserts its post-condition: doubled sequences remaining
+in the output, or a `.TH` line missing the version, are a hard failure naming the platform.
+Tested against a faithful reproduction of the Windows output — 31 doubled sequences — and the
+guard fires; against the correct page it is silent.
+
+*This is the project's own thesis applied to its own tooling: a step that can quietly do nothing
+is exactly what it exists to refuse. `0.2.2` is the near-neighbour — `@` leaking into shebang
+recipes, also in the Justfile, also invisible until something else broke.*
+
+#### Two things this deliberately does not claim
+
+- **It is cosmetic.** Both variants render **byte-identically** through groff, checked with
+  formatting preserved rather than assumed from the source diff. No reader has ever seen a
+  difference; the cost was a gate that could not pass on Linux and a file that would flip back
+  at the next Windows-cut release.
+- **The failure has not been reproduced *on Windows*.** The mechanism above is established
+  from this side — same mandown output, same sed invocation, one expression working and one
+  not — but the exact layer eating the backslash was not measured there. The guard is what makes
+  that acceptable: the next `just man` on the Windows host either collapses correctly or fails
+  loudly.
+
+`man` becomes a shebang recipe to carry the guard. That adds no new requirement on Windows —
+`just check` already depends on `golden-is-current`, which is one too, so anyone running the
+gate already needs Git's `usr\bin` on PATH (documented at the top of the Justfile).
 
 ### v0.2.8 — the AUR package tracks 0.2.7, ten versions on
 
