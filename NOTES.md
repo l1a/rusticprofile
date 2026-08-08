@@ -236,14 +236,17 @@ the validator.
 
 ---
 
-## Current State (v0.2.7)
+## Current State (v0.2.8)
 
-**`v0.2.2` is released on GitHub *and* on crates.io** as of 2026-08-07 — the registry had been
-stuck on `0.1.34` since 2026-08-04, which mattered more than usual because `0.2.2` is the first
-crate that builds on Windows: until it landed, `cargo install rusticprofile` handed a Windows user
-a version that could not compile. Verified three ways rather than from the publish command's own
-report: the registry API (`max_version 0.2.2`, 179,984 bytes, not yanked), `cargo install --locked`
-into a throwaway root **on Windows**, and running that binary.
+**`v0.2.7` is released on GitHub *and* on crates.io** as of 2026-08-07 — registry API
+`max_version 0.2.7`, 185,634 bytes, not yanked, re-confirmed 2026-08-08. It carries `0.2.3`
+through `0.2.7` together, and it is the first published crate that neither opens a window on
+Windows every hour nor fails to find `rustic` on `PATH` there.
+
+*This paragraph described `0.2.2` as the newest release until 2026-08-08, two releases after that
+stopped being true — corrected while bumping the header directly above it. Same shape as `0.2.4`:
+the sentence nobody re-reads is the one that goes stale, and a "Current State" section is exactly
+where that costs the most.*
 
 **Windows is a fully supported platform as of `0.2.0`**, including scheduling: `schedule`,
 `unschedule` and `status` drive **Task Scheduler**, the third backend. 344 tests green there (294
@@ -451,9 +454,12 @@ Smaller items:
       true.* M2 landed in `0.0.19` and `v0.1.0` was tagged and published then, so it was
       followed rather than overtaken. `rusticprofile` was claimed; `rustic-profile` is still
       free and nothing depends on it. crates.io carries **`0.1.31`** as of 2026-08-04.
-      **AUR remains outstanding** — the package is written and container-verified, blocked
-      solely on their maintenance window (rechecked 2026-08-04, still down; check
-      `ssh aur@aur.archlinux.org help`, **not** the web page, which returns 200 throughout).
+      **AUR remains outstanding** — the package is written and container-verified against the
+      released `0.2.7` tarball (`0.2.8`), blocked solely on their maintenance window (rechecked
+      2026-08-08, still down; check `ssh aur@aur.archlinux.org help` **authenticated**, not the
+      web page, which returns 200 throughout, and not a keyless probe, which cannot tell "down"
+      from "will not talk to me"). The name is still unclaimed, so this is a first publish rather
+      than a bump.
 - [x] **Decided in v0.0.5, as the design intended.** A partial backup is `Verdict::Partial`:
       loud in the report, the job continues, `forget` still runs, exit **0**. Partial is only
       claimed on at least one successfully parsed `--json` snapshot object — unparseable,
@@ -535,6 +541,51 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.8 — the AUR package tracks 0.2.7, ten versions on
+
+**Packaging and documentation only; no code changed.** `packaging/aur/` was pinned to `0.1.21`
+and has been superseded ten times since, because the AUR has been in a maintenance window for
+the whole of that period. Re-pointed once, at the newest *released* tag, rather than bumped
+repeatedly through versions nobody could install — the same call `0.1.22` made for the same
+reason.
+
+`pkgver` tracks the **released** tag, not `Cargo.toml` on `main`, which is why this release
+carries `pkgver=0.2.7` while calling itself `0.2.8`. The repository moves on after a release;
+the package does not.
+
+Rebuilt and linted in `archlinux:base-devel` rather than assumed: `makepkg` completes, `check()`
+runs **354 tests, 0 failed**, and — the part that matters — the container reports
+`rustic 0.11.3`, so the three rustic-backed integration tests genuinely ran instead of skipping
+themselves with a printed notice. `namcap PKGBUILD` is clean; the two package warnings
+(`rustic`, `gcc-libs`) are the expected ones. The payload is the binary, three shell
+completions, the gzipped man page, README and LICENSE. `makepkg` validated the refreshed
+`sha256sums` while downloading, which is an independent check on the classic AUR breakage — a
+bumped `pkgver` against a stale checksum, which fails on the user's machine and nowhere else.
+
+**Still not pushed, and the probe technique is the transferable part.** The AUR answers
+`ssh aur@aur.archlinux.org help` with *"The AUR is down due to maintenance. We will be back
+soon."* — while the web page returns **200** and the RPC answers normally with
+`resultcount: 0`. Two of those three endpoints look perfectly healthy and neither is the one
+publishing uses.
+
+**The probe must be authenticated.** A keyless connection cannot distinguish *"the AUR is
+down"* from *"the AUR will not talk to me"*, so it says nothing about maintenance at all —
+`WIP.md` records a session that inferred the window had lifted from exactly that non-evidence.
+The maintenance sentence is the forced command's output, after authentication, not an sshd
+banner. `just aur-publish` probes the same endpoint and refuses on its own.
+
+That `resultcount: 0` also settles a claim this project repeated for days: the name is
+**unclaimed**, so the outstanding work is a *first publish*, not a bump. "The package is still
+at `0.1.21`" was only ever the local `PKGBUILD`'s `pkgver`.
+
+#### Also here: `Current State` had gone two releases stale
+
+Its opening paragraph still announced `0.2.2` as the newest release, with `0.2.7` on GitHub and
+crates.io. Corrected in place, with a note, per the `0.1.16`/`0.1.30`/`0.1.32` precedent. It is
+the `0.2.4` finding arriving again in the file `0.2.4` pointed *to*: **the header nobody
+re-reads is the one that goes stale**, and it went stale here while the version number one line
+above it was being maintained correctly every release.
 
 ### v0.2.7 — a real hostname in two source comments
 
