@@ -1070,7 +1070,7 @@ jobs:
     //
     // Measured against rustic 0.11.3 in a throwaway repository: a profile setting
     // `host = "pinned-name"` produced a snapshot recording `pinned-name` on a machine
-    // called `arrakis`, and `filter-hosts = ["pinned-name"]` matched it. So the recorded
+    // called `host-a`, and `filter-hosts = ["pinned-name"]` matched it. So the recorded
     // name -- not the OS hostname -- is what every host check has to compare against.
 
     #[test]

@@ -151,7 +151,7 @@ pub struct Profile {
     ///
     /// **rustic records whatever this says, not the machine's own name** (measured against
     /// rustic 0.11.3: a profile setting `host = "pinned-name"` produced a snapshot recording
-    /// `pinned-name` on a machine called `arrakis`, and a `filter-hosts` naming the pinned
+    /// `pinned-name` on a machine called `host-a`, and a `filter-hosts` naming the pinned
     /// value matched it). That makes it the right answer to macOS reporting `foo.local`:
     /// pin the short name once and every host in the fleet is written the same way.
     ///

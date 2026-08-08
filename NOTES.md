@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.6)
+## Current State (v0.2.7)
 
 **`v0.2.2` is released on GitHub *and* on crates.io** as of 2026-08-07 — the registry had been
 stuck on `0.1.34` since 2026-08-04, which mattered more than usual because `0.2.2` is the first
@@ -535,6 +535,55 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.7 — a real hostname in two source comments
+
+**Comments only; no behaviour changes.** Two comments describing the same measurement named a real
+fleet machine instead of a placeholder, against §3's rule that this repository — which is public —
+carries no live infrastructure identifiers in tracked files:
+
+```
+src/config/rustic_toml.rs:154   `pinned-name` on a machine called `<real-hostname>`, and a …
+src/config/validate.rs:1073     called `<real-hostname>`, and `filter-hosts = ["pinned-name"]` …
+```
+
+**The quotation above is redacted, and writing this entry is how that lesson arrived a fourth
+time.** The first draft pasted both lines verbatim — so the release note announcing the fix
+carried the very identifier it was removing, into the same tracked, public file. Caught by
+re-running the sweep *after* editing rather than only before. A release entry describing a
+redaction is the one place the value is guaranteed to be typed out again, and quoting the
+before-state is exactly where it hides.
+
+Both lines now say `host-a`, which is already the source tree's ordinary placeholder — 52 uses against
+21 of `host-a.local` and 13 of `host-b`. The measurements and the reasoning are untouched; only
+the machine's name changes.
+
+**A hostname is not a credential, and that is exactly why this kind of line survives.** It reads
+as harmless in isolation, and each one individually is. What makes it worth a release entry is
+that the same file already disagreed with itself: five lines below the `validate.rs` instance, the
+test it introduces gets it right (*"the machine is `host-e.local`"*). So this was an inconsistency
+rather than an unsettled question — the convention was known, applied a few lines away, and missed
+here.
+
+**It is also a repeat, which is the part worth recording.** `0.1.29` removed real identifiers from
+illustrative command output in this same file; `0.2.5`'s work caught another in an example error
+message and in a commit message, amended before pushing. Three instances now, all the same shape:
+**a real value written while documenting a real measurement**, where it reads as decoration rather
+than as data. The measurement is genuine and the name is incidental to it, which is precisely why
+nobody notices.
+
+The scan that finds them needs word boundaries, as §3 warns: at least one of the fleet's names is a
+substring of a common English word, so an unbounded search returns a page of matches inside
+ordinary prose — which trains the reader to skim, and skimming is how a real one survives:
+
+```bash
+git grep -nwE 'name1|name2|…' -- ':!WIP.md'
+```
+
+A full sweep for the other classes §3 names — bucket names, project ids, real home paths — found
+**none**. The only other match is the AUR `PKGBUILD` maintainer line, which is authorship metadata
+the format requires, in the same class as the SPDX copyright headers rather than an infrastructure
+identifier.
 
 ### v0.2.6 — every scheduled run opened a terminal window
 
