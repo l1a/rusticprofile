@@ -138,10 +138,44 @@ install: install-man install-completions
 # package can never disagree about which release is being documented.
 # Generate the man page from Markdown using mandown
 man:
-    @mkdir -p docs
-    @VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f2); \
-    DATE=$(date +"%B %Y"); \
-    mandown docs/rusticprofile.1.md RUSTICPROFILE 1 | sed -e 's/\\fB\\fB/\\fB/g' -e 's/\\fP\\fP/\\fP/g' -e "s/\\.TH \"RUSTICPROFILE\" 1/\\.TH \"RUSTICPROFILE\" \"1\" \"$DATE\" \"rusticprofile $VERSION\" \"Backup Scheduler\"/" > docs/rusticprofile.1
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p docs
+    VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f2)
+    DATE=$(date +"%B %Y")
+
+    # mandown emits nested bold as `\fB\fB…\fP\fP`. Collapsing it is cosmetic — groff
+    # renders both forms byte-identically (measured) — but the two forms are not the same
+    # bytes, so whichever one this recipe produces is what `just pr` demands be committed.
+    # A host that collapses and a host that does not therefore fight over the file forever.
+    #
+    # `[\]fB` rather than `\\fB`, and the difference is the whole point. A doubled backslash
+    # only means "one literal backslash" if every layer between this line and sed preserves
+    # both; lose one level anywhere and sed reads `\f` as a FORM FEED, matches nothing, and
+    # silently emits the uncollapsed form. A bracket expression has no doubling to lose, so
+    # it cannot be misread that way by any shell, on any platform.
+    mandown docs/rusticprofile.1.md RUSTICPROFILE 1 \
+      | sed -e 's/[\]fB[\]fB/\\fB/g' -e 's/[\]fP[\]fP/\\fP/g' \
+            -e "s/^[.]TH \"RUSTICPROFILE\" 1/.TH \"RUSTICPROFILE\" \"1\" \"$DATE\" \"rusticprofile $VERSION\" \"Backup Scheduler\"/" \
+      > docs/rusticprofile.1
+
+    # The defect this guards was not that the collapse was wrong — it was that failing to
+    # collapse was SILENT. The page still built, still rendered identically, and only ever
+    # surfaced as `just pr` refusing to pass on a different host, weeks later, with nothing
+    # connecting the two. So assert the post-condition rather than trusting the pipeline:
+    # a step that can quietly do nothing is exactly what this project exists to refuse.
+    if grep -qF '\fB\fB' docs/rusticprofile.1 || grep -qF '\fP\fP' docs/rusticprofile.1; then
+        echo "error: docs/rusticprofile.1 still contains doubled \\fB\\fB / \\fP\\fP after the" >&2
+        echo "       collapse step, so that step did nothing on this platform. Do not commit" >&2
+        echo "       the file — the divergence is what makes 'just pr' fail on other hosts." >&2
+        echo "       Measure it here (NOTES.md 0.2.9 has the history) rather than working around it." >&2
+        exit 1
+    fi
+    if ! grep -q "rusticprofile $VERSION" docs/rusticprofile.1; then
+        echo "error: the .TH line does not carry 'rusticprofile $VERSION' — the version" >&2
+        echo "       substitution did nothing on this platform." >&2
+        exit 1
+    fi
 
 # Install man page to XDG user location (~/.local/share/man)
 install-man: man
