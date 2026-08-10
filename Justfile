@@ -325,13 +325,39 @@ aur-verify:
 aur-srcinfo:
     #!/usr/bin/env bash
     set -euo pipefail
+    RED='\033[0;31m'; NC='\033[0m'
+    fail() { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
+
     # The AUR rejects a .SRCINFO that disagrees with its PKGBUILD, and the file is pure
     # derived data — so it is generated, never written.
+    OUT="{{justfile_directory()}}/packaging/aur/.SRCINFO"
+
+    # Guarded up front, as `aur-verify` already does. Without it the redirect below fired
+    # first and `podman: command not found` second, so the recipe TRUNCATED the tracked
+    # .SRCINFO to 0 bytes on any host without podman — measured 2026-08-10, 503 -> 0.
+    command -v podman >/dev/null || fail "podman is required (or edit this recipe for docker)"
+
+    # Generated to a temp file and moved into place, never redirected at the real file. A
+    # shell redirect truncates before the command runs, so a failure part-way through — a
+    # missing image, no network, a broken PKGBUILD — would destroy the committed file rather
+    # than leave it alone. The AUR would then reject a 0-byte .SRCINFO on the user's machine
+    # and nowhere else, which is the failure shape this repo exists to refuse.
+    TMP="$(mktemp)"
+    trap 'rm -f "$TMP"' EXIT
+
     # `z`, not `Z` — see the note in `aur-verify`.
     podman run --rm -v "{{justfile_directory()}}/packaging/aur:/pkg:ro,z" archlinux:base-devel bash -c '
         useradd -m builder; mkdir -p /home/builder/b && cp /pkg/PKGBUILD /home/builder/b/
         chown -R builder /home/builder/b; cd /home/builder/b
-        su builder -c "makepkg --printsrcinfo"' > "{{justfile_directory()}}/packaging/aur/.SRCINFO"
+        su builder -c "makepkg --printsrcinfo"' > "$TMP"
+
+    # `makepkg --printsrcinfo` can exit 0 having printed nothing useful, so the content is
+    # checked rather than the exit code: every .SRCINFO begins with a `pkgbase` line.
+    [ -s "$TMP" ] || fail ".SRCINFO came back empty — $OUT left untouched"
+    grep -q '^pkgbase = ' "$TMP" || fail "output has no 'pkgbase =' line — $OUT left untouched"
+
+    mv "$TMP" "$OUT"
+    trap - EXIT
     echo "packaging/aur/.SRCINFO regenerated"
 
 # Point the PKGBUILD at a released tag: bump pkgver, reset pkgrel, refresh the checksum
@@ -632,6 +658,23 @@ open-pr *ARGS:
     # title/body/fill options are supplied, non-interactive mode defaults to --fill so
     # gh pr create finishes cleanly rather than failing with "must provide --title and --body".
     just pr
+
+    # Push the branch if it has no upstream yet. Until 2026-08-10 this recipe pushed nothing,
+    # so on a never-pushed branch `gh pr create` had no remote branch to open a PR from and
+    # failed non-interactively — *after* the gate had printed "Gate passed", which reads as the
+    # gate refusing a change it had just approved. `0.0.21`'s rule applies: a gate that cannot
+    # be satisfied from the context it failed in is a wall rather than a gate.
+    #
+    # Deliberately only when there is no upstream. Pushing unconditionally would make this
+    # recipe silently publish commits on a branch that already has one, which is a different
+    # and more surprising act than "put this branch somewhere gh can see it".
+    if ! git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+        BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+        [ "$BRANCH" != HEAD ] || { echo "detached HEAD — check out a branch first" >&2; exit 1; }
+        echo "no upstream for $BRANCH — pushing it so gh has a remote branch to open from"
+        # pre-push runs `just check`, so this cannot publish a branch the gate would refuse.
+        git push -u origin "$BRANCH"
+    fi
 
     # Filter out empty arguments passed by just when *ARGS is empty
     CLEAN_ARGS=()
