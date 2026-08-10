@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.11)
+## Current State (v0.2.12)
 
 **`v0.2.7` is released on GitHub *and* on crates.io** as of 2026-08-07 — registry API
 `max_version 0.2.7`, 185,634 bytes, not yanked, re-confirmed 2026-08-08. It carries `0.2.3`
@@ -551,6 +551,72 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.12 — `aur-srcinfo` destroyed the file it generates, and `open-pr` now pushes
+
+**Tooling only; no product code changed.** Found by *running every recipe* rather than by reading
+the Justfile — nine of them on this host, which is how the dangerous one surfaced.
+
+#### `just aur-srcinfo` truncated the tracked `.SRCINFO` to 0 bytes
+
+Measured on the Windows host, which has no podman: `503 bytes → 0`, exit 127
+(`podman: command not found`). The recipe ended in
+
+```
+podman run … 'makepkg --printsrcinfo' > "…/packaging/aur/.SRCINFO"
+```
+
+and **a shell redirect truncates its target before the command on the left is even looked up**. So
+the failure did not abort leaving the file alone; it destroyed the file first and then reported that
+podman was missing. Every layer downstream of it makes that worse:
+
+- A 0-byte `.SRCINFO` is exactly what the AUR rejects, and it fails **on the user's machine and
+  nowhere else** — the classic AUR breakage `0.1.2` already built `aur-publish`'s checksum guard
+  against.
+- **`aur-bump` calls `aur-srcinfo`**, so bumping on a podman-less host left `PKGBUILD` rewritten
+  with a new `pkgver`, `pkgrel` and checksum *and* `.SRCINFO` emptied — a half-applied packaging
+  state from one command.
+- Committing it would ship the wreckage, since a 0-byte file is a perfectly valid-looking diff.
+
+**Fixed three ways, because one would not have been enough.** `podman` is now guarded up front, as
+`aur-verify` already did — that alone fixes this host. Generation goes to `mktemp` and is `mv`d into
+place, so **no** failure mode can truncate the real file, including ones nobody has hit yet: a
+missing image, no network, a broken `PKGBUILD`. And the *content* is checked rather than the exit
+code, because `makepkg --printsrcinfo` can exit 0 having printed nothing useful — the output must be
+non-empty and must carry a `pkgbase = ` line, or the recipe refuses and says the file was left
+untouched.
+
+*This is `0.2.9`'s finding in a different recipe: a step that can quietly do nothing — or here,
+quietly do damage — is the thing this project exists to refuse, and its own tooling had two.*
+
+**What is verified and what is not, stated precisely.** The guard and the no-truncation property are
+*measured* on this host: re-running the recipe now leaves `.SRCINFO` at 503 bytes and exits 1 with a
+named cause instead of 127. **The `mktemp` → validate → `mv` path itself is unexercised here**,
+because the podman guard fires before it — so the emptiness and `pkgbase` checks are reviewed rather
+than run. They need one `just aur-srcinfo` on any host that *has* podman to be genuinely covered.
+Recorded rather than left implicit, because "the recipe no
+longer destroys the file" and "every branch of the new recipe works" are different claims and only
+the first is established.
+
+#### `just open-pr` now pushes a branch with no upstream
+
+`0.2.11` documented this and deliberately declined to fix it. The fix is here, one release later,
+which was the right order: the note cost nothing, and the change gets judged on its own.
+
+It pushes **only** when there is no upstream. Pushing unconditionally would make the recipe
+silently publish existing commits, which is a different and more surprising act than "put this
+branch where `gh` can see it". A detached HEAD is refused by name rather than pushed to something
+arbitrary. `pre-push` still runs `just check`, so this cannot publish a branch the gate would
+refuse — the push is inside the gate, not around it.
+
+#### Audited, and working: everything else
+
+`default`, `bench`, `fmt`, `lint`, `install-hooks`, `setup`, `install-man`, `install-completions`
+and `publish-check` all pass on Windows. `aur-verify` already guarded podman correctly. `flamegraph`
+is honestly platform-gated. **`aur-srcinfo` was the only recipe that could damage the repository,
+and it was found by running it, not by reading it** — the same lesson as `0.2.2`, where three
+successive attempts to *read* the Justfile for stray `@` prefixes each gave a different wrong
+answer and asking `just` itself was what worked.
 
 ### v0.2.11 — `just open-pr` does not push, and fails looking like the gate refused
 
