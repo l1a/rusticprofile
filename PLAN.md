@@ -1123,10 +1123,59 @@ is first on PATH.
 `--all-targets`, so test code has never been linted. Running it with `--all-targets` found one
 real lint in `exec`'s test module.*
 
+### `RestartOnFailure` cannot retry a failed backup — measured 2026-08-10
+
+Reported by Ken watching his own machine again, and the same shape as the console window: **every
+run triggered by a resume from Modern Standby failed within ~0.2 s**, `backup saved nothing
+(exit 1)`, `forget` skipped. Four of the ten runs in one day. `StartWhenAvailable` fires the
+missed calendar time as soon as the machine wakes, which is *before* the network is back, so on a
+laptop that sleeps most of the hour the catch-up run is the hourly run and it is systematically
+spent at the one moment guaranteed to fail.
+
+The obvious fix is Task Scheduler's own retry — `<RestartOnFailure>` with an `Interval` and a
+`Count`, the GUI's *"If the task fails, restart every…"*. **It does not work for this, and the
+reason is that it does not mean what the wording suggests.** Four probes on Windows 11, each a
+throwaway task under `\rpretryprobe\` with `RestartOnFailure` `PT1M` × 2, counting real
+invocations by appending to a file:
+
+| probe | how the run started | what the action did | restarts |
+|---|---|---|---|
+| `fail` | `schtasks /Run` | `cmd /c exit 1` | **0** |
+| `trigfail` | a real `TimeTrigger` | `cmd /c exit 1` | **0** |
+| `ok` | `schtasks /Run` | `cmd /c exit 0` | 0 — control |
+| `nolaunch` | `schtasks /Run` | command does not exist | **2**, one minute apart, then stopped |
+
+So `RestartOnFailure` responds to *the task failing to start* — `nolaunch` reported
+`0x80070002` (`ERROR_FILE_NOT_FOUND`) and its `LastRunTime` advanced from 09:53:33 to 09:55:35,
+exactly the initial attempt plus `Count` restarts — and **not to the action's exit code**, whether
+the run was on demand or trigger-fired. rustic exiting 1 because it cannot reach the repository is
+a completely successful *launch*, so the setting is inert for every failure this project can have.
+
+**The `trigfail` probe is the one that earns its place.** There is a real distinction between
+on-demand and triggered runs in Task Scheduler, so an on-demand-only probe would have left the
+negative result attributable to the wrong cause — the `hostname(1)`/`fpath`/named-time-zone
+family of wrong oracles this project keeps rediscovering. Measuring both is what makes the
+conclusion safe to build on.
+
+**Third member of a family now worth naming.** `<Hidden>` sounds like it hides the window and
+hides the task; `StartWhenAvailable` sounded like the cause of the run-on-registration bug and
+was not; `RestartOnFailure` sounds like a retry and is a launch-failure retry. Every one of the
+three cost a session's worth of confident reasoning. **On this platform, read the setting's
+behaviour off a registered task rather than off its name.**
+
 ## Safety rules observed during this testing
 
 Read-only against GCS (`repoinfo`, `snapshots`); every write test in a throwaway local repo under
 `/tmp`, deleted afterwards; no `prune` against GCS; no snapshots deleted on any host.
+
+*Unchanged for the 2026-08-10 retry work: the four probe tasks ran `cmd.exe` and touched no
+repository, and the end-to-end verification of the retry used a shim standing in for rustic —
+ladder rung 2 — so nothing reached GCS. All four tasks and their folder were deleted afterwards
+and the deletion verified, which the earlier `\rpprobe\` probes' cleanup got wrong: `schtasks
+/Delete /TN` was given folder paths, which names no task, so six probe tasks survived for days
+and flashed a console window every hour. **Deleting a task folder takes `Unregister-ScheduledTask`
+per task — with a trailing backslash on `-TaskPath` — and then the Schedule.Service COM
+`DeleteFolder`.***
 
 *Unchanged for the Windows work (2026-08-06): the shared repository was never contacted. Every
 measurement above used a throwaway local repository under the temp directory, and the two
@@ -1649,6 +1698,82 @@ The shipped `config --example jobs` sets `rustic-config-dir: "${env:HOME}/.confi
 The first is right for the example. The second is worth having anyway, later, and separately —
 and neither changes the fleet's own `jobs.yaml`, which is chezmoi-managed and has its own decision
 to make about `${env:HOME}`.
+
+## 7.10 SETTLED: a detached run retries a failed operation (2026-08-10)
+
+**Decision: when — and only when — a run is detached (`run --background`), a failed operation is
+attempted twice more at two-minute intervals before the job stops.** Written here before the
+code, because it reverses a decision this project had already taken.
+
+### What is being reversed, and why the old reasoning stopped holding
+
+`WIP.md` §12, from the first five unattended runs on Linux, recorded the identical failure — a
+21:12 run that died on a DNS lookup to `oauth2.googleapis.com` after a resume — and concluded:
+
+> There is **no retry** after a transient failure — the next hourly run is the retry. For an
+> hourly job that is proportional, but it means the unit sits in `failed` state for up to an
+> hour, which is what a monitor would see.
+
+**That reasoning is still correct on its own terms, and its premise is what failed.** It assumes a
+failed run is an isolated event on a machine that is otherwise awake, so the next hour is a fresh
+and healthy attempt. On a laptop in near-constant Modern Standby the premise inverts: the machine
+is asleep at most calendar times, `StartWhenAvailable` converts each missed one into a run fired
+seconds after a wake, and that is the moment the network is *least* likely to be up. Measured over
+one day on the Windows host, **four of ten runs were resume-races and every one of them failed**,
+while every run that started on a normally-scheduled awake trigger succeeded. The retry is not
+compensating for an unreliable network; it is compensating for the scheduler choosing the worst
+instant in the hour.
+
+Note what is *not* claimed: no backup was lost. Each failure was followed by a successful run
+(21:49 → 22:05, 07:27 → 08:03). What the failures cost is a skipped `forget` — retention not
+running is the failure class that started this project — plus a `failure` verdict a monitor has to
+learn to ignore, and up to an hour of latency on a machine that may sleep again first.
+
+### Why it lives in the runner rather than in the task definition
+
+§5.10 measured the alternative and it does not exist: `RestartOnFailure` retries a task that
+failed to *launch*, not one whose action exited non-zero. `RunOnlyIfNetworkAvailable` was already
+rejected in `schtasks.rs` for a reason that still holds — the repository may be local, and gating
+on the OS's idea of connectivity adds a silent skip. So the only component that knows a run failed
+is this one.
+
+### The four constraints the shape follows from
+
+**1. Detached runs only.** A hand-typed `run` must behave exactly as before — a person watching a
+failure does not want the tool to sit for four minutes before telling them. `--background` is
+emitted only by `schedule`, and on Windows only, so the change is confined to precisely the runs
+that suffer the race. This is the same gate the console detachment uses, for the same reason.
+
+**2. No new `jobs.yaml` key.** A shared config is only ever as new as the oldest binary reading it
+(`NOTES.md` `0.1.24`), so adding a key stops every host still on an older build. Removing one is
+safe; adding one is not. The policy is therefore not configurable, which is also this project's
+default instinct — a closed set with no escape hatch until a data-integrity case demands one.
+
+**3. `run_job`'s signature does not change.** The state is a process-global set once at startup,
+in the idiom `INTERRUPTED` and `NO_CHILD_WINDOW` already establish. `0.2.6` set this precedent
+explicitly: adding a parameter to a public function breaks an exhaustive caller and would force a
+minor bump under §3 for a detail with one call site.
+
+**4. Only a plain `Failure` is retried.** `Interrupted` is a decision, not a fault, and retrying it
+would fight the operator. `Partial` already continues to `forget` by design and needs nothing.
+A `--dry-run` never retries: a dry run exists to answer a question quickly.
+
+### What this deliberately does not do
+
+- **It does not distinguish transient from permanent.** rustic exits 1 for everything that is not
+  a clean success (§5.3) and classification is by `--json` object count, so "cannot reach GCS" and
+  "wrong password" are indistinguishable here. A genuinely broken configuration therefore fails
+  three times instead of once, and the run takes four minutes longer to say so. That is the price,
+  and it is paid only by scheduled runs, where nobody is waiting.
+- **It does not replace §12's rule.** The next scheduled run is still the real backstop; the retry
+  narrows a window, and a network that is down for an hour still produces a failed run.
+- **It is not extended to systemd or launchd.** §12 shows Linux has the same race, so this will
+  probably want to move; but a `Restart=` on a `Type=oneshot` service and launchd's deliberately
+  absent `KeepAlive` are different mechanisms with different failure modes, and inventing a shared
+  abstraction from one measured platform would be designing past the evidence.
+- **It holds the per-job lock across the wait.** Correct rather than incidental: two runs of one
+  job must not overlap, `MultipleInstancesPolicy` is `IgnoreNew`, and the lock is non-blocking, so
+  an hourly trigger arriving mid-retry is refused rather than queued.
 
 # Part 8 — Related state elsewhere
 

@@ -88,6 +88,17 @@ fn main() -> ExitCode {
         rusticprofile::exec::suppress_child_windows();
     }
 
+    // A detached run is a scheduled one, and on Windows `StartWhenAvailable` fires a missed
+    // calendar time within seconds of a resume — before the network is back — so the run that
+    // replaces a missed hour is the one most likely to fail (`PLAN.md` §7.10). Retrying is
+    // gated on the flag rather than on `cfg!(windows)` deliberately: only Task Scheduler emits
+    // `--background`, so the effect is already confined to it, and a runtime gate keeps the
+    // behaviour exercisable from whichever platform runs the suite — the same reasoning that
+    // made `schedule`'s platform check a runtime `cfg!`.
+    if matches!(&cli.command, Some(Command::Run(a)) if a.background && !a.dry_run) {
+        rusticprofile::run::retry_failed_operations(2);
+    }
+
     if let Some(shell) = cli.completions {
         emit_completions(shell);
         return ExitCode::SUCCESS;
