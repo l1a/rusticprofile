@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.9)
+## Current State (v0.2.10)
 
 **`v0.2.7` is released on GitHub *and* on crates.io** as of 2026-08-07 — registry API
 `max_version 0.2.7`, 185,634 bytes, not yanked, re-confirmed 2026-08-08. It carries `0.2.3`
@@ -517,6 +517,16 @@ Smaller items:
       `rustic.exe` and the resolver joined only the bare name, so it refused on every Windows
       host with a default config. `PATHEXT` is now honoured. The `0.2.0` end-to-end verification
       missed it because its throwaway config named rustic explicitly.
+- [ ] **The resume-race retry is Windows-only, and Linux has the same race.** `0.2.10` retries a
+      failed operation on a detached run, which only Task Scheduler asks for. `WIP.md` §12 records
+      the identical failure under systemd — a 21:12 run that died on a DNS lookup after a resume —
+      so `Persistent=true` fires catch-up runs into a dead network exactly as `StartWhenAvailable`
+      does. Deliberately not generalised in `0.2.10`: `Restart=` on a `Type=oneshot` service and
+      launchd's `KeepAlive` (absent on purpose, since it would restart a one-shot backup on exit)
+      are different mechanisms with different failure modes, and one measured platform is not
+      enough to draw a shared abstraction from. What is needed first is the *measurement* on
+      Linux, not the code — how long after a resume a systemd catch-up run actually fires, and
+      whether it fails as reliably as it does here.
 - [ ] **`just check` does not lint test code** — `cargo clippy` runs without `--all-targets`, so
       every `#[cfg(test)]` module has been unlinted since the scaffold. Adding it found one real
       lint (`0.2.0`). Not changed in that release because it may surface more across the
@@ -541,6 +551,109 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.10 — every run fired by a resume failed, and the obvious fix does not exist
+
+**Reported by Ken watching his own machine, for the third time in this series** — `0.2.5` and
+`0.2.6` were the other two, and all three were found by using the tool rather than by a test.
+Every hourly run triggered by a resume from Modern Standby failed within ~0.2 s with
+`backup saved nothing (exit 1)` and `forget` skipped. Four of ten runs in one day.
+
+#### The mechanism, and what it is *not*
+
+`StartWhenAvailable` — the `Persistent=true` equivalent this project deliberately wants — fires a
+missed calendar time as soon as the machine wakes. On a laptop that is asleep at most `:01`s, the
+catch-up run *is* the hourly run, and it is spent seconds after a resume, before the network is
+back. So the scheduler reliably chooses the worst instant in the hour. Every run that started on a
+normally-scheduled awake trigger succeeded; every resume-triggered one failed, four for four, each
+within 7 s of a Kernel-Power 507.
+
+**No backup was lost, and the entry says so rather than overstating the fault.** Each failure was
+followed by a successful run — 21:49 → 22:05, 07:27 → 08:03. The cost is a skipped `forget`, which
+is the failure class that started this project, a `failure` verdict a monitor learns to ignore, and
+up to an hour of latency on a machine that may sleep again first.
+
+#### `RestartOnFailure` is a launch-failure retry, not a retry
+
+The fix everyone reaches for — Task Scheduler's *"If the task fails, restart every…"* — **cannot
+do this**, measured rather than reasoned about (`PLAN.md` §5.10). Four throwaway probe tasks with
+`RestartOnFailure` `PT1M` × 2, counting real invocations:
+
+| probe | run started by | action | restarts |
+|---|---|---|---|
+| `fail` | `schtasks /Run` | `cmd /c exit 1` | **0** |
+| `trigfail` | a real `TimeTrigger` | `cmd /c exit 1` | **0** |
+| `ok` | `schtasks /Run` | `cmd /c exit 0` | 0 — control |
+| `nolaunch` | `schtasks /Run` | command does not exist | **2**, a minute apart |
+
+It responds to the task failing to *start* — `nolaunch` reported `0x80070002` and its
+`LastRunTime` advanced twice — and not to the action's exit code, on demand or trigger-fired
+alike. rustic exiting 1 because it cannot reach the repository is a perfectly successful launch,
+so shipping this would have been a setting that quietly does nothing, inside the fix for a bug of
+that exact shape.
+
+**The `trigfail` probe is why the result is trustworthy.** Task Scheduler genuinely distinguishes
+on-demand from triggered runs, so an on-demand-only probe would have left a negative result
+attributable to the wrong cause — the `hostname(1)` / `fpath` / named-time-zone family again.
+
+**Third member of a family now named in `schtasks.rs`:** `<Hidden>` hides the task and not the
+window; `StartWhenAvailable` sounded responsible for the run-on-registration bug and was not; this
+sounds like a retry. On this platform, read a setting's behaviour off a registered task, never off
+its name.
+
+#### So the retry lives in the runner, and only for a detached run
+
+`run --background` — emitted only by `schedule`, and only on Windows — now retries a failed
+operation **twice more at two-minute intervals**. `PLAN.md` §7.10 carries the decision, written
+before the code because it reverses one: `WIP.md` §12 concluded *"there is no retry — the next
+hourly run is the retry."* That reasoning was correct and its **premise** failed. It assumed a
+failed run is isolated on a machine that is otherwise awake; under constant Modern Standby the
+machine is asleep at most calendar times and the retry is not compensating for an unreliable
+network but for the scheduler's choice of instant.
+
+Four constraints decide the shape, and each is a rule this project already had:
+
+- **Detached runs only.** A hand-typed `run` fails immediately, as before — a person watching does
+  not want four minutes of silence. Same gate as the console detachment.
+- **No new `jobs.yaml` key.** A shared config is only as new as the oldest binary reading it
+  (`0.1.24`), so adding a key stops every host on an older build. The policy is not configurable.
+- **`run_job`'s signature is unchanged.** A process-global in the `INTERRUPTED` /
+  `NO_CHILD_WINDOW` idiom, exactly the call `0.2.6` made: a parameter on a public function breaks
+  an exhaustive caller and would force a minor bump under §3 for a detail with one call site.
+- **Only a plain `Failure`.** `Interrupted` is a decision, not a fault; `Partial` already continues
+  so retention runs; a `--dry-run` never waits.
+
+The retry is stated in the operation's summary — *"— after 2 further attempts 2 minutes apart"* —
+so the report, the log and the status record all carry it with no schema change, and a retried run
+can never read as a first-attempt success.
+
+#### Verified by running it, not by the tests passing
+
+The tests are green and that is not the evidence that matters — `0.2.6` shipped a green suite with
+a broken backup. Verified at rung 2, with a stand-in for rustic that fails and
+`XDG_STATE_HOME` redirected so the live `dot-files` record could not be touched (the `0.1.28`
+trap): the run took **four minutes** instead of failing instantly, the log recorded the retry note,
+and `forget` was still correctly skipped afterwards.
+
+#### What this does not do, stated so it is not mistaken for done
+
+- **It does not tell transient from permanent.** rustic exits 1 for everything (§5.3), so a wrong
+  password now fails three times over four minutes instead of once. Paid only by scheduled runs.
+- **It does not replace the next scheduled run**, which is still the backstop for a network that is
+  genuinely down.
+- **systemd and launchd are unchanged.** §12 shows Linux has the same race, so this will probably
+  want to move — but `Restart=` on a `Type=oneshot` unit and launchd's deliberately absent
+  `KeepAlive` are different mechanisms, and a shared abstraction drawn from one measured platform
+  would be designing past the evidence. Backlog.
+
+359 tests, up from 355.
+
+*Also fixed outside the repository: six `\rpprobe\` probe tasks from an earlier session had been
+firing five-at-once every hour on the development machine since 2026-08-07, flashing a console
+window each time — the symptom that started this investigation and **not** rusticprofile. Their
+cleanup had run `schtasks /Delete /TN` against folder paths, which names no task and deletes
+nothing. Recorded in `PLAN.md` §5.10 with the incantation that does work, because the failure was
+silent in both directions: the deletion reported nothing wrong and the tasks kept running.*
 
 ### v0.2.9 — `just man` half-worked on Windows, and said nothing
 

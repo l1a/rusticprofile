@@ -3,6 +3,7 @@
 
 //! Executing a job's operations in order.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use crate::config::Config;
@@ -12,6 +13,47 @@ use crate::rustic::exit::{self, Classification, Verdict};
 use crate::rustic::invoke::{self, Options};
 
 use super::lock::JobLock;
+
+/// Extra attempts a failed operation gets before the job stops. Zero unless
+/// [`retry_failed_operations`] has been called, so a hand-typed run never waits.
+///
+/// Process-global, and deliberately **not** a parameter on [`run_job`] or a field on
+/// [`Options`]: that function is public API, and adding to either would break a downstream
+/// caller and force a minor bump under `NOTES.md` §3 for a detail with one call site. This is
+/// the idiom `INTERRUPTED` and `exec`'s `NO_CHILD_WINDOW` already establish, and `0.2.6` set the
+/// precedent for choosing it over a signature change. Write-once at startup, read per
+/// operation, so there is nothing to race.
+static RETRY_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+
+/// How long to wait between attempts.
+///
+/// Two minutes, twice, so a job gives up after about four. It is sized against what it exists to
+/// cover — a network that is not up yet in the seconds after a resume (`PLAN.md` §7.10) — not
+/// against a network that is genuinely down, which the next scheduled run remains the answer to.
+/// A fixed constant rather than a configurable one: `jobs.yaml` is shared fleet-wide and a new
+/// key stops every host still running an older binary (`NOTES.md` `0.1.24`).
+const RETRY_DELAY: Duration = Duration::from_secs(120);
+
+/// Retry a failed operation `attempts` more times.
+///
+/// Called once, from `main`, when a run is detached — `run --background`, which only `schedule`
+/// emits and only on Windows. A run somebody typed keeps failing immediately, because a person
+/// watching a failure does not want four minutes of silence first.
+pub fn retry_failed_operations(attempts: u32) {
+    RETRY_ATTEMPTS.store(attempts, Ordering::SeqCst);
+}
+
+/// Whether a further attempt is warranted, as a pure function of the verdict and the budget.
+///
+/// Extracted so the policy is testable without sleeping: the loop below is a `sleep` away from
+/// being untestable, and the decision is the part with the edge cases in it.
+///
+/// `Interrupted` is never retried — an interrupt is a decision, and re-running against it would
+/// fight the operator. `Partial` is never retried either: it saved data, and the job already
+/// continues so retention runs.
+fn should_retry(verdict: Verdict, attempts_used: u32, budget: u32) -> bool {
+    verdict == Verdict::Failure && attempts_used < budget
+}
 
 /// What one operation did.
 #[derive(Debug, Clone)]
@@ -66,6 +108,38 @@ impl JobReport {
     }
 }
 
+/// Run one invocation once and classify what came back.
+///
+/// Split out of [`run_job`] so the retry loop has something to call twice. `Err` is a failure to
+/// *start* rustic, which is a failure of this operation rather than of the reporting path:
+/// recording it as a step keeps the summary complete and still stops the job.
+fn attempt(
+    invocation: &invoke::Invocation,
+    mode: Stdout,
+    requested: Option<usize>,
+    options: Options,
+    argv_display: &[String],
+) -> (Classification, Duration) {
+    match exec::run(&invocation.argv, mode) {
+        Ok(outcome) => (
+            exit::classify(invocation.operation, &outcome, requested, options.dry_run),
+            outcome.duration,
+        ),
+        Err(e) => (
+            Classification {
+                verdict: Verdict::Failure,
+                snapshots_saved: 0,
+                snapshots_requested: requested,
+                summary: format!(
+                    "could not run `{}`: {e}",
+                    argv_display.first().map(String::as_str).unwrap_or("rustic")
+                ),
+            },
+            Duration::default(),
+        ),
+    }
+}
+
 /// Run every operation in `job`, stopping early if one fails.
 ///
 /// Holding the lock is a *parameter* rather than something this function arranges, so that
@@ -97,27 +171,40 @@ pub fn run_job(config: &Config, job: &Job, options: Options, _lock: &JobLock) ->
             Stdout::Inherit
         };
 
-        let (classification, duration) = match exec::run(&invocation.argv, mode) {
-            Ok(outcome) => (
-                exit::classify(invocation.operation, &outcome, requested, options.dry_run),
-                outcome.duration,
-            ),
-            // Failing to start is a failure of this operation, not of the whole reporting
-            // path: recording it as a step keeps the summary complete and still stops the
-            // job.
-            Err(e) => (
-                Classification {
-                    verdict: Verdict::Failure,
-                    snapshots_saved: 0,
-                    snapshots_requested: requested,
-                    summary: format!(
-                        "could not run `{}`: {e}",
-                        argv_display.first().map(String::as_str).unwrap_or("rustic")
-                    ),
-                },
-                Duration::default(),
-            ),
+        // A dry run never retries: it exists to answer a question quickly, and sitting for
+        // minutes to re-ask it would defeat the point.
+        let budget = if options.dry_run {
+            0
+        } else {
+            RETRY_ATTEMPTS.load(Ordering::SeqCst)
         };
+
+        let (mut classification, mut duration) =
+            attempt(invocation, mode, requested, options, &argv_display);
+
+        let mut attempts_used = 0;
+        while should_retry(classification.verdict, attempts_used, budget) {
+            attempts_used += 1;
+            std::thread::sleep(RETRY_DELAY);
+            let (next, spent) = attempt(invocation, mode, requested, options, &argv_display);
+            classification = next;
+            // Time spent running, not time spent waiting: the waits are this function's own
+            // and reporting them as the operation's duration would overstate the work.
+            duration += spent;
+        }
+
+        // Said in the summary rather than kept in a new field, so the report, the log and the
+        // status record all carry it without a schema change — and so a retried run can never
+        // read as a first-attempt success.
+        if attempts_used > 0 {
+            classification.summary = format!(
+                "{} — after {} further attempt{} {} minutes apart",
+                classification.summary,
+                attempts_used,
+                if attempts_used == 1 { "" } else { "s" },
+                RETRY_DELAY.as_secs() / 60,
+            );
+        }
 
         if !classification.verdict.should_continue() {
             stopped = true;
@@ -206,6 +293,43 @@ mod tests {
         // Cannot arise from a validated config — an empty operations list is refused at
         // load time — but the fold must not report failure from no evidence.
         assert_eq!(report(&[], &[]).verdict(), Verdict::Success);
+    }
+
+    #[test]
+    fn nothing_is_retried_unless_a_budget_was_asked_for() {
+        // The default, and what every hand-typed run gets: a failure is reported immediately.
+        // Asserted because the whole change hinges on the default being zero — a run somebody
+        // is watching must not sit silently for minutes.
+        assert!(!should_retry(Verdict::Failure, 0, 0));
+        assert_eq!(RETRY_ATTEMPTS.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn only_a_plain_failure_is_retried() {
+        assert!(should_retry(Verdict::Failure, 0, 2));
+        // An interrupt is a decision, not a fault; re-running would fight the operator.
+        assert!(!should_retry(Verdict::Interrupted, 0, 2));
+        // Partial saved data and the job continues, so retention runs already.
+        assert!(!should_retry(Verdict::Partial, 0, 2));
+        assert!(!should_retry(Verdict::Success, 0, 2));
+    }
+
+    #[test]
+    fn the_retry_budget_is_finite() {
+        // The bound is what keeps a genuinely broken configuration from looping: it fails three
+        // times and stops, rather than retrying until the next trigger arrives.
+        assert!(should_retry(Verdict::Failure, 1, 2));
+        assert!(!should_retry(Verdict::Failure, 2, 2));
+        assert!(!should_retry(Verdict::Failure, 3, 2));
+    }
+
+    #[test]
+    fn the_wait_is_sized_for_a_resume_not_for_an_outage() {
+        // Two attempts two minutes apart gives up after about four, well inside the hour the
+        // next scheduled run is still the backstop for (`PLAN.md` §7.10). A delay that grew past
+        // the interval would let a retry collide with its own successor.
+        assert_eq!(RETRY_DELAY, Duration::from_secs(120));
+        assert!(RETRY_DELAY.as_secs() * 2 < 3600);
     }
 
     #[test]

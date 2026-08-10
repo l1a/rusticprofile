@@ -62,6 +62,15 @@
 //!   catches the missed run at the next wake, which is the behaviour actually wanted.
 //! - **`RunOnlyIfNetworkAvailable`** — the repository may be local, and rustic reports a network
 //!   failure perfectly well. Gating on the OS's idea of connectivity would add a silent skip.
+//! - **`RestartOnFailure`** — and this one is absent because it *cannot* do the job it appears to
+//!   offer, which is worth stating rather than leaving for the next person to rediscover.
+//!   Measured on Windows 11 (`PLAN.md` §5.10): it restarts a task that **failed to launch** — a
+//!   probe whose command did not exist got its full `Count` of restarts, reporting `0x80070002` —
+//!   and does **nothing** for an action that ran and exited non-zero, whether the run was
+//!   trigger-fired or on demand. rustic exiting 1 because it cannot reach the repository is a
+//!   perfectly successful launch, so this setting would be inert for every failure this project
+//!   can have. Retrying such a run belongs in the runner, which is the only thing that knows it
+//!   failed; see `PLAN.md` §7.10 and [`crate::run::retry_failed_operations`].
 //! - **A start-on-register flag.** Nothing here runs the task at registration time: adding a
 //!   writer to a shared repository as a side effect of scheduling one is what `PLAN.md` §7.5
 //!   forbids, and it is why launchd's `RunAtLoad` is absent too.
