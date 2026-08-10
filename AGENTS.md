@@ -282,3 +282,30 @@ default `GH_TOKEN` is a fine-grained PAT, and only classic PATs can write to rep
 you do not own — `gh pr create` fails with
 `Resource not accessible by personal access token`. Reads work fine, which makes the failure
 look unrelated to auth. See `~/AGENTS.md` §3.
+
+**`just open-pr` does not push the branch, and its failure reads as the gate refusing.** The
+recipe runs `just pr` and then `gh pr create`; nothing in it pushes. On a branch that has never
+been pushed, `gh pr create` cannot proceed non-interactively — it has no remote branch to open a
+PR from — so the recipe exits non-zero **after** having already printed `Gate passed`, which looks
+like the gate rejected the change when the gate in fact passed. Push first:
+
+```bash
+git push -u origin <branch>     # pre-push runs `just check`
+PR_CONFIRM=y PR_TITLE=… PR_BODY_FILE=… just open-pr
+```
+
+Hit 2026-08-10 on `#65`. **Do not work around it by calling `gh pr create` yourself** — that is
+the one call site the pre-PR gate can bind, which is the whole reason `open-pr` exists (§4,
+`NOTES.md` §3). Note also that `open-pr` reads `PR_TITLE`, `PR_BODY`, `PR_BODY_FILE` and `PR_FILL`
+only when it is given no positional arguments (`0.1.35`), and that the checklist needs
+`PR_CONFIRM=y` when there is no terminal (`0.0.21`) — answer it *after* actually checking each
+item, not before, which is a failure `WIP.md` records against a previous session.
+
+> **This is documentation standing in for a fix, and that is worth naming rather than hiding.**
+> This project's own rule is that a guarantee every future author has to remember is not one, and
+> `0.0.21` argued that a gate which cannot be satisfied from the context it failed in is a wall
+> rather than a gate. By both standards `open-pr` should push the branch itself, or refuse early
+> with the exact command. It is left alone here deliberately: `0.2.1` and `0.2.2` were both
+> regressions from confident late-session edits to this Justfile, and `WIP.md` says in as many
+> words to weigh that before making more. **The recipe change is worth doing as its own PR, with
+> the gate exercised from a genuinely unpushed branch.**

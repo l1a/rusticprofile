@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.10)
+## Current State (v0.2.11)
 
 **`v0.2.7` is released on GitHub *and* on crates.io** as of 2026-08-07 — registry API
 `max_version 0.2.7`, 185,634 bytes, not yanked, re-confirmed 2026-08-08. It carries `0.2.3`
@@ -551,6 +551,32 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.11 — `just open-pr` does not push, and fails looking like the gate refused
+
+**Documentation only; no code changed.** `AGENTS.md` §5 gains the failure mode and the two-command
+sequence that avoids it.
+
+`open-pr` runs `just pr` and then `gh pr create`. **Nothing in it pushes.** On a branch that has
+never been pushed there is no remote branch to open a PR from, so `gh pr create` cannot proceed
+non-interactively and the recipe exits non-zero — *after* printing `Gate passed`. The observable
+result is a command that says the gate passed and then fails, which reads as the gate rejecting the
+change. Hit on `#65`.
+
+**Why this is a note and not a fix, stated rather than left implicit.** By this project's own
+standards it should be a fix: `0.0.21` established that a gate which cannot be satisfied from the
+context it failed in is a wall rather than a gate, and `0.1.28`/`0.1.33` both argued that a
+guarantee every future author must remember is not one. A line in `AGENTS.md` is exactly such a
+guarantee. It is left as a note here because `0.2.1` and `0.2.2` were **both** regressions from
+confident late-session edits to this same Justfile — one made `bash` mandatory where it is not
+present, the other leaked `@` into three shebang recipes — and `WIP.md` says in as many words to
+weigh that before making more. The recipe change wants its own PR and a test from a genuinely
+unpushed branch, which is the one condition that cannot be faked after the fact.
+
+Recorded alongside it: `open-pr` honours `PR_TITLE` / `PR_BODY` / `PR_BODY_FILE` / `PR_FILL` only
+when given no positional arguments (`0.1.35`), and the checklist needs `PR_CONFIRM=y` without a
+terminal (`0.0.21`) — to be answered *after* checking each item, since answering first is a failure
+`WIP.md` already records.
 
 ### v0.2.10 — every run fired by a resume failed, and the obvious fix does not exist
 
