@@ -31,12 +31,46 @@ fn state_dir() -> &'static std::path::Path {
         .path()
 }
 
-/// The binary, with state redirected away from the developer's real one.
+/// A scratch runtime directory shared by every child this file spawns.
+///
+/// **`0.1.28` fixed half of this problem and this is the other half.** That release redirected
+/// `XDG_STATE_HOME` so the suite could not overwrite the real status record. The **per-job lock**
+/// was left pointing at the real location, and it is *machine-wide* by design — one run of a job
+/// per machine, which is correct in production. So on a host where `dot-files` is the live hourly
+/// job, `cargo test` and a real scheduled run contend for the same lock file, and whichever loses
+/// is refused. Observed: an integration test failed with exit 1 while a genuine run held
+/// `$XDG_RUNTIME_DIR/rusticprofile/dot-files.lock`, which reads exactly like a broken build.
+///
+/// That is `v0.0.7`'s finding at a larger scale. There, two *tests* sharing a job name contended,
+/// and the fix was to give each its own name rather than weaken the lock. Here the contention is
+/// test-versus-*production*, so no naming scheme inside this file can prevent it — the live job is
+/// named by someone else's configuration.
+///
+/// **Redirected rather than renaming the fixtures**, for `0.1.28`'s reason: the goldens embed
+/// `dot-files`, and a future test could reintroduce the name. Both variables are covered because
+/// `lock_dir()` prefers `dirs::runtime_dir()` and falls back to the temp directory — and
+/// `runtime_dir()` is `None` on Windows, so `XDG_RUNTIME_DIR` alone would leave that platform
+/// contending with a live job in `%TEMP%`.
+fn runtime_dir() -> &'static std::path::Path {
+    use std::sync::OnceLock;
+    static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
+    DIR.get_or_init(|| tempfile::tempdir().expect("scratch runtime dir"))
+        .path()
+}
+
+/// The binary, with state and locks redirected away from the developer's real ones.
 ///
 /// Use this rather than `Command::new(env!(...))` directly.
 fn command() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_rusticprofile"));
     cmd.env("XDG_STATE_HOME", state_dir());
+    // The lock. `XDG_RUNTIME_DIR` covers Unix; the temp variables cover the Windows fallback,
+    // where `dirs::runtime_dir()` is `None`. Setting all three keeps one choke point rather
+    // than a `cfg!` here.
+    cmd.env("XDG_RUNTIME_DIR", runtime_dir());
+    for var in ["TMPDIR", "TMP", "TEMP"] {
+        cmd.env(var, runtime_dir());
+    }
     cmd
 }
 
@@ -955,15 +989,74 @@ fn rustic_binary_override_lets_a_shim_stand_in_for_rustic() {
 }
 
 #[test]
-fn a_run_records_its_status_under_xdg_state_home_and_nowhere_else() {
-    // The mechanism every other test in this file silently depends on, asserted once so it
-    // cannot rot: `run` must write its record under $XDG_STATE_HOME.
+fn the_lock_lands_under_the_redirected_runtime_dir_not_the_real_one() {
+    // The other half of `0.1.28`. The per-job lock is machine-wide by design, so a fixture
+    // sharing a name with a live job makes `cargo test` and a real scheduled run contend for one
+    // lock file — and the loser is refused, which reads as a broken build rather than as
+    // contention. Hit for real: an integration test failed with exit 1 while a genuine
+    // `dot-files` run held the lock.
     //
-    // This is a regression test for real damage, not for tidiness. These fixtures use the job
-    // name `dot-files`, which is the live hourly job on this fleet, so before the harness
-    // redirected state a plain `cargo test` overwrote that job's real record with a fixture's
-    // — a fabricated success on `host-a`, replacing the `last_success` history that exists to
-    // reveal a job which has quietly stopped working.
+    // Asserting on the *lock file's location* rather than on the suite passing, because a passing
+    // suite is exactly what this failure mode does not disturb until the day the two collide.
+    let job = "lock-dir-job";
+    let (dir, path) = fixture(&run_config_named(job));
+    let shim = recording_shim(dir.path());
+    let runtime = dir.path().join("runtime");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rusticprofile"))
+        .args([
+            "run",
+            "-n",
+            job,
+            "--config",
+            &path,
+            "--as-host",
+            "host-a",
+            "--rustic-binary",
+            &shim,
+        ])
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env("TMPDIR", &runtime)
+        .env("TMP", &runtime)
+        .env("TEMP", &runtime)
+        .env("XDG_STATE_HOME", dir.path().join("state"))
+        .output()
+        .expect("failed to execute binary");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let lock = runtime.join("rusticprofile").join(format!("{job}.lock"));
+    assert!(
+        lock.is_file(),
+        "the lock must land under the redirected runtime dir, not the real one: {}",
+        lock.display()
+    );
+}
+
+#[test]
+fn every_spawn_helper_redirects_the_lock() {
+    // The guarantee is the choke point, not this one test: `command()` sets the variables so a
+    // test added later cannot forget. `0.1.28` made that argument for the state dir and then left
+    // the lock out, which is how the gap survived — so assert the helper itself, not just one
+    // call of it.
+    let envs: std::collections::HashMap<_, _> = command()
+        .get_envs()
+        .filter_map(|(k, v)| v.map(|v| (k.to_owned(), v.to_owned())))
+        .collect();
+    for var in ["XDG_STATE_HOME", "XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"] {
+        let val = envs
+            .get(std::ffi::OsStr::new(var))
+            .unwrap_or_else(|| panic!("command() must redirect {var}; envs: {envs:?}"));
+        assert_ne!(val.as_os_str(), std::ffi::OsStr::new(""), "{var} is empty");
+    }
+}
+
+#[test]
+fn a_run_records_its_status_under_xdg_state_home_and_nowhere_else() {
     let job = "state-dir-job";
     let (dir, path) = fixture(&run_config_named(job));
     let shim = recording_shim(dir.path());
