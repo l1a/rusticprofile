@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.15" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.16" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -95,18 +95,28 @@ Validation rejects, among other things, any key it does not recognise; a snapsho
 .SH "RUN"
 \fB\-n\fP \fIJOB\fP
 .RS
+.PP
 The job to run\. Required \-\- there is no "run everything" form\.
 .RE
 \fB\-\-dry\-run\fP
 .RS
+.PP
 Ask rustic to report what it would do without writing anything\. Reports what \fIwould\fP be saved, never what was saved\.
 .RE
 \fB\-\-background\fP
 .RS
-Detach from the console so the run shows no window\. Windows only; accepted and ignored elsewhere\. \fBschedule\fP puts this in every generated Task Scheduler definition, and it is the only reason a scheduled run is invisible: Task Scheduler can run a task as the logged\-on user only through an interactive logon, which starts it inside that desktop session, where Windows gives a console program a console\. The logon types that run outside it need rights an ordinary account does not hold\. Typing this by hand discards the run's output \-\- rustic's progress goes nowhere \-\- while the record still reaches the \fBlog:\fP file\.
+.PP
+Mark the run as unattended, i\.e\. started by the scheduler rather than typed\. \fBschedule\fP puts this in every generated Task Scheduler definition and in every generated systemd service, and it does two things \-\- one on every platform and one only on Windows\.
+.PP
+Everywhere, it enables the \fBretry\fP: a failed operation is attempted twice more at two\-minute intervals before the job stops\. This exists because a missed calendar time is replayed within \fIseconds\fP of the machine waking, which is before the network is back, so the run that replaces a missed hour is the one most likely to fail\. Measured on both platforms; on Linux two catch\-ups each fired in the same second as a resume and failed on DNS, while the network became usable 11 and 12 seconds later\. Only a plain failure is retried \-\- an interrupted run is a decision, a partial one already continues to \fBforget\fP, and \fB\-\-dry\-run\fP never waits\. The retry is stated in the operation's summary, so a retried run cannot read as a first\-attempt success\. A run you type yourself is unaffected and fails immediately, which is the whole reason this is a flag rather than something inferred: on Linux `\f[CR]INVOCATION_ID\fP` and `\f[CR]JOURNAL_STREAM\fP` are both set in an ordinary terminal, so the environment cannot distinguish the two cases\.
+.PP
+On \fBWindows only\fP, it additionally detaches from the console so the run shows no window\. Task Scheduler can run a task as the logged\-on user only through an interactive logon, which starts it inside that desktop session, where Windows gives a console program a console; the logon types that run outside it need rights an ordinary account does not hold\. Typing it by hand there discards the run's output \-\- rustic's progress goes nowhere \-\- while the record still reaches the \fBlog:\fP file\. On Unix it touches no stream, so a scheduled run's diagnostics still reach the journal\.
+.PP
+macOS is not covered by the retry: the same race is plausible under launchd and has not been measured\.
 .RE
 \fB\-\-rustic\-binary\fP \fIPATH\fP
 .RS
+.PP
 Use this executable instead of the one the configuration names\. A bare name is resolved on `\f[CR]PATH\fP`\. Applied after the configuration is validated, so it cannot mask a mistake in the file it overrides\. Point it at a script that records its arguments and exits, and a job can be exercised end to end without rustic running at all\.
 .RE
 .PP

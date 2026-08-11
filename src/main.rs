@@ -88,13 +88,20 @@ fn main() -> ExitCode {
         rusticprofile::exec::suppress_child_windows();
     }
 
-    // A detached run is a scheduled one, and on Windows `StartWhenAvailable` fires a missed
+    // A detached run is a scheduled one, and both schedulers that emit this flag replay a missed
     // calendar time within seconds of a resume — before the network is back — so the run that
-    // replaces a missed hour is the one most likely to fail (`PLAN.md` §7.10). Retrying is
-    // gated on the flag rather than on `cfg!(windows)` deliberately: only Task Scheduler emits
-    // `--background`, so the effect is already confined to it, and a runtime gate keeps the
-    // behaviour exercisable from whichever platform runs the suite — the same reasoning that
-    // made `schedule`'s platform check a runtime `cfg!`.
+    // replaces a missed hour is the one most likely to fail (`PLAN.md` §7.10, §7.12). Measured on
+    // both: Task Scheduler's `StartWhenAvailable`, and systemd's `Persistent=true`, whose catch-up
+    // fires in milliseconds and is *not* delayed by `RandomizedDelaySec` even at 3600s (§5.11).
+    //
+    // Gating on the flag rather than on `cfg!(windows)` was already deliberate in `0.2.10`, and
+    // extending it to a second backend is what that choice bought: `schedule` emits
+    // `--background` into the Task Scheduler definition and the systemd service, so the effect
+    // stays confined to scheduled runs while remaining exercisable from whichever platform runs
+    // the suite. **It cannot be inferred instead of flagged**: on Linux `INVOCATION_ID` and
+    // `JOURNAL_STREAM` are both set in an ordinary desktop terminal, so an environment check
+    // would switch the retry on for hand-typed runs. launchd is not included — that race is
+    // plausible and unmeasured.
     if matches!(&cli.command, Some(Command::Run(a)) if a.background && !a.dry_run) {
         rusticprofile::run::retry_failed_operations(2);
     }
