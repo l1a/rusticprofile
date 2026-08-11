@@ -125,8 +125,20 @@ jobs:
       if: startsWith(matrix.platform, 'fedora')
       run: |
         dnf install -y git curl gcc make
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        # A pipeline's exit status is its LAST command's, so `curl ... | sh` reports success
+        # when curl fails: `sh` fed nothing exits 0. GitHub runs these with `sh -e`, which does
+        # not fire for that. Fetch first, then run, so a failed download fails THIS step.
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+        sh /tmp/rustup-init.sh -y
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        # POST-CONDITION: adding a directory to PATH is not evidence a toolchain is in it.
+        # Without this the step reports success and the *next* step dies with
+        # `cargo: command not found`, which reads as a code failure rather than a setup one --
+        # it cost a full CI cycle on #71, where fail-fast then cancelled two sibling legs so one
+        # environmental failure was reported as three. Absolute paths because $GITHUB_PATH only
+        # affects LATER steps, not this one.
+        "$HOME/.cargo/bin/cargo" --version
+        "$HOME/.cargo/bin/rustc" --version
 
     - name: Install Rust toolchain (Host)
       if: ${{ !matrix.container }}
@@ -227,15 +239,39 @@ jobs:
       run: |
         apt-get update
         apt-get install -y curl build-essential
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        # A pipeline's exit status is its LAST command's, so `curl ... | sh` reports success
+        # when curl fails: `sh` fed nothing exits 0. GitHub runs these with `sh -e`, which does
+        # not fire for that. Fetch first, then run, so a failed download fails THIS step.
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+        sh /tmp/rustup-init.sh -y
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        # POST-CONDITION: adding a directory to PATH is not evidence a toolchain is in it.
+        # Without this the step reports success and the *next* step dies with
+        # `cargo: command not found`, which reads as a code failure rather than a setup one --
+        # it cost a full CI cycle on #71, where fail-fast then cancelled two sibling legs so one
+        # environmental failure was reported as three. Absolute paths because $GITHUB_PATH only
+        # affects LATER steps, not this one.
+        "$HOME/.cargo/bin/cargo" --version
+        "$HOME/.cargo/bin/rustc" --version
 
     - name: Install Rust toolchain (Fedora Container)
       if: startsWith(matrix.platform, 'fedora')
       run: |
         dnf install -y curl gcc make
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        # A pipeline's exit status is its LAST command's, so `curl ... | sh` reports success
+        # when curl fails: `sh` fed nothing exits 0. GitHub runs these with `sh -e`, which does
+        # not fire for that. Fetch first, then run, so a failed download fails THIS step.
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+        sh /tmp/rustup-init.sh -y
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        # POST-CONDITION: adding a directory to PATH is not evidence a toolchain is in it.
+        # Without this the step reports success and the *next* step dies with
+        # `cargo: command not found`, which reads as a code failure rather than a setup one --
+        # it cost a full CI cycle on #71, where fail-fast then cancelled two sibling legs so one
+        # environmental failure was reported as three. Absolute paths because $GITHUB_PATH only
+        # affects LATER steps, not this one.
+        "$HOME/.cargo/bin/cargo" --version
+        "$HOME/.cargo/bin/rustc" --version
 
     - name: Install Rust toolchain (Host)
       if: ${{ !matrix.container }}
@@ -318,8 +354,20 @@ jobs:
       - name: Install Rust toolchain (Fedora)
         if: startsWith(matrix.platform, 'fedora')
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          # A pipeline's exit status is its LAST command's, so `curl ... | sh` reports success
+          # when curl fails: `sh` fed nothing exits 0. GitHub runs these with `sh -e`, which does
+          # not fire for that. Fetch first, then run, so a failed download fails THIS step.
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+          sh /tmp/rustup-init.sh -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          # POST-CONDITION: adding a directory to PATH is not evidence a toolchain is in it.
+          # Without this the step reports success and the *next* step dies with
+          # `cargo: command not found`, which reads as a code failure rather than a setup one --
+          # it cost a full CI cycle on #71, where fail-fast then cancelled two sibling legs so one
+          # environmental failure was reported as three. Absolute paths because $GITHUB_PATH only
+          # affects LATER steps, not this one.
+          "$HOME/.cargo/bin/cargo" --version
+          "$HOME/.cargo/bin/rustc" --version
 
       - name: Install Rust toolchain (Host)
         if: ${{ !matrix.container }}

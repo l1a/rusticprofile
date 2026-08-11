@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.18)
+## Current State (v0.2.19)
 
 **`v0.2.14` is released on GitHub *and* on crates.io** as of 2026-08-11 — registry API
 `max_version 0.2.14`, 205,795 bytes, not yanked. It carries **`0.2.8` through `0.2.14` together**,
@@ -679,6 +679,73 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.19 — two guards that were not guarding
+
+**Test harness and CI only; no product code changed.** Two unrelated subsystems, one shape: a step
+that reports success without having done its job. Bundled because both touch `Cargo.toml` and
+`NOTES.md`, so as sibling branches they would have conflicted — `0.2.15`'s reasoning, and stacking
+stays rejected after what it did to #63.
+
+#### `0.1.28` fixed half the test-isolation problem; this is the other half
+
+That release redirected `XDG_STATE_HOME` so `cargo test` could not overwrite the real status
+record. **The per-job lock was left pointing at the real location.** It is machine-wide by design —
+one run of a job per machine, which is right in production — so on a host where `dot-files` is the
+live hourly job, the suite and a genuine scheduled run contend for
+`$XDG_RUNTIME_DIR/rusticprofile/dot-files.lock`, and the loser is refused.
+
+**Hit for real while verifying `0.2.16`:** `the_exit_code_surface_is_what_the_plan_promises` failed
+with exit 1 because a real run held the lock. It reads as a broken build, and the first instinct is
+to suspect the change under test.
+
+**This is `v0.0.7` at a larger scale.** There, two *tests* sharing a job name contended and the fix
+was to give each its own name rather than weaken the lock. Here the contention is
+test-versus-*production*, so no naming scheme inside the suite can prevent it — the live job is
+named by someone else's configuration.
+
+Fixed at `command()`, the choke point `0.1.28` established, so a test added later cannot forget.
+**Both `XDG_RUNTIME_DIR` and the temp variables are set**, because `lock_dir()` prefers
+`dirs::runtime_dir()` and falls back to the temp directory — and `runtime_dir()` is `None` on
+Windows, so redirecting only the XDG variable would leave that platform contending in `%TEMP%`.
+
+**Verified by reproducing the failure, then removing it.** With the real live-job lock held by
+`flock`: the unfixed harness fails on exactly the test that failed in August, and the fixed harness
+passes 57 of 57. Two new tests pin it — one asserting the lock lands under the redirected directory,
+one asserting `command()` itself sets every variable, because `0.1.28` made the choke-point argument
+and then left a variable out, which is precisely how this survived.
+
+#### The Fedora CI toolchain install could report success having installed nothing
+
+`build (fedora-x64)` failed on #71 at *Format check* with `cargo: command not found`, while
+`Install dependencies (Fedora)` reported **success**. Matrix `fail-fast` then cancelled macos and
+windows, which `gh pr checks` labels `fail` — so **one environmental failure was reported as three**,
+on a documentation-only commit, and neither `gh run rerun` nor `ghpub` could re-run it (the
+fine-grained PAT lacks `actions: write`, and ghpub's classic PAT is `public_repo`-only).
+
+**The cause is a pipe, and it was in four places, not one** — including `build-release`, which is on
+the release path:
+
+```sh
+curl ... https://sh.rustup.rs | sh -s -- -y
+```
+
+A pipeline's exit status is its **last** command's, so a failed download leaves `sh` reading nothing
+and exiting 0. GitHub runs these with `sh -e`, which does not fire for that. Then
+`echo "$HOME/.cargo/bin" >> $GITHUB_PATH` adds the directory whether or not anything landed in it.
+Verified locally rather than inferred from the log: `sh -e -c 'false | true'` exits **0**, and
+`curl -sSf <dead host> | sh` exits **0**.
+
+Fixed at all four sites the same way — fetch to a file, then run it, so a failed download fails that
+step — plus a **post-condition**, per `0.2.9`'s rule that correcting the mechanism is not enough when
+the failure is silent: the step now runs `cargo --version` and `rustc --version` before finishing.
+**By absolute path**, because `$GITHUB_PATH` affects only *later* steps, so a bare `cargo` there
+would fail even on success. That detail is the whole reason a naive guard would have looked broken.
+
+*Both halves are the same lesson this project keeps paying for: a step that cannot fail is not a
+check, and the place a failure surfaces is often not the place it happened.*
+
+395 tests (333 unit + 5 doc + 57 integration), up from 393.
 
 ### v0.2.18 — the AUR package tracks 0.2.17, and RPC `info` lags the *version* too
 
