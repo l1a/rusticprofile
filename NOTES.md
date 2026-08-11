@@ -730,7 +730,34 @@ redirected so the live record could not be touched — the fixture shares the li
 *One wrong turn worth recording: the first "positive" run was written without `--background` on the
 command line and exited instantly, which reads exactly like the retry not working. Two runs that
 differ only in the thing under test are worth nothing if the thing under test is missing from one
-of them.*
+of them. A second, in the live test: `journalctl -u <unit>` showed **none** of the child's stderr, so
+a grep against it reported zero attempts while the run was plainly working — a child's inherited
+stderr is logged under its own identifier and the `-u` filter misses it.*
+
+#### And then against a real resume, which is the test that closes it
+
+**A third suspend was taken deliberately after deploying this change, on the production host, real
+repository, no stand-ins — and the retry saved the run.**
+
+| | |
+|---|---|
+| asleep | 12:16:08 -> 13:26:26; the 13:00:55 elapse passed while suspended |
+| catch-up fired | **13:26:26, the same second as `PM: suspend exit`** |
+| attempt 1 | **failed**, the same DNS lookup as the other two samples |
+| network usable | 13:26:37 — **an 11 s margin, matching the first sample exactly** |
+| attempt 2, +2 min | **`backup saved 3 of 3 snapshot sets — after 1 further attempt 2 minutes apart`** |
+| **`forget`** | **ran and succeeded** |
+| unit | `Result=success`, wall **2 min 4.4 s**, CPU 2.1 s — the wait is not work |
+| status record | `last_success` advanced, `skipped: []` |
+
+**The `forget` is the result that matters.** Both pre-change samples skipped retention, which
+`PLAN.md` §7.10 identifies as the failure class this project exists for; here it ran. And **three
+margins of 11 s, 12 s, 11 s** are what make the two-minute interval a defensible choice rather than a
+guess — an order of magnitude clear of the observed window, without colliding with the next hourly
+trigger.
+
+*What it does not establish:* that the margin is always ~11 s. A network down for longer still
+produces a failed run, and the next scheduled run remains the backstop, exactly as §7.10 says.
 
 #### macOS is deliberately not included
 

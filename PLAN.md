@@ -1244,6 +1244,36 @@ agreeing to within a second is what makes this a measurement rather than an anec
 the units on this host had not yet been regenerated. A retry two minutes out would have found the
 network up for well over a minute in both cases.
 
+### The retry, then measured against a real resume rather than reasoned about
+
+**A third suspend was taken deliberately after §7.12's change was deployed, and it is the only
+sample in this section where the race was survived.** Same host, same job, real repository, no
+stand-ins:
+
+| | |
+|---|---|
+| asleep | 12:16:08 → 13:26:26; the 13:00:55 elapse passed while suspended |
+| catch-up fired | **13:26:26 — again the same second as `PM: suspend exit`** |
+| attempt 1 | **failed**, the same DNS lookup as the other two |
+| network usable | 13:26:37 — **an 11 s margin, matching the first sample exactly** |
+| attempt 2, at +2 min | **succeeded — `backup saved 3 of 3 snapshot sets — after 1 further attempt 2 minutes apart`** |
+| **`forget`** | **ran and succeeded** |
+| unit | `Result=success`, wall clock **2 min 4.4 s**, CPU 2.1 s |
+| status record | `last_success` advanced, `skipped: []` |
+
+**Three margins now: 11 s, 12 s, 11 s.** That is what makes the two-minute interval a defensible
+choice rather than a guess — it is an order of magnitude clear of the observed window, without being
+so long that a retry collides with the next hourly trigger.
+
+**The result that matters is the `forget`.** In both pre-change samples retention was skipped, which
+§7.10 identifies as the failure class this project exists for; here it ran. So the claim is no longer
+"a retry would have helped" — **the retry converted a resume-race failure into a complete run,
+observed once, end to end, on a production host.**
+
+*What this does not establish:* that the margin is always ~11 s. A network that is genuinely down
+for longer still produces a failed run and the next scheduled run remains the backstop — §7.10 says
+so and that is unchanged. It also says nothing about launchd.
+
 **This is a clean sample, and it is clean only because the confound below was fixed first.** The
 argv carried the absolute `--rustic-binary`, so the failure cannot be the PATH defect — it is the
 network and nothing else. `last success` stayed at the previous hour, `last run` recorded the
@@ -1382,10 +1412,13 @@ so the honest position is that the *mechanism* is measured and the *live latency
 > masked behind them, produced a confident answer to the wrong question — which is the same
 > mistake in a new costume as the sentence corrected further up.
 
-**The race is real on systemd, and the retry as specified would have prevented this run's
-failure, in both samples.** The network became usable 11 and 12 seconds after resume; §7.10's policy is two further
-attempts at two-minute intervals, so the first retry would have found the network up for 1 m 49 s.
-**2 of 2 resume-race failures would have been saved.**
+**The race is real on systemd, and the retry does prevent the failure — observed, not inferred.**
+The network became usable 11 and 12 seconds after resume in the two pre-change samples, and §7.10's
+policy is two further attempts at two-minute intervals. **After this change was deployed a third
+suspend was taken: the catch-up fired in the resume second, failed on the same DNS lookup, and the
++2 min retry saved it — 3 of 3 snapshot sets with `forget` succeeding, where both earlier samples
+had skipped retention.** §5.11 records the run. So this section rests on a measurement of the fix,
+not only of the fault.
 
 So the honest position is the opposite of what stood here: **extending the retry to systemd is
 now supported by evidence rather than merely not ruled out.** Two things still stop this section
