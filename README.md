@@ -194,6 +194,9 @@ The XDG variables are honoured **on macOS and Windows too**, falling back to `~/
 > [!IMPORTANT]
 > `jobs.yaml` is designed to be **byte-identical across a fleet**, which makes it only ever as new as the *oldest binary* reading it. Unknown keys and variables are hard errors by design, so a config using `${state_dir}` (0.1.15+) or `default-job` (0.1.20+) will not load on an older build — and that host stops backing up at its next scheduled run. **Upgrade the binaries before pushing the config.**
 
+> [!IMPORTANT]
+> **Re-run `schedule` after upgrading rusticprofile.** The installed unit, agent or task is generated once, when you arm it — nothing re-emits it when the binary changes, and `status` will keep reporting the schedule as active because it is. So an upgrade can leave you running a unit written by a much older version. This is not hypothetical: a host in this project's own fleet spent eight days failing the first run after every boot on a unit that predated 0.1.10, while every later run in the hour succeeded (`PLAN.md` §5.11). `schedule` is idempotent — it reports `unchanged` when there is nothing to do, and on systemd it does **not** trigger a run — so re-running it costs nothing.
+
 ## Installation
 
 > **`rustic` itself is a separate prerequisite.** rusticprofile *spawns* rustic — it does not

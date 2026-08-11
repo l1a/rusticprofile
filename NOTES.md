@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.15)
+## Current State (v0.2.16)
 
 **`v0.2.14` is released on GitHub *and* on crates.io** as of 2026-08-11 — registry API
 `max_version 0.2.14`, 205,795 bytes, not yanked. It carries **`0.2.8` through `0.2.14` together**,
@@ -573,16 +573,70 @@ Smaller items:
       `rustic.exe` and the resolver joined only the bare name, so it refused on every Windows
       host with a default config. `PATHEXT` is now honoured. The `0.2.0` end-to-end verification
       missed it because its throwaway config named rustic explicitly.
-- [ ] **The resume-race retry is Windows-only, and Linux has the same race.** `0.2.10` retries a
-      failed operation on a detached run, which only Task Scheduler asks for. `WIP.md` §12 records
-      the identical failure under systemd — a 21:12 run that died on a DNS lookup after a resume —
-      so `Persistent=true` fires catch-up runs into a dead network exactly as `StartWhenAvailable`
-      does. Deliberately not generalised in `0.2.10`: `Restart=` on a `Type=oneshot` service and
-      launchd's `KeepAlive` (absent on purpose, since it would restart a one-shot backup on exit)
-      are different mechanisms with different failure modes, and one measured platform is not
-      enough to draw a shared abstraction from. What is needed first is the *measurement* on
-      Linux, not the code — how long after a resume a systemd catch-up run actually fires, and
-      whether it fails as reliably as it does here.
+- [ ] **The resume-race retry is Windows-only. The systemd measurement is DONE (`0.2.16`,
+      `PLAN.md` §5.11) and it says: do not port the retry yet.** Half the question is answered and
+      half is not, so this stays open with a narrower ask than before.
+
+      **Answered — the mechanism.** A `Persistent=true` catch-up fires **within milliseconds** of
+      the timer unit starting, and **`RandomizedDelaySec` does not delay it** — measured at the
+      real 300 s and again at 3600 s, both ~5 ms, so the fleet-spread directive offers no
+      protection. systemd is therefore *not* gentler than `StartWhenAvailable`. Bonus, previously
+      only assumed: **arming a timer whose stamp file does not exist triggers nothing**, so
+      §5.10's run-on-registration bug has no Linux counterpart.
+
+      **Answered — but not the way the item expected.** Over 153 runs in 8 days on a Fedora
+      laptop: 6 failures, and **not one was a network failure**. The host **never suspends** (zero
+      `systemd-suspend.service` invocations), so the race has had no opportunities on it. Five of
+      the six were `0.1.10`'s bug on a unit generated before `0.1.10` and never regenerated — see
+      the two new items below. **A retry would have turned each into three failures over four
+      minutes and fixed none of them.**
+
+      **Still needed: a Linux host that actually suspends.** Until then, extending the retry would
+      be designing past the evidence in the opposite direction to `0.2.10`. Also unexplained and
+      recorded rather than guessed at: the two real boot catch-ups fired **185 s and 204 s** after
+      the timer started, against the probe's milliseconds; a pre-NTP clock step was the leading
+      hypothesis and is disproved.
+
+      *Superseded text, kept because the ask it made was the right one and got an answer that
+      changed the question:* "`WIP.md` §12 records the identical failure under systemd — a 21:12
+      run that died on a DNS lookup after a resume — so `Persistent=true` fires catch-up runs into
+      a dead network exactly as `StartWhenAvailable` does. Deliberately not generalised in
+      `0.2.10`: `Restart=` on a `Type=oneshot` service and launchd's `KeepAlive` (absent on
+      purpose, since it would restart a one-shot backup on exit) are different mechanisms with
+      different failure modes, and one measured platform is not enough to draw a shared
+      abstraction from. What is needed first is the *measurement* on Linux, not the code — how
+      long after a resume a systemd catch-up run actually fires, and whether it fails as reliably
+      as it does here."
+- [ ] **The generated systemd unit's `network-online.target` ordering does nothing on a user
+      timer** (found while measuring the above, `0.2.16`). The service carries
+      `After=network-online.target` / `Wants=network-online.target` and a comment saying a backup
+      starting before the network is up "fails slowly and confusingly" — but
+      `systemctl --user show network-online.target` reports **`LoadState=not-found`**. There is no
+      user-level target of that name, so on `permission: user` — which is the whole fleet — both
+      directives are inert and the comment describes a protection that never existed. `Wants=` on
+      a missing unit is ignored rather than fatal, so it fails silently.
+
+      **Fourth member of the family `PLAN.md` §5.10 names** (`<Hidden>`, `StartWhenAvailable`,
+      `RestartOnFailure`), and the first inside an artefact this tool generates itself. Not fixed
+      in `0.2.16` on `0.2.11`'s precedent: the replacement is a design decision, not a
+      substitution. A user unit can be made to wait — `podman-user-wait-network-online.service`
+      does exactly this and is present on the measured host — but it ships with podman, so it
+      cannot be depended on, and `permission: system` would not need it. Decide the mechanism in
+      `PLAN.md` before changing the generator.
+- [ ] **Nothing re-emits a generated unit when the binary is upgraded, and nothing notices.**
+      `0.2.16` found a host still running units written before `v0.1.10`, so its first scheduled
+      run after every boot had failed for eight days while every later run succeeded. Arming a
+      timer is a one-time act; `cargo install` does not touch it, no gate recipe knows about it,
+      and `status` reports the timer as `active` because it is.
+
+      This is the third member of a set: `0.1.24` guards *"a shared `jobs.yaml` is only as new as
+      the oldest binary reading it"*, §14 of `WIP.md` adds *"…or as current as the most stale
+      chezmoi checkout"*, and this is **"…and the installed unit is only as new as the last
+      `schedule`."** Unlike the second, this one is squarely inside the delegation boundary — the
+      unit is rusticprofile's own artefact, and comparing the installed file against what the
+      current binary would generate needs no other tool. **Left unguarded and openly so** for
+      now, rather than guarded by the wrong component; `PLAN.md` §7.11's reasoning for rejecting
+      the stale-checkout check does *not* transfer, so this deserves its own decision.
 - [ ] **`just check` does not lint test code** — `cargo clippy` runs without `--all-targets`, so
       every `#[cfg(test)]` module has been unlinted since the scaffold. Adding it found one real
       lint (`0.2.0`). Not changed in that release because it may surface more across the
@@ -607,6 +661,109 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.16 — the systemd half of the resume race, measured
+
+**Documentation only; no code changed.** `PLAN.md` gains **§5.11**, the measurement `0.2.10`
+deferred and the backlog has asked for since: *"how long after a resume a systemd catch-up run
+actually fires, and whether it fails as reliably as it does here."* Taken on a Fedora 44 laptop
+running the fleet's real hourly job. **Both questions are answered, one of them by retiring its
+premise, and the measurement found two live defects that matter more than the retry.**
+
+#### The mechanism: the catch-up is immediate, and the spread does not soften it
+
+Three throwaway `Persistent=true` user timers, the systemd analogue of §5.10's `\rpretryprobe\`
+tasks, with a missed elapse simulated by backdating the stamp file in
+`~/.local/share/systemd/timers/` — deterministic, and needing neither a suspend nor a reboot:
+
+| arm | fired |
+|---|---|
+| no stamp file, first activation | **never** |
+| stamp −3 h, `RandomizedDelaySec=0` | **5 ms** after the timer unit started |
+| stamp −3 h, `RandomizedDelaySec=300s` (the real value) | **14 ms** |
+| stamp −3 h, **`RandomizedDelaySec=3600s`** | **5 ms** |
+
+**`RandomizedDelaySec` does not apply to a `Persistent=true` catch-up.** The fourth row is what
+makes that a measurement rather than a lucky window: twelve times the spread changed nothing. So
+**systemd spends the missed hour at the same worst instant Task Scheduler does**, and the
+directive that looks like it would prevent that is not in the path at all.
+
+**The first row is good news and is newly measured.** §5.10 records a Task Scheduler trigger with
+a past boundary *running on registration*, which made `schedule` take a backup and run `forget` as
+a side effect — a §7.5 violation that cost 24 plain triggers to avoid. **systemd has no such
+bug**, and this was re-confirmed in production: re-arming a live timer left its stamp file
+byte-for-byte unchanged and `status` reporting the same `last run`.
+
+#### Whether it fails as reliably: no, and not because Linux is better
+
+**The measured host never suspends** — zero `systemd-suspend.service` invocations and zero kernel
+`PM: suspend entry` records in the window. It is shut down and booted, and stays awake overnight
+with a successful run in every hour. The event `0.2.10` caught four times in one day therefore has
+**no opportunities** here.
+
+**153 runs over 8 days, 6 failures, and not one on the network:** five were
+`could not run rustic: No such file or directory`, and one was an exit-2 config error on the
+cutover day. So the Windows result does not generalise, and **the systemd question still needs a
+Linux host that actually suspends.**
+
+#### `0.1.10`'s bug was still live, on a unit eleven releases stale
+
+All five real failures are the first scheduled run after a boot. The installed unit had no
+`--rustic-binary`, which the generator has emitted **unconditionally since `v0.1.10`** — so the
+unit was written by an older binary at the 2026-08-03 cutover and never regenerated across
+upgrades to `0.1.31`, `0.2.5`, `0.2.9` and `0.2.13`. With `linger` the user manager starts at boot
+with `PATH=/usr/local/bin:/usr/bin`, so the bare name is unresolvable; after a graphical login
+imports the session environment it resolves and every later run succeeds. **`0.1.10`'s own
+sentence, unchanged: the working runs are the accident.**
+
+**Diagnosed with a negative control, by reproducing the boot environment rather than waiting for a
+boot** (`env -i`, the minimal `PATH`, `--dry-run` so nothing is written): the installed unit's
+argv reproduced the historical failure exactly, and the regenerated argv reported
+`password is correct` and proceeded. **And the control that makes it a per-host defect rather than
+a code defect is another host** — the prune host was cut over the same day 69 minutes later with a
+byte-identical `jobs.yaml`, and its units *do* carry the flag. Same fleet, same config, one host
+correct: the variable is the generating binary and nothing else.
+
+The affected host was fixed by re-running `schedule` — one-line unit diff, timer file unchanged,
+`plan --format lines` byte-identical before and after (§4a's contract check), and no run
+triggered.
+
+#### And a directive in our own generated unit that does nothing
+
+`After=network-online.target` / `Wants=network-online.target`, with a comment explaining why a
+backup must not start before the network is up. **`systemctl --user show network-online.target`
+reports `LoadState=not-found`** — there is no user-level target of that name, so on
+`permission: user`, which is the entire fleet, both lines are inert and the comment describes a
+protection that never existed. `Wants=` on a missing unit is ignored rather than fatal, so it
+fails silently in exactly the direction this project exists to refuse.
+
+**Fourth member of the family §5.10 names** — `<Hidden>`, `StartWhenAvailable`,
+`RestartOnFailure`, and now one of ours. Deliberately not fixed here, on `0.2.11`'s precedent: the
+replacement is a design decision rather than a substitution, and the mechanism that would work
+(`podman-user-wait-network-online.service`, present on the measured host) ships with podman and
+cannot be depended on. Backlog carries it with the measurement.
+
+#### The consequence for §7.10, and one result left open
+
+**§7.10's "not extended to systemd or launchd" stands — and now stands on a measurement rather
+than on the absence of one.** A retry would have turned each of the five failures into three
+failures over four minutes and fixed none of them, since `rustic` is no more on the user manager's
+`PATH` two minutes later than at zero. That is §7.10's own stated cost arriving as the whole
+effect.
+
+**Unexplained, and stated rather than guessed at:** the two real boot catch-ups fired **185 s and
+204 s** after the timer unit started, against the probe's milliseconds. A pre-NTP clock step was
+the leading hypothesis and is **disproved** — chrony selected a source about five seconds after
+starting on both boots and logged no step. So the mechanism is measured and the live latency is
+not, and the difference between zero seconds and three minutes decides whether the retry is
+necessary or marginal.
+
+*Two oracle failures from the session, both caught: the probes' own log file recorded a shell path
+instead of a timestamp on every line, because a `$(date)` written into a unit is never expanded —
+the journal was used instead, which was the better oracle anyway. And the probe cleanup was
+verified four separate ways (`list-timers`, `list-unit-files`, the unit directory, the stamp
+directory), because §5.10 records a probe cleanup that named the wrong kind of object, deleted
+nothing and reported success.*
 
 ### v0.2.15 — the AUR package tracks the release, and the README never mentioned crates.io
 
