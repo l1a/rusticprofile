@@ -44,9 +44,11 @@
 //! | `run` | M1 | Operation ordering; lock budget seam |
 //! | `report` | M1 | Human-readable run output |
 //! | `schedule` | M2/M3 | systemd units, then launchd plists |
+//! | [`doctor`] | 0.2.13 | Checks needing the repository, another tool, or the filesystem |
 
 pub mod cli;
 pub mod config;
+pub mod doctor;
 pub mod exec;
 pub mod report;
 pub mod run;

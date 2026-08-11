@@ -22,6 +22,8 @@ rusticprofile - a local, per-machine scheduler and orchestrator for rustic backu
 
 **rusticprofile plan** **-n** *JOB* [**--format** *FORMAT*] [**--show-env** [**--show-secrets**]] [**--as-host** *HOST*] [**--config** *PATH*]
 
+**rusticprofile doctor** [**--repository**] [**--json**] [**-n** *JOB*] [**--as-host** *HOST*] [**--rustic-binary** *PATH*] [**--config** *PATH*]
+
 # DESCRIPTION
 
 **rusticprofile** decides *when* backups run, *which* jobs exist, and *on which hosts*. It installs and manages the systemd units (or launchd agents) that trigger them, sequences the operations within a job, classifies what **rustic**(1) reports back, and coordinates locks against a shared repository.
@@ -196,6 +198,40 @@ The argv is the whole of what rusticprofile constructs:
 
     Read-only is what makes this defensible. There is deliberately no passthrough for **forget** or **prune**, which are destructive and whose scoping belongs in the rustic profile where a flag typed at a prompt cannot contradict it, nor for **restore** — putting a restore path behind a scheduler adds a layer between you and your data at the moment you least want one. `snapshots` is also **not** an operation a job may schedule; that set remains **backup**, **forget** and **prune**.
 
+# DOCTOR
+
+**doctor**
+:   Check the things **config --check** structurally cannot.
+
+    **config --check** is hermetic by design — no repository, no network, no other tool — which is what makes it safe to run anywhere and is also its ceiling. The failures worth catching here are configurations that are individually correct and wrong only *in combination*, so the evidence for them lives outside any config file: in the repository, in another tool's schedules, or on disk. That division is why both commands exist.
+
+    ```
+    rusticprofile doctor                 # local checks only, instant
+    rusticprofile doctor --repository    # also ask the repository
+    rusticprofile doctor --json
+    ```
+
+    Two checks always run, and both are local:
+
+    **lock-authority**
+    :   Whether a **restic** prune schedule is registered on this host while rustic writes the repository. `restic prune` deletes packs immediately and rustic takes no lock, which is the one combination measured to leave a repository failing `restic check`. A predecessor unit that is installed but **disabled** reports `ok` and is still listed — it is one `systemctl enable` away from mattering.
+
+        This is a **per-host** check. It cannot see other machines, and running it on one host says nothing about the rest of a fleet.
+
+    **secrets-present**
+    :   Whether the credential files the rustic profile names actually exist and can be opened. The contents are never read. A profile using **password-command** reports `ok` with nothing to check, which is the recommended configuration rather than an unverifiable one.
+
+        This is pre-flight ergonomics, not a data-safety fix: a missing passphrase already fails loudly when a backup runs. What it does not do is fail while anyone is watching.
+
+    One check is opt-in, because it is the only one that needs the network, a credential and several seconds — and the only one that can fail for reasons unrelated to what it asks:
+
+    **retention-authority** (**--repository**)
+    :   Whether any host has restic-written snapshots *newer* than its rustic cutover, which is what a second retention authority looks like from inside the repository. rusticprofile labels every snapshot set and the predecessor labels none, so the writer is a recorded fact rather than an inference.
+
+        The test is **ordering, not presence**. A migrated host legitimately holds years of unlabelled history, so warning on any mix would warn forever; the signal is an unlabelled snapshot dated after the oldest labelled one. The query is scoped by the profile's own `filter-hosts`, so on a fleet configuration it sees the local host.
+
+    A finding is `ok`, `warn`, or `unknown` — the last meaning the check could not run. "Could not look" is reported separately from "looked and it was fine", and only `warn` affects the exit status.
+
 # SECRETS
 
 rusticprofile stores no secrets and has no secret configuration. The repository password, master key and any cloud credentials belong to **rustic**(1), which offers `--password`, `--password-file` and `--password-command` (and `--key`, `--key-file`, `--key-command`), any of which may be set in its own config file.
@@ -224,6 +260,9 @@ The contract the implemented commands follow:
 
 **2**
 :   The configuration is invalid. Reported before any process is spawned, with every violation listed at once, so a config error is never confused with a backup failure.
+
+**3**
+:   **doctor** found something a human should look at. Distinct from both success and a configuration error, so a monitor can tell "healthy", "needs attention" and "broken configuration" apart. A check that could not run does not set it.
 
 **130**
 :   Interrupted.

@@ -34,11 +34,14 @@ rusticprofile status                                 # what is scheduled here, p
 rusticprofile status --json                          # ...for a monitor; alert on last_success
 rusticprofile snapshots -n dot-files                 # list snapshots (read-only passthrough to rustic)
 rusticprofile unschedule -n dot-files                # remove the units
+
+rusticprofile doctor                                 # local checks: competing prune schedule, missing secrets
+rusticprofile doctor --repository                    # ...plus: is anything else writing retention here?
 ```
 
 `schedule` and `unschedule` are each a single step, and each fully undoes the other. What a job becomes depends on the platform: **two** systemd units on Linux — a `.timer` and the `.service` it activates, because systemd has no way for a timer to run a command directly, which is true of every tool that schedules with systemd — **one** launchd agent on macOS, or **one** registered task on Windows. On Linux only the timer is enable-able: the service is `static`, so it cannot be armed on its own and run outside its schedule.
 
-`config` and `plan` are hermetic — no rustic binary, no repository, no network — so they are safe to run anywhere. `run` is the one that actually invokes rustic, and `schedule` is the one that talks to the service manager (`systemctl`, `launchctl` or `schtasks`). Running the binary with no arguments exits non-zero and says so rather than doing anything by default.
+`config` and `plan` are hermetic — no rustic binary, no repository, no network — so they are safe to run anywhere. **`doctor` is the deliberate counterpart**: it exists precisely to check what a hermetic command cannot, because the failures that have actually cost data here were configurations that were individually correct and only wrong in combination with another tool. Its default run is still local and instant; `--repository` is opt-in because it is the one check that needs the network and a credential. `run` is the one that actually invokes rustic, and `schedule` is the one that talks to the service manager (`systemctl`, `launchctl` or `schtasks`). Running the binary with no arguments exits non-zero and says so rather than doing anything by default.
 
 ## What it does
 
@@ -56,7 +59,10 @@ rusticprofile owns **when** backups run, **which** jobs exist, and **on which ho
 - **recording what happened**: a per-run log, and a status file whose `last_success`
   survives a failed run — the one field that reveals a job which has quietly stopped
   working, since a schedule can be armed and green while every run fails
-- **`--json`** on `run` and `status`, so a monitor never has to match English
+- **`doctor`**: whether a **restic** prune schedule is still armed here (the one combination
+  measured to corrupt the repository), whether the credential files the profile names exist,
+  and — with `--repository` — whether anything else has been writing retention for a host
+- **`--json`** on `run`, `status` and `doctor`, so a monitor never has to match English
 
 ## What it does not do *yet*
 

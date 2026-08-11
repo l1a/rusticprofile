@@ -1775,6 +1775,102 @@ A `--dry-run` never retries: a dry run exists to answer a question quickly.
   job must not overlap, `MultipleInstancesPolicy` is `IgnoreNew`, and the lock is non-blocking, so
   an hourly trigger arriving mid-retry is refused rather than queued.
 
+## 7.11 SETTLED: what `doctor` checks, and what it refuses to (2026-08-10)
+
+**Written after building it, unlike §7.9 and §7.10** — because two of the four decisions here
+were forced by *measuring* against the live repository, and could not have been reached from
+reading. That is worth flagging: this section is a record of the specification being wrong.
+
+### The four candidates, and their fate
+
+| # | check | outcome |
+|---|---|---|
+| 1 | retention authority — labelled vs unlabelled | **built**, behind `--repository`, with a **different predicate** than §7.5 specified |
+| 2 | lock authority — a live restic prune schedule | **built**, always, but **narrower** than §7.6 specified |
+| 4 | the profile's credential files exist | **built**, always |
+| 3 | a stale chezmoi checkout | **rejected** |
+
+### §7.5's predicate is wrong, and the measurement is the argument
+
+§7.5 asks to warn on *"a mix of labelled and unlabelled entries"* for one host. Against the live
+repository:
+
+```
+host-a   labelled    84   oldest 2026-08-03T12:03:32   newest 2026-08-09T13:05:25
+          unlabelled  38   oldest 2025-09-24T23:00:10   newest 2026-08-03T10:00:30
+```
+
+`host-a` is clean — those unlabelled snapshots are its own restic-era history, from before the
+2026-08-03 cutover. Under `keep-yearly = 2` they survive about two years, so the specified check
+warns on every migrated host continuously for two years. **A check that is always red is not a
+check.**
+
+**Shipped predicate: an unlabelled snapshot NEWER than the oldest labelled one.** After a clean
+cutover every unlabelled snapshot precedes every labelled one; two live writers interleave. The
+same data verifies it: `10:00:30 < 12:03:32`, clean, with the two-hour cutover gap legible.
+
+Corollary kept deliberately: **a host with no labelled snapshots is not in conflict**, it is
+un-migrated. `host-c` and `host-g` are exactly that, and the naive reading would have flagged the
+control group forever.
+
+### §7.6's check cannot be fleet-wide, and the narrowing is not a shortcut
+
+§7.6 wants *"a repository written by rustic while a restic prune schedule still exists **anywhere
+on the fleet**"*. **rusticprofile has no fleet inventory and no remote access, by design** — Part
+1 settled that it is a *local, per-machine* scheduler with no central server, which is the entire
+reason it exists rather than `rustic_scheduler`. Surveying six other machines means SSH, an
+inventory, and credentials to reach them: a different tool.
+
+**Shipped: "on this host", with `doctor` run per host covering the fleet between them.** Stated in
+the module docs and the man page, because the gap is real — a host nobody runs it on is not
+covered, so this cannot establish the property §7.6 wants.
+
+**Rejected: warn on an installed-but-disabled predecessor unit.** The prune host deliberately
+keeps `resticprofile-prune@profile-dot-files.timer` on disk and disabled (§3a invariant 3), and a
+tool that calls the correct state a problem gets ignored. It is reported as `ok` **and still
+listed**, because one `systemctl enable` re-arms the single measured-unsafe combination.
+
+### Rejected: check 3, a stale chezmoi checkout
+
+The risk is real and is recorded in `NOTES.md` — nothing guards *"a shared `jobs.yaml` is only as
+current as the most stale checkout"*, the mirror of `0.1.24`'s binary-version rule. **It does not
+belong here.**
+
+- rusticprofile would shell out to `git` and `chezmoi`, to audit a **different tool's** state.
+  `AGENTS.md` §2: it is explicitly *not* a config wrapper, and the delegation boundary is the
+  thing that keeps this project small enough to be correct.
+- It would no-op on any host not using chezmoi. That the whole fleet does is a **fleet** fact, not
+  a rusticprofile fact, and building a check that only works because of a local deployment
+  accident is how a tool acquires assumptions nobody wrote down.
+- The natural home is whatever manages the dotfiles, which already knows how to ask.
+
+**Left unguarded and openly so**, rather than guarded by the wrong component.
+
+### Rejected: pack accounting, i.e. "did our own prune reclaim anything"
+
+Nearly assumed to be covered by check 2, and it is not: check 2 detects a competing restic prune
+*schedule*, which says nothing about whether **our** prune's deletion pass works. Verifying that
+is a pack count against a stored baseline, and `doctor` has nowhere to keep a baseline — it is
+stateless by construction, and giving it state to compare against is a larger design change than
+the check is worth. Recorded in `NOTES.md` §4 as its own backlog item.
+
+### Rejected: reporting secret file *permissions*
+
+`0600` versus group-readable is a genuine question and is **not** what the recorded item asks
+(*"does not exist or is unreadable"*). Scope was held to existence and openability. A mode check
+also has no correct answer on Windows, where the equivalent is an ACL, and a check that means
+something different per platform is worse than no check.
+
+### The third severity is a design decision, not a detail
+
+`ok`, `warn`, `unknown`. **A check that could not run must not report `ok`** — an unreachable
+repository, a rustic that will not start, a service-manager state word we do not recognise. This
+project's most frequently rediscovered failure is *a check that returns the expected answer for
+the wrong reason*: the `ls`/`eza` empty listing, `$PIPESTATUS` in zsh, the `wsl.exe` variable that
+came back blank, the man-page `sed` that quietly did nothing. `unknown` does not set the exit
+code, because "could not look" is not evidence of a problem — it is an absence of evidence, and
+the two must not be spelled the same way.
+
 # Part 8 — Related state elsewhere
 
 - **`~/Sync/git/resticprofile/UPSTREAMING.md`** — the companion document for the Go fork: PR

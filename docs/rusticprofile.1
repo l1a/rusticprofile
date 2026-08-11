@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.12" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.13" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -23,6 +23,8 @@ rusticprofile \- a local, per\-machine scheduler and orchestrator for rustic bac
 \fBrusticprofile snapshots\fP \fB\-n\fP \fIJOB\fP [\fB\-\-config\fP \fIPATH\fP] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-rustic\-binary\fP \fIPATH\fP] [\fB\-\-\fP \fIRUSTIC ARGS\fP]
 .PP
 \fBrusticprofile plan\fP \fB\-n\fP \fIJOB\fP [\fB\-\-format\fP \fIFORMAT\fP] [\fB\-\-show\-env\fP [\fB\-\-show\-secrets\fP]] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-config\fP \fIPATH\fP]
+.PP
+\fBrusticprofile doctor\fP [\fB\-\-repository\fP] [\fB\-\-json\fP] [\fB\-n\fP \fIJOB\fP] [\fB\-\-as\-host\fP \fIHOST\fP] [\fB\-\-rustic\-binary\fP \fIPATH\fP] [\fB\-\-config\fP \fIPATH\fP]
 
 .SH "DESCRIPTION"
 .PP
@@ -231,6 +233,50 @@ rusticprofile snapshots \-n dot\-files \-\- \-\-filter\-label core
 Read\-only is what makes this defensible\. There is deliberately no passthrough for \fBforget\fP or \fBprune\fP, which are destructive and whose scoping belongs in the rustic profile where a flag typed at a prompt cannot contradict it, nor for \fBrestore\fP \-\- putting a restore path behind a scheduler adds a layer between you and your data at the moment you least want one\. `\f[CR]snapshots\fP` is also \fBnot\fP an operation a job may schedule; that set remains \fBbackup\fP, \fBforget\fP and \fBprune\fP\.
 .RE
 
+.SH "DOCTOR"
+\fBdoctor\fP
+.RS
+.PP
+Check the things \fBconfig \-\-check\fP structurally cannot\.
+.PP
+\fBconfig \-\-check\fP is hermetic by design \-\- no repository, no network, no other tool \-\- which is what makes it safe to run anywhere and is also its ceiling\. The failures worth catching here are configurations that are individually correct and wrong only \fIin combination\fP, so the evidence for them lives outside any config file: in the repository, in another tool's schedules, or on disk\. That division is why both commands exist\.
+.RS
+.PP
+.nf
+rusticprofile doctor                 # local checks only, instant
+rusticprofile doctor \-\-repository    # also ask the repository
+rusticprofile doctor \-\-json
+.fi
+.RE
+.PP
+Two checks always run, and both are local:
+\fBlock\-authority\fP
+.RS
+.PP
+Whether a \fBrestic\fP prune schedule is registered on this host while rustic writes the repository\. `\f[CR]restic prune\fP` deletes packs immediately and rustic takes no lock, which is the one combination measured to leave a repository failing `\f[CR]restic check\fP`\. A predecessor unit that is installed but \fBdisabled\fP reports `\f[CR]ok\fP` and is still listed \-\- it is one `\f[CR]systemctl enable\fP` away from mattering\.
+.PP
+This is a \fBper\-host\fP check\. It cannot see other machines, and running it on one host says nothing about the rest of a fleet\.
+.RE
+\fBsecrets\-present\fP
+.RS
+.PP
+Whether the credential files the rustic profile names actually exist and can be opened\. The contents are never read\. A profile using \fBpassword\-command\fP reports `\f[CR]ok\fP` with nothing to check, which is the recommended configuration rather than an unverifiable one\.
+.PP
+This is pre\-flight ergonomics, not a data\-safety fix: a missing passphrase already fails loudly when a backup runs\. What it does not do is fail while anyone is watching\.
+.RE
+.PP
+One check is opt\-in, because it is the only one that needs the network, a credential and several seconds \-\- and the only one that can fail for reasons unrelated to what it asks:
+\fBretention\-authority\fP (\fB\-\-repository\fP)\fP
+.RS
+.PP
+Whether any host has restic\-written snapshots \fInewer\fP than its rustic cutover, which is what a second retention authority looks like from inside the repository\. rusticprofile labels every snapshot set and the predecessor labels none, so the writer is a recorded fact rather than an inference\.
+.PP
+The test is \fBordering, not presence\fP\. A migrated host legitimately holds years of unlabelled history, so warning on any mix would warn forever; the signal is an unlabelled snapshot dated after the oldest labelled one\. The query is scoped by the profile's own `\f[CR]filter\-hosts\fP`, so on a fleet configuration it sees the local host\.
+.RE
+.PP
+A finding is `\f[CR]ok\fP`, `\f[CR]warn\fP`, or `\f[CR]unknown\fP` \-\- the last meaning the check could not run\. "Could not look" is reported separately from "looked and it was fine", and only `\f[CR]warn\fP` affects the exit status\.
+.RE
+
 .SH "SECRETS"
 .PP
 rusticprofile stores no secrets and has no secret configuration\. The repository password, master key and any cloud credentials belong to \fBrustic\fP(1), which offers `\f[CR]\-\-password\fP`, `\f[CR]\-\-password\-file\fP` and `\f[CR]\-\-password\-command\fP` (and `\f[CR]\-\-key\fP`, `\f[CR]\-\-key\-file\fP`, `\f[CR]\-\-key\-command\fP`), any of which may be set in its own config file\.
@@ -261,6 +307,10 @@ A run failed\.
 \fB2\fP
 .RS
 The configuration is invalid\. Reported before any process is spawned, with every violation listed at once, so a config error is never confused with a backup failure\.
+.RE
+\fB3\fP
+.RS
+\fBdoctor\fP found something a human should look at\. Distinct from both success and a configuration error, so a monitor can tell "healthy", "needs attention" and "broken configuration" apart\. A check that could not run does not set it\.
 .RE
 \fB130\fP
 .RS
