@@ -100,7 +100,9 @@ Validation rejects, among other things, any key it does not recognise; a snapsho
 
 Operations run in the order the job lists them. A failed operation stops the job; a **partial** one does not. A backup that saved some of its snapshot sets and failed on others still proceeds to **forget**, because skipping retention after a partly-successful backup is how snapshots accumulate without limit. A backup that saved *nothing* does stop the job, since running retention after it would delete old snapshots with no new ones in place. Operations that did not run are listed explicitly in the summary.
 
-A local lock prevents the same job running twice on this machine, and is not taken by waiting: a second run is refused immediately rather than queued. It says nothing about other machines sharing the repository — that is a later milestone, and until it lands **prune** must not be run against a shared repository.
+A local lock prevents the same job running twice on this machine, and is not taken by waiting: a second run is refused immediately rather than queued. It says nothing about other machines sharing the repository — repository-level lock coordination is a later milestone.
+
+**That milestone is not a precondition for `prune`, and an earlier version of this page said it was.** rustic is lock-free *by design*: its `prune` marks packs and deletes them only after `--keep-delete`, 23 hours by default, so a concurrent rustic backup has a day of grace. The measured hazard is narrower and is about mixing tools — **never run `restic prune` against a repository any rustic client writes to**, because restic deletes packs immediately, which is safe only by virtue of an exclusive repository lock that rustic neither takes nor honours. `rustic prune` is safe and is the only prune that should run against a shared repository.
 
 Exit status is **0** for success or partial, **1** for failure, **130** for interruption.
 

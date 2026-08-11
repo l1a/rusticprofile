@@ -225,19 +225,39 @@ pub struct RunArgs {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Detach from the console so a scheduled run shows no window (Windows; no-op elsewhere)
+    /// Mark the run as unattended — started by the scheduler rather than typed
     ///
-    /// `schedule` puts this in the generated Task Scheduler definition. Task Scheduler can
-    /// only run a task as the logged-on user through `InteractiveToken`, which starts it *in*
-    /// that desktop session — and Windows gives a console-subsystem program a console, so an
-    /// hourly job means an hourly window appearing and vanishing. The logon types that run in
-    /// the non-interactive session 0 (`S4U`, a stored password, or LocalSystem) all need
-    /// rights an ordinary user account does not have, so this cannot be fixed in the task
-    /// definition alone.
+    /// `schedule` puts this in the generated **systemd service** and the generated **Task
+    /// Scheduler definition**. It does two things: one on every platform, one only on Windows.
     ///
-    /// **Typing this by hand throws your output away.** The console is detached, so rustic's
-    /// progress on stderr goes nowhere. The run's record still reaches the `log:` file, which
-    /// is what a scheduled run is read from anyway.
+    /// Everywhere, it enables the **retry** — a failed operation is attempted twice more at
+    /// two-minute intervals. A missed calendar time is replayed within *seconds* of the machine
+    /// waking, before the network is back, so the run replacing a missed hour is the one most
+    /// likely to fail. Measured on both platforms; on Linux three suspends put the catch-up in
+    /// the same second as the resume, with the network arriving 11–12 seconds later. Only a
+    /// plain failure is retried: an interrupt is a decision, a partial run already continues to
+    /// `forget`, and `--dry-run` never waits. The summary says when a retry happened, so a
+    /// retried run cannot read as a first-attempt success.
+    ///
+    /// A run you type yourself is unaffected and fails immediately. That is why this is a flag
+    /// rather than something detected: on Linux `INVOCATION_ID` and `JOURNAL_STREAM` are both
+    /// set in an ordinary desktop terminal, so the environment cannot tell the two apart.
+    ///
+    /// On **Windows only**, it also detaches from the console so a scheduled run shows no
+    /// window. Task Scheduler can only run a task as the logged-on user through
+    /// `InteractiveToken`, which starts it *in* that desktop session — and Windows gives a
+    /// console-subsystem program a console, so an hourly job means an hourly window appearing
+    /// and vanishing. The logon types that run in the non-interactive session 0 (`S4U`, a
+    /// stored password, or LocalSystem) all need rights an ordinary user account does not have,
+    /// so this cannot be fixed in the task definition alone.
+    ///
+    /// **Typing this by hand on Windows throws your output away**, because the console is
+    /// detached and rustic's progress on stderr goes nowhere; the run's record still reaches
+    /// the `log:` file. On Unix no stream is touched, so a scheduled run's diagnostics still
+    /// reach the journal.
+    ///
+    /// macOS is not covered by the retry: the same race is plausible under launchd and has not
+    /// been measured.
     #[arg(long)]
     pub background: bool,
 
@@ -491,9 +511,59 @@ mod tests {
             panic!("expected the run subcommand");
         };
         assert!(!args.dry_run);
-        // Detaching the console throws output away, so a hand-typed run must never get it by
-        // default — only the generated Task Scheduler definition asks for it.
+        // A hand-typed run must never be treated as unattended by default: it would gain the
+        // retry (four minutes of silence in front of someone watching) and, on Windows, throw
+        // its output away. Only the generated systemd service and Task Scheduler definition
+        // ask for it.
         assert!(!args.background);
+    }
+
+    #[test]
+    fn the_background_help_names_every_backend_that_emits_it() {
+        // A GUARD, not a wording preference. `0.2.16` shipped a `--background` help text
+        // saying "Windows; no-op elsewhere" and "the generated Task Scheduler definition"
+        // *after* the same release made `schedule` emit the flag into the systemd service and
+        // made the retry fire on Linux. Both clauses were false, and it reached crates.io.
+        //
+        // It survived review because the man page and this doc comment are two copies of one
+        // fact and nothing compares them: `just man` regenerates the page from its own source,
+        // so both were internally consistent and disagreed with each other. That is `0.2.4`'s
+        // finding — duplicated state goes stale one copy at a time — and `0.2.9`'s rule that
+        // when the failure is *silent*, correcting the text is not enough on its own.
+        //
+        // Asserted against the rendered help rather than the source, because clap reflows it.
+        let help = long_help_for_background();
+        for needle in ["systemd", "Task Scheduler"] {
+            assert!(
+                help.contains(needle),
+                "--background help must name {needle}, since `schedule` emits the flag there \
+                 and dropping it silently removes behaviour from that platform:\n{help}"
+            );
+        }
+        // The retry is the cross-platform half. If this ever becomes Windows-only again, the
+        // help must stop claiming otherwise — and this test is where that gets noticed.
+        assert!(
+            help.contains("retry") || help.contains("attempted twice more"),
+            "--background help must describe the retry:\n{help}"
+        );
+    }
+
+    /// The `--background` long help as clap renders it.
+    fn long_help_for_background() -> String {
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        let run = cmd
+            .get_subcommands_mut()
+            .find(|c| c.get_name() == "run")
+            .expect("run subcommand");
+        let arg = run
+            .get_arguments()
+            .find(|a| a.get_id() == "background")
+            .expect("--background argument");
+        arg.get_long_help()
+            .or_else(|| arg.get_help())
+            .map(|h| h.to_string())
+            .unwrap_or_default()
     }
 
     #[test]
@@ -503,9 +573,11 @@ mod tests {
             panic!("expected the run subcommand");
         };
         assert!(args.background);
-        // Accepted on every platform even though it only acts on Windows: `schedule` generates
-        // the same argv shape everywhere, and a flag that parsed on one OS and not another
-        // would make a task definition untestable from the host that writes it.
+        // Accepted on every platform, and it *acts* on every platform: the retry is gated on
+        // this flag rather than on `cfg!(windows)` (`PLAN.md` 7.12). The console detachment is
+        // the Windows-only half. `schedule` generates the same argv shape everywhere, and a
+        // flag that parsed on one OS and not another would make a unit or task definition
+        // untestable from the host that writes it.
         assert!(!args.dry_run);
     }
 
