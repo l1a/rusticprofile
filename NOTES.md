@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.16)
+## Current State (v0.2.17)
 
 **`v0.2.14` is released on GitHub *and* on crates.io** as of 2026-08-11 — registry API
 `max_version 0.2.14`, 205,795 bytes, not yanked. It carries **`0.2.8` through `0.2.14` together**,
@@ -679,6 +679,62 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.17 — `--background`'s own help text was false in the release that changed it
+
+**Documentation and one test; no behaviour changed.** `0.2.16` made `schedule` emit
+`--background` into the generated systemd service and made the retry fire on Linux — and left the
+flag's `--help` text saying:
+
+```
+Detach from the console so a scheduled run shows no window (Windows; no-op elsewhere)
+`schedule` puts this in the generated Task Scheduler definition.
+```
+
+**Both clauses were false by the time that release shipped**, and it reached crates.io. It is not a
+no-op elsewhere — on Unix it is the whole gate for the retry — and `schedule` emits it into two
+generated artefacts, not one. A third sentence, *"typing this by hand throws your output away"*,
+described Windows-only behaviour unconditionally.
+
+#### Why it survived, which is the part worth keeping
+
+**The man page was correct.** `0.2.16` rewrote `docs/rusticprofile.1.md`'s `--background` entry
+properly and never touched the doc comment in `cli.rs` — two copies of one fact, one updated.
+That is `0.2.4`'s finding in its fourth location (after `AGENTS.md`/`PLAN.md`, the README vs a
+recipe comment in `0.2.14`, and `PLAN.md`'s own header in `0.1.32`): **duplicated state goes stale
+one copy at a time, and the copy nobody re-reads is the one that survives.**
+
+**And nothing could have caught it.** `just man` regenerates the page from its own source, so the
+page and the help were each internally consistent and disagreed with each other. No check compares
+them. The gate asks whether the man page is current *with respect to itself*.
+
+**Found by running the published binary** — the third of the three post-publish checks the `0.2.2`
+precedent requires (registry API, `cargo install --locked` into a throwaway root, then *run it*).
+The first two would have passed a crate whose help text lied. That is the second time that third
+step has earned its place.
+
+#### The guard, because correcting the wording is not enough
+
+`0.2.9`'s rule: when the failure is *silent*, changing the form does not stop it recurring. So a
+test asserts the rendered `--background` help names **both** backends that emit the flag, and
+mentions the retry. Asserted against clap's rendered output rather than the source, since clap
+reflows doc comments.
+
+**Verified to fail, not just to pass.** Restoring the exact wording `0.2.16` shipped makes it fail
+with *"--background help must name systemd"*; the corrected text passes. A guard nobody has watched
+fail is a check that may not be able to.
+
+#### Also here: the man page's `prune` warning was superseded four releases before this
+
+`RUN` still closed with *"until it lands **prune** must not be run against a shared repository"* —
+the standing rule `0.1.11` reversed and `§3a` invariant 3 replaced. **rustic is lock-free by
+design**; its prune defers deletion by `--keep-delete` (23 h), so the hazard is not prune-in-general
+but the specific mixture: **`restic prune` against a repository a rustic client writes to**. Left as
+it was, the page told a reader not to do the one maintenance operation that is safe, and said nothing
+about the one that corrupted this repository in testing. **A false claim in a safety section is worse
+than an absent one**, which is why it goes in the same release rather than a later one.
+
+333 unit tests, up from 332.
 
 ### v0.2.16 — the resume race is measured on systemd, and the retry now covers Linux
 
