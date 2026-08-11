@@ -236,7 +236,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.12)
+## Current State (v0.2.13)
 
 **`v0.2.7` is released on GitHub *and* on crates.io** as of 2026-08-07 — registry API
 `max_version 0.2.7`, 185,634 bytes, not yanked, re-confirmed 2026-08-08. It carries `0.2.3`
@@ -471,12 +471,46 @@ Smaller items:
       report 0 B for it because 0 B is correct. Worth keeping as a set — it will contain data
       on other hosts — but it is a reminder that an empty snapshot still competes for a
       retention slot, which is how it came to displace a 395 MiB one (`PLAN.md` §7.5).
-- [ ] **A `doctor` command.** Two checks now, one per authority a shared repository has.
-      `PLAN.md` §7.5: warn when one host's snapshots carry a mix of labelled and unlabelled
-      entries, which is what a second *retention* authority looks like from inside the
-      repository. `PLAN.md` §7.6: warn when the repository is written by rustic while any
-      restic schedule still runs an exclusive operation, which is a second *lock* authority
-      and the more dangerous of the two. Not scheduled; recorded so the idea is not lost.
+- [ ] **A `doctor` command.** **Not built, not started, not scheduled** — a proposed subcommand
+      alongside `config`/`status`, recorded so the idea is not lost. **Four candidate checks.**
+
+      The argument for a separate command rather than more `config --check` rules is `PLAN.md`
+      §3(d), and it is the reason this item exists at all: the failures that actually hurt were
+      configurations **individually correct and wrong only in combination**, and *"neither was
+      detectable from inside rusticprofile"*. `--check` is hermetic by design — no repository, no
+      network. **Every check below needs something outside the config**: the repository, another
+      host, the filesystem, or another tool's schedule. That is the dividing line between the two
+      commands, and it is what makes this a command rather than a validation rule.
+
+      | # | check | from `PLAN.md` §3(d)'s two authorities |
+      |---|---|---|
+      | 1 | warn when one host's snapshots mix **labelled and unlabelled** entries | a second **retention** authority (`PLAN.md` §7.5) |
+      | 2 | warn when the repository is written by rustic while **a restic `prune` schedule still exists anywhere on the fleet** | a second **lock** authority (`PLAN.md` §7.6), the more dangerous of the two |
+
+      Check 1 works because rusticprofile labels every snapshot set and the predecessor labels
+      none, so *"which tool last wrote for this host"* is a fact in the repository rather than an
+      inference from a timer. **It has been run by hand** — it is the test the rung-9 fleet audit
+      used. Check 2 is deliberately narrowed by §7.6 from "something holds a lock" to that exact
+      sentence, because that version is checkable.
+
+      **Promoted from `WIP.md` 2026-08-10** — two candidates that had accreted only in the
+      gitignored handoff file, where they would have been lost with it:
+
+      | # | check | why `--check` cannot do it |
+      |---|---|---|
+      | 3 | warn when this host's **chezmoi checkout is stale** relative to its remote | §3a's version rule has teeth for the *binary* — a shared `jobs.yaml` is only as new as the oldest binary reading it — and **nothing guards the config half**. A one-commit-stale checkout is how a host gets gated out of a snapshot set, and how `--as-host` starts reporting the local file's gating attributed to a remote host. It produced a false "a host is silently losing its GPG keyring" alarm once already. |
+      | 4 | warn when a **secret named by the profile does not exist or is unreadable** | `config --check` reports `ok` on a configuration that cannot possibly authenticate — that is precisely how a host looked healthy for two days while unable to back up. Belongs here rather than in `--check` because the paths are per-host, so `--as-host` would report on a profile it cannot see (`v0.1.12`). |
+
+      **Check 4 is pre-flight ergonomics, not a data-safety fix** — the failure is already loud at
+      run time (`backup saved nothing`, `forget` skipped). Same bargain as
+      `check_sources_are_expanded`: read a file we do not own, because nothing else catches it
+      earlier. Checks 1 and 2 are the ones that protect data.
+
+      **What is NOT in scope, recorded because it was nearly assumed to be:** verifying that a
+      `rustic prune` actually *reclaimed* packs. Check 2 detects a competing restic prune
+      *schedule*; it says nothing about whether our own prune's deletion pass worked. That is pack
+      accounting against a stored baseline — a third, unspecified thing, and it needs somewhere to
+      keep the baseline.
 - [x] **"M4 blocks space reclamation" was WRONG, and is superseded.** Corrected in `0.1.3`
       and acted on in `0.1.11`: rustic is lock-free by design, so `rustic prune` is safe and
       is the only prune that may run here. Prune returned to the designated host on
@@ -551,6 +585,35 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.13 — the `doctor` backlog item gains the two checks that only existed in a gitignored file
+
+**Documentation only; no product code changed, and `doctor` is still not built.** The item is a
+proposal for a future subcommand, and this release does not start it.
+
+Two candidate checks — **a stale chezmoi checkout**, and **a secret named by the profile that does
+not exist** — had accreted only in `WIP.md`. That file is gitignored and Syncthing-synced, so it is
+neither in this repository's history nor readable by anyone who clones it: the two ideas would have
+died with the working copy. They are now in §4 beside the two that were already there.
+
+**The item now also says why it is a command and not more `config --check` rules**, which was
+implicit in `PLAN.md` §3(d) and nowhere in `NOTES.md`. `--check` is hermetic by design — no
+repository, no network — and **all four checks need something outside the config**: the repository,
+another host, the filesystem, or another tool's schedule. Without that line the natural reading of
+the backlog item is "add four validation rules", which is the design `PLAN.md` explicitly rejected
+after two tools sharing one repository went wrong twice in two days.
+
+**One negative scope note is recorded deliberately.** Verifying that a `rustic prune` actually
+reclaimed packs is **not** any of the four. Check 2 detects a competing restic prune *schedule*;
+whether our own prune's deletion pass worked is pack accounting against a stored baseline. That
+distinction was nearly lost in conversation, and someone building `doctor` from the old item would
+have expected the prune question to fall out of it for free.
+
+*Why a release entry for a backlog edit at all:* §3's rule is a patch bump on **every** PR, and this
+is the class of change `0.2.4` exists for — the pre-code claim that survived thirty-five releases in
+a file every session is told to read in full. **Duplicated state goes stale one copy at a time, and
+the copy nobody re-reads is the one that survives.** `WIP.md` now points here rather than holding a
+second copy of the two candidates.
 
 ### v0.2.12 — `aur-srcinfo` destroyed the file it generates, and `open-pr` now pushes
 
