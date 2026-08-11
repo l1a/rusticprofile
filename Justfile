@@ -68,8 +68,17 @@ ELVISH_COMP := `echo "${XDG_CONFIG_HOME:-$HOME/.config}/elvish/lib"`
 #     unset variable, which is every Unix host.
 #   * `tr` — `$APPDATA` is a native Windows path full of backslashes, and `sh` treats those as
 #     escapes. Windows accepts forward slashes in every path API.
-#   * the else branch is byte-for-byte the old expression, so no Unix host changes.
-NU_COMP    := `if [ -n "${APPDATA:-}" ]; then printf '%s/nushell/autoload' "$(printf %s "$APPDATA" | tr '\\' '/')"; else echo "${XDG_CONFIG_HOME:-$HOME/.config}/nushell/autoload"; fi`
+#   * `'\\\\'`, four backslashes, NOT two. Two survive just and `sh` as a single backslash, which
+#     `tr` reads as a trailing unescaped one — it still substitutes correctly, but warns:
+#
+#         tr: warning: an unescaped backslash at end of string is not portable
+#
+#     on stderr, on every invocation that evaluates this variable. Four deliver the escaped `\\`
+#     `tr` expects. Measured on Windows through `just --evaluate` rather than a `sh -c` probe,
+#     because PowerShell rewrites backslashes in native arguments and reports the opposite.
+#   * the else branch is byte-for-byte the old expression, so no Unix host changes. `tr` runs
+#     only inside the then-branch, so this quoting cannot affect a host where APPDATA is unset.
+NU_COMP    := `if [ -n "${APPDATA:-}" ]; then printf '%s/nushell/autoload' "$(printf %s "$APPDATA" | tr '\\\\' '/')"; else echo "${XDG_CONFIG_HOME:-$HOME/.config}/nushell/autoload"; fi`
 
 # PS_COMP is very likely wrong on Windows in the same way, and is deliberately NOT changed here.
 # `~/.config/powershell` is correct for pwsh on Linux and macOS; on Windows the profile directory
