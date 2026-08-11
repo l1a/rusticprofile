@@ -8,7 +8,7 @@ A local, per-machine scheduler and orchestrator for [rustic](https://rustic.cli.
 
 ## Status
 
-**Milestones 1, 2, 3 and 5 complete.** rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — schedule itself with **systemd on Linux, launchd on macOS or Task Scheduler on Windows**, and **report what it has been doing**: a per-run log, a status file recording when each job last *succeeded*, and `--json` for anything automated.
+**Milestones 1, 2, 3, 5 and 6 complete. Repository lock coordination (M4) is the only unbuilt one**, and it is deferred deliberately rather than pending — it is defence in depth, not a precondition, because rustic is lock-free by design and its `prune` leaves a 23-hour grace period. The box further down is what actually matters for safety. rusticprofile can validate a configuration, show exactly what it would run, run it — taking a local lock, sequencing operations, classifying what rustic reports and summarising the result — schedule itself with **systemd on Linux, launchd on macOS or Task Scheduler on Windows**, and **report what it has been doing**: a per-run log, a status file recording when each job last *succeeded*, and `--json` for anything automated.
 
 **Linux, macOS and Windows.** `schedule` installs systemd units on Linux, a launchd agent on macOS, or a Task Scheduler task on Windows, and refuses anywhere else rather than writing units nothing will run. One limitation is worth knowing before you rely on it, and it applies to **both macOS and Windows**: a user-level schedule runs only while you are logged on, because neither platform has an equivalent of systemd's `linger`. So a Mac at the login window or a PC at the lock screen takes no backups — nothing fails, and the only evidence is an absence. Watch `last success`, or use `permission: system`. On Windows that same interactive logon is why a scheduled run would otherwise open a terminal window every time it fires; `schedule` passes `--background` so the run detaches from its console instead. See *What it does not do yet* below, which you should read before pointing several machines at one repository.
 
@@ -195,6 +195,40 @@ The XDG variables are honoured **on macOS and Windows too**, falling back to `~/
 > `jobs.yaml` is designed to be **byte-identical across a fleet**, which makes it only ever as new as the *oldest binary* reading it. Unknown keys and variables are hard errors by design, so a config using `${state_dir}` (0.1.15+) or `default-job` (0.1.20+) will not load on an older build — and that host stops backing up at its next scheduled run. **Upgrade the binaries before pushing the config.**
 
 ## Installation
+
+> **`rustic` itself is a separate prerequisite.** rusticprofile *spawns* rustic — it does not
+> vendor, bundle or depend on it as a crate, so **none of the routes below bring it with them**.
+> This is not a theoretical footnote: a host in this project's own fleet had `cargo` and `restic`
+> and no `rustic` at all, and the failure surfaces at the first scheduled run rather than at
+> install time.
+>
+> ```bash
+> cargo install rustic-rs      # or your distribution's rustic package
+> ```
+
+**From crates.io** — the shortest route, published every release since `v0.1.0`:
+
+```bash
+cargo install rusticprofile
+```
+
+That installs the binary only. The man page and shell completions come from a checkout (below) or
+from a distribution package.
+
+**A prebuilt binary** — every release ships five targets plus the man page, from
+[the latest release](https://github.com/l1a/rusticprofile/releases/latest):
+
+| platform | asset |
+|---|---|
+| Linux | `rusticprofile-linux-x86_64`, `rusticprofile-linux-arm64` |
+| macOS | `rusticprofile-macos-arm64` |
+| Windows | `rusticprofile-windows-x86_64.exe`, `rusticprofile-windows-arm64.exe` |
+
+Windows on arm64 is deliberately included rather than left to `cargo`: it is precisely the machine
+least likely to have a Rust toolchain on it, so "supported" without a binary would mean supported
+for nobody who needs it.
+
+**From a checkout** — the only route that also installs the man page and completions:
 
 ```bash
 git clone https://github.com/l1a/rusticprofile.git

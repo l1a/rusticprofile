@@ -238,17 +238,22 @@ the validator.
 
 ---
 
-## Current State (v0.2.14)
+## Current State (v0.2.15)
 
-**`v0.2.7` is released on GitHub *and* on crates.io** as of 2026-08-07 — registry API
-`max_version 0.2.7`, 185,634 bytes, not yanked, re-confirmed 2026-08-08. It carries `0.2.3`
-through `0.2.7` together, and it is the first published crate that neither opens a window on
-Windows every hour nor fails to find `rustic` on `PATH` there.
+**`v0.2.14` is released on GitHub *and* on crates.io** as of 2026-08-11 — registry API
+`max_version 0.2.14`, 205,795 bytes, not yanked. It carries **`0.2.8` through `0.2.14` together**,
+a seven-version backlog, and it is the first release to include `doctor`.
 
-*This paragraph described `0.2.2` as the newest release until 2026-08-08, two releases after that
-stopped being true — corrected while bumping the header directly above it. Same shape as `0.2.4`:
-the sentence nobody re-reads is the one that goes stale, and a "Current State" section is exactly
-where that costs the most.*
+Verified three ways rather than from `cargo publish`'s own report, per the `0.2.2` precedent: the
+registry API; `cargo install --locked --version 0.2.14` into a throwaway root; and **running that
+binary**, which is what proves `doctor` reached the published crate and not only the tag.
+
+*This paragraph has now gone stale twice — it announced `0.2.2` until 2026-08-08 and `0.2.7` until
+2026-08-11, each time two or more releases after it stopped being true, and each time it was
+corrected only because someone happened to be bumping the header on the line above. **A "Current
+State" section that has to be maintained by hand will be wrong most of the time it is read**;
+`0.2.4` says the same thing about the same class of sentence. Left as prose rather than automated,
+but the repetition is the record.*
 
 **Windows is a fully supported platform as of `0.2.0`**, including scheduling: `schedule`,
 `unschedule` and `status` drive **Task Scheduler**, the third backend. 344 tests green there (294
@@ -593,6 +598,72 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.15 — the AUR package tracks the release, and the README never mentioned crates.io
+
+**Packaging and documentation only; no code changed.** Two things in one release because they are
+the same act — pointing the ways people install this at the release that exists — and because both
+touch `Cargo.toml` and `NOTES.md`, so as sibling branches they would have conflicted. Stacking was
+rejected outright: `WIP.md` records PR #63 being **closed unrecoverably** when its parent branch was
+deleted on merge, with `gh pr edit --base` and `gh pr reopen` both refusing afterwards.
+
+#### `packaging/aur/` moves 0.2.7 → 0.2.14, and the `0.2.12` fix is finally exercised
+
+`pkgver` tracks the **released** tag, so this could not happen until `v0.2.14` existed. Bumped once
+at the newest release rather than walked through the seven versions nobody could install — the same
+call `0.1.22` and `0.2.8` made.
+
+Container-verified in `archlinux:base-devel` rather than assumed: `makepkg` completes, **390 tests
+pass, 0 failed**, and the container reports `rustic 0.11.3` — so the three rustic-backed integration
+tests genuinely ran instead of skipping themselves with a printed notice, which is the whole reason
+`aur-verify` installs rustic. `namcap PKGBUILD` clean; the two package warnings (`gcc-libs`,
+`rustic`) are the expected ones, and `rustic` is unavoidable because namcap reads *linked libraries*
+and rusticprofile **spawns** rustic.
+
+**`0.2.12`'s open question is closed.** That release fixed `aur-srcinfo` three ways — a podman guard,
+generation via `mktemp` + `mv`, and validating the *content* rather than the exit code — and could
+only ever verify the first, because the guard fires before the rest on any host without podman. It
+recorded that honestly: *"the `mktemp` → validate → `mv` path itself is unexercised here… reviewed
+rather than run."* `aur-bump` calls `aur-srcinfo`, so running it on a podman host executed that path
+for the first time anywhere: `.SRCINFO` went 503 → **506 bytes** with a `pkgbase = ` line present,
+rather than the 0 bytes the old recipe produced. **The three-way fix was right, and now two thirds
+of it is measured instead of one.**
+
+**Not published.** `aur-publish` is blocked on something that is *not* the maintenance window: the
+publishing host had never accepted the AUR's SSH host key, so an authenticated probe returns
+`Host key verification failed` — which is not evidence about the AUR's state either way. The
+fingerprint could not be corroborated from any second source available at the time, so it was left
+for a human rather than accepted unilaterally. Recorded because the failure reads like downtime and
+is not.
+
+*Also measured, and it retires an assumption:* **a Windows host cannot talk to the AUR at all.**
+Windows' bundled OpenSSH cannot negotiate `sntrup761x25519-sha512@openssh.com`, which the AUR
+requires — `choose_kex: unsupported KEX method`. AUR work belongs on a Linux host irrespective of
+podman.
+
+#### The README's install section never mentioned the crate, for fourteen releases
+
+It said `git clone` … `just install`, and nothing else. rusticprofile has been on crates.io since
+**`v0.1.0`** and every release since `v0.2.2` has shipped **five prebuilt binaries** — so the one
+document a new user reads pointed them at the slowest route and implied the other two did not exist.
+
+Now three routes, in order of how most people should install it: `cargo install rusticprofile`; a
+prebuilt binary from the latest release, with the five targets tabulated; and a checkout, which is
+noted as the only route that also installs the man page and completions.
+
+**The prerequisite is promoted to a box above all three, because it is the one that actually bites.**
+`rustic` is *spawned*, not linked — no install route brings it — and a host in this project's own
+fleet had `cargo` and `restic` and no `rustic`, which surfaces at the first scheduled run rather than
+at install time. That fact lived only in `WIP.md`'s rollout procedure.
+
+**Also corrected: the Status line claimed milestones 1, 2, 3 and 5.** M6 has been delivered since
+the man page, completions and crates.io shipped, and `0.1.32` recorded that; M4 is the only unbuilt
+milestone and is deferred *by decision* rather than pending. Saying "1, 2, 3 and 5" understated the
+project and left a reader to guess whether M4 and M6 were blocking.
+
+*Same shape as `0.2.14`'s README fix and `0.2.4`'s `AGENTS.md` fix, now three releases running: the
+stale claim is never in the part being actively edited. This one survived because the install section
+is what nobody who already has the tool installed ever reads.*
 
 ### v0.2.14 — nushell completions were installed where Windows nushell never looks
 
