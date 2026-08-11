@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.17)
+## Current State (v0.2.18)
 
 **`v0.2.14` is released on GitHub *and* on crates.io** as of 2026-08-11 — registry API
 `max_version 0.2.14`, 205,795 bytes, not yanked. It carries **`0.2.8` through `0.2.14` together**,
@@ -679,6 +679,47 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.18 — the AUR package tracks 0.2.17, and RPC `info` lags the *version* too
+
+**Packaging only; no code changed.** `packaging/aur/` moves `0.2.14` -> **`0.2.17`** and is
+published. `pkgver` tracks the **released** tag, which is why this release carries `pkgver=0.2.17`
+while calling itself `0.2.18` — the repository moves on after a release; the package does not. Same
+call `0.1.22`, `0.2.8` and `0.2.15` made.
+
+**PUBLISHED — <https://aur.archlinux.org/packages/rusticprofile>, `0.2.17-1`**, AUR git tip
+`b4c6bae` *"rusticprofile 0.2.17"*, pushed from a host with podman **and** the dedicated
+`~/.ssh/aur` key. `aur-publish`'s guards all fired first: `.SRCINFO` agrees with `PKGBUILD`, the
+declared sha256 was re-derived from **the tarball that will actually be downloaded**, and the
+authenticated maintenance probe passed.
+
+Container-verified in `archlinux:base-devel` before pushing, not assumed: `makepkg` completes,
+**393 tests pass, 0 failed**, and the container reports **`rustic 0.11.3`** — so the three
+rustic-backed integration tests genuinely ran instead of skipping themselves with a printed notice,
+which is the whole reason `aur-verify` installs rustic. `namcap PKGBUILD` clean; the package
+warnings are the two expected ones (`gcc-libs`, `rustic`) plus the standard glibc/libgcc
+implicit-satisfaction notices. Payload: the binary, three shell completions, the gzipped man page,
+README and LICENSE.
+
+#### RPC `info` lags the version, not just the presence — a refinement of `0.2.15`
+
+`0.2.15` established that `rpc/v5/info` returning `resultcount: 0` does **not** mean a package is
+absent, because the index lags the git push. Measured again immediately after this push, and it
+fails in a *new* way:
+
+| oracle | says |
+|---|---|
+| `git ls-remote` on the AUR repo | tip `b4c6bae` — **ours** |
+| a fresh `git clone`'s `.SRCINFO` | **`pkgver = 0.2.17`**, matching sha256 |
+| package page (with a 404 control) | **200** vs 404 for a nonexistent name |
+| **RPC `info`** | `resultcount: 1`, **version `0.2.14-1`** |
+| **RPC `search`** | `resultcount: 1`, **version `0.2.14-1`** |
+
+So the RPC now *finds* the package and reports **the previous version**. A reader asking "is
+`0.2.17` published?" through it gets a confident, wrong "no". **The authoritative oracle is the git
+repository the AUR actually serves** — `git ls-remote`, or a clone's `.SRCINFO`. The page plus a
+404 control is the cheap second opinion; the 404 is what makes the 200 mean anything, since the
+Anubis interstitial otherwise makes the site useless for this (`0.2.8`).
 
 ### v0.2.17 — `--background`'s own help text was false in the release that changed it
 
