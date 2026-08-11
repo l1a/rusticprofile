@@ -12,8 +12,8 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use owo_colors::OwoColorize;
 use rusticprofile::cli::{
-    Cli, Command, CompletionShell, ConfigArgs, PlanArgs, PlanFormat, RunArgs, ScheduleArgs,
-    SnapshotsArgs, StatusArgs, UnscheduleArgs,
+    Cli, Command, CompletionShell, ConfigArgs, DoctorArgs, PlanArgs, PlanFormat, RunArgs,
+    ScheduleArgs, SnapshotsArgs, StatusArgs, UnscheduleArgs,
 };
 use rusticprofile::config::schedule::Permission;
 use rusticprofile::config::{self, Config, LoadOptions};
@@ -112,6 +112,7 @@ fn main() -> ExitCode {
         Some(Command::Unschedule(args)) => unschedule_job(&args),
         Some(Command::Status(args)) => show_status(&args),
         Some(Command::Snapshots(args)) => list_snapshots(&args),
+        Some(Command::Doctor(args)) => run_doctor(&args),
         // Reachable only via a global flag that consumed the invocation without naming a
         // subcommand — `--completions` is handled above and returns, so in practice this
         // does not happen. `arg_required_else_help` makes a bare invocation print help
@@ -1206,6 +1207,189 @@ fn status_as_json(config: &Config, args: &StatusArgs) -> ExitCode {
 
     println!("{}", rusticprofile::report::json::to_string(&report));
     ExitCode::SUCCESS
+}
+
+/// Exit code when `doctor` found something a human needs to look at.
+///
+/// Distinct from both success and the config-error code: a warning is neither "everything
+/// is fine" nor "your configuration is broken", and a monitor needs to tell the three
+/// apart. `Unknown` deliberately does **not** set it — a check that could not run is not
+/// evidence of a problem, and making it fail would train people to ignore the command.
+const EXIT_DOCTOR_WARNED: u8 = 3;
+
+fn run_doctor(args: &DoctorArgs) -> ExitCode {
+    use rusticprofile::doctor::{self, Severity};
+
+    let (config, path) = match load_config(
+        args.config.clone(),
+        args.as_host.clone(),
+        args.rustic_binary.clone(),
+    ) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+
+    // Which jobs to look at. `-n` narrows; the default is every job on this host, because
+    // "is this machine healthy" is the question the command answers.
+    let jobs: Vec<&rusticprofile::config::job::Job> = match &args.name {
+        Some(name) => match config.job(name) {
+            Some(j) => vec![j],
+            None => return report_missing_job(&config, name),
+        },
+        None => config.jobs.iter().collect(),
+    };
+    let _ = &path;
+
+    let mut findings = Vec::new();
+
+    // Check 2 — one lock protocol. Local, always.
+    findings.push(doctor::classify_lock_authority(
+        &doctor::schedules::find_predecessor_prune(),
+    ));
+
+    // Check 4 — the credential files exist. Local, always.
+    let profiles: Vec<(String, std::path::PathBuf)> = jobs
+        .iter()
+        .map(|j| {
+            (
+                j.name.clone(),
+                std::path::PathBuf::from(invoke::profile_path(&config, j)),
+            )
+        })
+        .collect();
+    findings.extend(doctor::check_secrets(&profiles));
+
+    // Check 1 — one retention authority. Costs the repository, so opt-in.
+    if args.repository {
+        findings.push(check_repository(&config, &jobs));
+    }
+
+    if args.json {
+        let report = rusticprofile::report::json::DoctorJson {
+            schema: 1,
+            host: config.host.clone(),
+            repository_checked: args.repository,
+            findings: findings
+                .iter()
+                .map(rusticprofile::report::json::FindingJson::from_finding)
+                .collect(),
+        };
+        println!("{}", rusticprofile::report::json::to_string(&report));
+    } else {
+        print_doctor(&config.host, &findings, args.repository);
+    }
+
+    if findings.iter().any(|f| f.severity == Severity::Warn) {
+        ExitCode::from(EXIT_DOCTOR_WARNED)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// Ask the repository who has been writing for each host.
+///
+/// One rustic invocation, whatever the job count: every job in a fleet config points at the
+/// same repository, and asking once per job would multiply the cost of the one expensive
+/// check for no extra information.
+fn check_repository(
+    config: &Config,
+    jobs: &[&rusticprofile::config::job::Job],
+) -> rusticprofile::doctor::Finding {
+    use rusticprofile::doctor::{CHECK_RETENTION_AUTHORITY, Finding, repository};
+
+    let Some(job) = jobs.first() else {
+        return Finding::unknown(
+            CHECK_RETENTION_AUTHORITY,
+            "no job on this host names a profile to query",
+        );
+    };
+
+    // `--json` only. No `--filter-host`: the check is *about* other hosts as well as this
+    // one, and §7.8 records that the flag unions rather than overrides, so injecting one
+    // would silently narrow what a profile's own `filter-hosts` already selects.
+    let argv = invoke::query_argv(
+        &config.rustic_binary,
+        &invoke::profile_path(config, job),
+        "snapshots",
+        &["--json".to_string()],
+    );
+
+    let outcome = match rusticprofile::exec::run(&argv, rusticprofile::exec::Stdout::Capture) {
+        Ok(o) => o,
+        Err(e) => {
+            return Finding::unknown(
+                CHECK_RETENTION_AUTHORITY,
+                format!("could not run `{}`: {e}", config.rustic_binary),
+            );
+        }
+    };
+
+    if outcome.code != Some(0) {
+        // Unreachable network, wrong passphrase, repository locked — none of which is
+        // evidence about retention authority. Reporting `ok` here would be the exact
+        // failure the Unknown severity exists to prevent.
+        return Finding::unknown(
+            CHECK_RETENTION_AUTHORITY,
+            format!(
+                "rustic exited {}, so the repository could not be read",
+                outcome
+                    .code
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "on a signal".to_string())
+            ),
+        );
+    }
+
+    // `None` means stdout was never captured, which is a different thing from empty output
+    // and must not parse as "no snapshots, all clean".
+    let Some(bytes) = outcome.stdout.as_deref() else {
+        return Finding::unknown(
+            CHECK_RETENTION_AUTHORITY,
+            "rustic's output was not captured, so nothing could be read",
+        );
+    };
+    let stdout = String::from_utf8_lossy(bytes);
+
+    match repository::parse(&stdout) {
+        Ok(snaps) => repository::classify(&repository::analyse(&snaps)),
+        Err(e) => Finding::unknown(CHECK_RETENTION_AUTHORITY, e),
+    }
+}
+
+/// Visible width of the widest severity word, so the summaries line up.
+const WIDEST_TAG: usize = "unknown".len();
+
+fn print_doctor(host: &str, findings: &[rusticprofile::doctor::Finding], repository: bool) {
+    use rusticprofile::doctor::Severity;
+
+    println!("{} {host}", "host:".bold());
+    println!();
+
+    for f in findings {
+        let tag = match f.severity {
+            Severity::Ok => "ok".green().bold().to_string(),
+            Severity::Warn => "warn".yellow().bold().to_string(),
+            Severity::Unknown => "unknown".dimmed().bold().to_string(),
+        };
+        // Pad on the *visible* width. A format-width applied to the coloured string counts
+        // the escape sequences, so `{tag:<9}` silently does nothing — the same class of
+        // mistake as measuring a thing through a layer that rewrites it.
+        let pad = " ".repeat(WIDEST_TAG.saturating_sub(f.severity.as_str().len()));
+        println!("  {tag}{pad}  {}", f.summary);
+        for line in &f.detail {
+            println!("    {}", line.dimmed());
+        }
+    }
+
+    if !repository {
+        println!();
+        println!(
+            "  {} the repository was not checked; pass {} to look for a second retention \
+             authority",
+            "note:".dimmed(),
+            "--repository".bold()
+        );
+    }
 }
 
 fn print_env(show_secrets: bool) {

@@ -33,7 +33,7 @@
 //! Deliberately **not** `deny_unknown_fields`: this is somebody else's format, far larger
 //! than the slice needed here, and it will grow.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -60,6 +60,36 @@ struct RawProfile {
     snapshot_filter: Filters,
     #[serde(default)]
     forget: Forget,
+    #[serde(default)]
+    repository: Repository,
+}
+
+/// The secret-bearing parts of `[repository]`.
+///
+/// Read **only to check that the files exist** (`doctor` check 4). Nothing here is ever
+/// dereferenced, logged, or passed to rustic — rustic reads the profile itself, and the
+/// whole point of `password-file`/`password-command` is that the secret never enters this
+/// process. These fields hold *paths*, never contents.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct Repository {
+    password_file: Option<String>,
+    /// Present instead of `password-file` on a host following `PLAN.md` §4.1's
+    /// recommendation. There is no file to check in that case, which is a *better* state,
+    /// not an unverifiable one.
+    password_command: Option<String>,
+    #[serde(default)]
+    options: RepositoryOptions,
+}
+
+/// `[repository.options]` — backend settings, passed to opendal by rustic.
+///
+/// `credential_path` is the only key read, and only because it names a file on disk that
+/// must exist for the backend to authenticate at all. Everything else here is rustic's
+/// business.
+#[derive(Debug, Default, Deserialize)]
+struct RepositoryOptions {
+    credential_path: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -159,6 +189,31 @@ pub struct Profile {
     /// **recorded** name, so once this is set the OS hostname stops being the thing to
     /// compare against — see [`Profile::recorded_host`].
     pub backup_host: Option<String>,
+    /// Files the profile names that must exist for rustic to authenticate.
+    ///
+    /// Populated for `doctor` check 4 and read by nothing else. **Paths only** — see
+    /// [`SecretFile`] for why the contents are never touched.
+    pub secret_files: Vec<SecretFile>,
+    /// Set when the profile uses `password-command` rather than `password-file`.
+    ///
+    /// Recorded so `doctor` can say "nothing to check, and that is the recommended
+    /// configuration" instead of silently finding no password file and reporting nothing —
+    /// an absence that would otherwise be indistinguishable from a check that did not run.
+    pub uses_password_command: bool,
+}
+
+/// A file named by a rustic profile that has to exist for a backup to work.
+///
+/// **The contents are never read.** `doctor` stats the path and stops there: the failure
+/// being caught is "the file is not there", and reading a passphrase to prove it is
+/// readable would pull the secret into this process's memory for no gain — the exact
+/// property `PLAN.md` §4.1 chose `password-command` to preserve.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretFile {
+    /// The profile key that named it, e.g. `password-file`.
+    pub key: &'static str,
+    /// The path as the profile gives it.
+    pub path: PathBuf,
 }
 
 impl Profile {
@@ -264,6 +319,22 @@ pub fn read_profile(path: &Path) -> Result<Profile, ReadError> {
         }
     }
 
+    // Only *absolute-looking* entries are collected. rustic resolves a relative
+    // `password-file` against its own working directory, which for a scheduled run is not
+    // the one a human would assume — so stat-ing it from here would answer a different
+    // question than the one asked and could report a false "missing".
+    let mut secret_files = Vec::new();
+    let mut push_secret = |key: &'static str, value: Option<String>| {
+        if let Some(v) = value.filter(|v| !v.is_empty()) {
+            let path = PathBuf::from(v);
+            if path.is_absolute() {
+                secret_files.push(SecretFile { key, path });
+            }
+        }
+    };
+    push_secret("password-file", raw.repository.password_file);
+    push_secret("credential_path", raw.repository.options.credential_path);
+
     Ok(Profile {
         snapshot_set_names,
         scoping_filters: raw.snapshot_filter.declared(),
@@ -272,6 +343,11 @@ pub fn read_profile(path: &Path) -> Result<Profile, ReadError> {
         unexpandable_sources,
         filter_hosts: raw.snapshot_filter.filter_hosts.unwrap_or_default(),
         backup_host: raw.backup.host,
+        secret_files,
+        uses_password_command: raw
+            .repository
+            .password_command
+            .is_some_and(|c| !c.is_empty()),
     })
 }
 

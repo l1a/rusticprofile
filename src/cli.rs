@@ -69,6 +69,47 @@ pub enum Command {
 
     /// List the repository's snapshots, via rustic
     Snapshots(SnapshotsArgs),
+
+    /// Check the things `config --check` structurally cannot: the repository, another
+    /// tool's schedules, and the credential files on disk
+    Doctor(DoctorArgs),
+}
+
+/// Checks that need something outside the configuration.
+///
+/// The division from `config --check` is deliberate and is the reason this is a separate
+/// command: `--check` is hermetic — no repository, no network, no other tool — which is
+/// what makes it safe to run anywhere and is also its ceiling. See [`crate::doctor`].
+#[derive(Args, Debug)]
+pub struct DoctorArgs {
+    /// Also check the repository for a second retention authority
+    ///
+    /// **Off by default because it is the only check that costs a network round trip**, a
+    /// credential and several seconds — and the only one that can fail for reasons
+    /// unrelated to what it asks. A command run to find out whether things are fine should
+    /// not itself be flaky by default.
+    #[arg(long)]
+    pub repository: bool,
+
+    /// Emit findings as JSON instead of the human summary
+    #[arg(long)]
+    pub json: bool,
+
+    /// Job whose profile to check. Omit to check every job on this host.
+    #[arg(short = 'n', long, value_name = "JOB")]
+    pub name: Option<String>,
+
+    /// Path to jobs.yaml (defaults to $XDG_CONFIG_HOME/rusticprofile/jobs.yaml)
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Evaluate as though running on this host, instead of the real hostname
+    #[arg(long, value_name = "HOST")]
+    pub as_host: Option<String>,
+
+    /// Use this rustic executable instead of the one the configuration names
+    #[arg(long, value_name = "PATH")]
+    pub rustic_binary: Option<String>,
 }
 
 /// A **read-only passthrough** to `rustic snapshots`.

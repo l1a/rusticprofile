@@ -229,10 +229,12 @@ the validator.
   and, added 2026-08-04, only as current as the **most stale chezmoi checkout** reading it.
 - **rusticprofile applies XDG rules on every Unix, including macOS.** Not a preference; the
   requirement that one line of one file mean one thing across the fleet.
-- **A `doctor` command would catch invariants 2 and 3 from inside the repository** — a host
-  whose snapshots mix labelled and unlabelled entries has a second retention authority; a
-  rustic-written repository with a live restic exclusive schedule has a second lock protocol.
-  Not built. Backlog.
+- **`doctor` catches invariants 2 and 3 from outside the config** (`0.2.13`). A host with
+  restic-written snapshots **newer than its rustic cutover** has a second retention authority; a
+  restic prune schedule armed on this host is a second lock protocol. Note the first is an
+  *ordering* test, not "mixes labelled and unlabelled" — a migrated host legitimately holds years
+  of unlabelled history, and the naive form warns for two years. The second is **per-host**;
+  rusticprofile cannot see the fleet. `PLAN.md` §7.11.
 
 ---
 
@@ -471,46 +473,41 @@ Smaller items:
       report 0 B for it because 0 B is correct. Worth keeping as a set — it will contain data
       on other hosts — but it is a reminder that an empty snapshot still competes for a
       retention slot, which is how it came to displace a 395 MiB one (`PLAN.md` §7.5).
-- [ ] **A `doctor` command.** **Not built, not started, not scheduled** — a proposed subcommand
-      alongside `config`/`status`, recorded so the idea is not lost. **Four candidate checks.**
+- [x] **A `doctor` command — SHIPPED in `0.2.13`.** Three of the four candidate checks are
+      built; the fourth is rejected, not deferred. See the `0.2.13` release entry for the
+      measurements, and `PLAN.md` §7.11 for the scope decisions.
 
-      The argument for a separate command rather than more `config --check` rules is `PLAN.md`
-      §3(d), and it is the reason this item exists at all: the failures that actually hurt were
-      configurations **individually correct and wrong only in combination**, and *"neither was
-      detectable from inside rusticprofile"*. `--check` is hermetic by design — no repository, no
-      network. **Every check below needs something outside the config**: the repository, another
-      host, the filesystem, or another tool's schedule. That is the dividing line between the two
-      commands, and it is what makes this a command rather than a validation rule.
-
-      | # | check | from `PLAN.md` §3(d)'s two authorities |
+      | # | check | state |
       |---|---|---|
-      | 1 | warn when one host's snapshots mix **labelled and unlabelled** entries | a second **retention** authority (`PLAN.md` §7.5) |
-      | 2 | warn when the repository is written by rustic while **a restic `prune` schedule still exists anywhere on the fleet** | a second **lock** authority (`PLAN.md` §7.6), the more dangerous of the two |
+      | 1 | `retention-authority` — a host with restic-written snapshots **newer than its rustic cutover** | built, `--repository` |
+      | 2 | `lock-authority` — a restic prune schedule armed **on this host** | built, always |
+      | 4 | `secrets-present` — the credential files the profile names exist | built, always |
+      | 3 | a stale chezmoi checkout | **REJECTED** — see below |
 
-      Check 1 works because rusticprofile labels every snapshot set and the predecessor labels
-      none, so *"which tool last wrote for this host"* is a fact in the repository rather than an
-      inference from a timer. **It has been run by hand** — it is the test the rung-9 fleet audit
-      used. Check 2 is deliberately narrowed by §7.6 from "something holds a lock" to that exact
-      sentence, because that version is checkable.
+      **Two things about the built checks are narrower than this item used to claim**, both
+      found by measuring rather than by reading:
 
-      **Promoted from `WIP.md` 2026-08-10** — two candidates that had accreted only in the
-      gitignored handoff file, where they would have been lost with it:
+      1. **Check 1's specified predicate was wrong.** "A mix of labelled and unlabelled" is a
+         false positive on every migrated host for about two years. The shipped test is
+         *ordering*: an unlabelled snapshot **newer than the oldest labelled** one. A host with
+         no labelled snapshots at all is not migrated, not in conflict.
+      2. **Check 2 is per-host, and §7.6 asks for fleet-wide.** rusticprofile has no fleet
+         inventory and no remote access by design, so "anywhere on the fleet" is not
+         implementable from one machine. A host that never runs `doctor` is not covered.
 
-      | # | check | why `--check` cannot do it |
-      |---|---|---|
-      | 3 | warn when this host's **chezmoi checkout is stale** relative to its remote | §3a's version rule has teeth for the *binary* — a shared `jobs.yaml` is only as new as the oldest binary reading it — and **nothing guards the config half**. A one-commit-stale checkout is how a host gets gated out of a snapshot set, and how `--as-host` starts reporting the local file's gating attributed to a remote host. It produced a false "a host is silently losing its GPG keyring" alarm once already. |
-      | 4 | warn when a **secret named by the profile does not exist or is unreadable** | `config --check` reports `ok` on a configuration that cannot possibly authenticate — that is precisely how a host looked healthy for two days while unable to back up. Belongs here rather than in `--check` because the paths are per-host, so `--as-host` would report on a profile it cannot see (`v0.1.12`). |
-
-      **Check 4 is pre-flight ergonomics, not a data-safety fix** — the failure is already loud at
-      run time (`backup saved nothing`, `forget` skipped). Same bargain as
-      `check_sources_are_expanded`: read a file we do not own, because nothing else catches it
-      earlier. Checks 1 and 2 are the ones that protect data.
-
-      **What is NOT in scope, recorded because it was nearly assumed to be:** verifying that a
-      `rustic prune` actually *reclaimed* packs. Check 2 detects a competing restic prune
-      *schedule*; it says nothing about whether our own prune's deletion pass worked. That is pack
-      accounting against a stored baseline — a third, unspecified thing, and it needs somewhere to
-      keep the baseline.
+      **Check 3 is rejected on layering.** rusticprofile would have to shell out to `git` and
+      `chezmoi` to audit a dotfile manager's checkout freshness — against `AGENTS.md` §2's
+      "explicitly not a config wrapper" — and would no-op on any host not using chezmoi, which
+      is a fleet fact and not a rusticprofile one. **The underlying risk is real and remains
+      unguarded:** `0.1.24` guards "a shared `jobs.yaml` is only as new as the oldest binary
+      reading it" and nothing guards "…or as current as the most stale checkout". It wants an
+      answer somewhere other than here.
+- [ ] **Verify that a `rustic prune` actually reclaimed packs.** Explicitly **not** one of
+      `doctor`'s checks, recorded because it was nearly assumed to be. Check 2 detects a
+      competing restic prune *schedule*; whether our own prune's deletion pass worked is pack
+      accounting against a stored baseline, and there is nowhere to keep the baseline. The
+      prune host's first run (2026-08-10) marked 1203 of 1602 packs and deleted none, which is
+      correct — `--keep-delete` defers removal by 23 h — so the deletion half is still unproven.
 - [x] **"M4 blocks space reclamation" was WRONG, and is superseded.** Corrected in `0.1.3`
       and acted on in `0.1.11`: rustic is lock-free by design, so `rustic prune` is safe and
       is the only prune that may run here. Prune returned to the designated host on
@@ -586,34 +583,124 @@ and were renumbered in place. No tags existed, so nothing had to be unwound — 
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
 
-### v0.2.13 — the `doctor` backlog item gains the two checks that only existed in a gitignored file
+### v0.2.13 — `doctor`: the checks a hermetic `--check` cannot make
 
-**Documentation only; no product code changed, and `doctor` is still not built.** The item is a
-proposal for a future subcommand, and this release does not start it.
+**A new subcommand, `rusticprofile doctor`.** Two checks always run and are local; a third is
+opt-in because it needs the repository. A fourth candidate was rejected.
 
-Two candidate checks — **a stale chezmoi checkout**, and **a secret named by the profile that does
-not exist** — had accreted only in `WIP.md`. That file is gitignored and Syncthing-synced, so it is
-neither in this repository's history nor readable by anyone who clones it: the two ideas would have
-died with the working copy. They are now in §4 beside the two that were already there.
+#### Why a command and not four more `config --check` rules
 
-**The item now also says why it is a command and not more `config --check` rules**, which was
-implicit in `PLAN.md` §3(d) and nowhere in `NOTES.md`. `--check` is hermetic by design — no
-repository, no network — and **all four checks need something outside the config**: the repository,
-another host, the filesystem, or another tool's schedule. Without that line the natural reading of
-the backlog item is "add four validation rules", which is the design `PLAN.md` explicitly rejected
-after two tools sharing one repository went wrong twice in two days.
+`--check` is hermetic by design — no repository, no network, no other tool — which is what makes
+it safe to run anywhere and is also its ceiling. The failures that actually cost this project data
+were **configurations individually correct and wrong only in combination** (`PLAN.md` §3(d)), and
+the evidence for each lives outside every config file. That is the whole division:
 
-**One negative scope note is recorded deliberately.** Verifying that a `rustic prune` actually
-reclaimed packs is **not** any of the four. Check 2 detects a competing restic prune *schedule*;
-whether our own prune's deletion pass worked is pack accounting against a stored baseline. That
-distinction was nearly lost in conversation, and someone building `doctor` from the old item would
-have expected the prune question to fall out of it for free.
+| check | evidence lives in | when |
+|---|---|---|
+| `lock-authority` | this host's service manager | always |
+| `secrets-present` | the filesystem | always |
+| `retention-authority` | the repository | `--repository` only |
 
-*Why a release entry for a backlog edit at all:* §3's rule is a patch bump on **every** PR, and this
-is the class of change `0.2.4` exists for — the pre-code claim that survived thirty-five releases in
-a file every session is told to read in full. **Duplicated state goes stale one copy at a time, and
-the copy nobody re-reads is the one that survives.** `WIP.md` now points here rather than holding a
-second copy of the two candidates.
+`--repository` is opt-in because it is the only check needing the network, a credential and
+seconds — and the only one that can fail for reasons unrelated to what it asks. A command run to
+find out whether things are fine must not be flaky by default.
+
+#### The recorded specification for the repository check was wrong, and measuring found it
+
+`PLAN.md` §7.5 says to warn when a host's snapshots carry **a mix of labelled and unlabelled**
+entries. Measured against the live repository, that is a false positive on **every migrated host**:
+
+```
+host-a   labelled    84   oldest 2026-08-03T12:03:32   newest 2026-08-09T13:05:25
+          unlabelled  38   oldest 2025-09-24T23:00:10   newest 2026-08-03T10:00:30
+```
+
+That host is clean. Its unlabelled snapshots are restic-era history from before its cutover, and
+under `keep-yearly = 2` they persist about two years — so the specified check would have warned
+continuously, on every host, for two years. Nobody leaves that switched on.
+
+**The discriminator is ordering, not presence:** after a clean cutover every unlabelled snapshot
+precedes every labelled one, and two live writers interleave. So the check warns when an
+**unlabelled snapshot is newer than the oldest labelled one**. Verified on the same data —
+`10:00:30 < 12:03:32`, and the two-hour gap across the real cutover is visible in the output.
+
+A host with *no* labelled snapshots is not a conflict either; it is simply not migrated. Treating
+it as one would have flagged both control-group hosts permanently.
+
+#### Two more things measurement changed
+
+**rustic's `--json` is an array of groups, not of snapshots** —
+`[{group_key, snapshots: [...]}]` — so a parser expecting a flat array reads zero and reports
+everything clean. The `label` is on each snapshot object and **omitted entirely when empty**, so
+reading the object rather than the group key makes the check independent of the profile's
+`group-by`. Both were measured; neither was guessable.
+
+**`systemctl list-unit-files`, not `list-units`.** A disabled unit is not loaded, so `list-units`
+cannot see it — and the prune host's predecessor timer is precisely an installed-and-disabled unit.
+Using `list-units` would have reported "clean" on the one machine in the fleet that carries the
+thing the check looks for.
+
+#### Check 2 is narrower than §7.6 asks, and that is stated rather than hidden
+
+§7.6 wants *"a restic prune schedule anywhere on the fleet"*. **rusticprofile cannot see the
+fleet** — no inventory, no remote access, deliberately; it is a local per-machine scheduler, and
+giving it SSH to survey six other hosts is a different tool. What ships is *"on this host"*, with
+`doctor` run per host covering the fleet between them. A host that never runs it is not covered,
+so this does not prove the property §7.6 actually wants.
+
+An installed-but-**disabled** predecessor timer reports `ok` and is still listed. Warning about it
+would train people to ignore the check; hiding it would lose that one `systemctl enable` re-arms
+the single measured-unsafe combination.
+
+#### Check 3 — a stale chezmoi checkout — is REJECTED, not deferred
+
+It was promoted into the backlog earlier in this same release and is now removed from it. The risk
+is real; this is not where it gets fixed. rusticprofile would have to shell out to `git` and
+`chezmoi` to audit a dotfile manager's freshness — against `AGENTS.md` §2's "explicitly not a
+config wrapper" — and it would no-op on any host not using chezmoi, which is a fleet fact rather
+than a rusticprofile one. Recorded in `PLAN.md` §7.11 with the reasoning, so the idea is not
+simply lost.
+
+#### A third severity, because two would lie
+
+`ok`, `warn`, **`unknown`**. A check that could not run — unreachable repository, rustic that would
+not start, a service manager whose state word we do not recognise — reports `unknown` and does
+**not** set the exit code. Collapsing it into `ok` is how a check that silently stopped working
+reads as a pass, which is this project's most-repeated failure shape. `--json` carries
+`repository_checked` for the same reason: a reader cannot otherwise tell a clean repository from
+one nobody looked at.
+
+**Exit 3** when anything warned — distinct from 0 and from 2, so a monitor can separate "healthy",
+"needs attention" and "broken configuration".
+
+#### Verified by running it, on the hosts that make the branches real
+
+| | |
+|---|---|
+| local run, healthy host | `ok`/`ok`, exit 0, no network touched |
+| `--repository` against the live repo | 1.4 s, `ok`, `host-a: 84 labelled, 38 unlabelled (all older than …)` |
+| missing credential file | `warn`, names the key and path, **exit 3** |
+| **the prune host** | found `resticprofile-prune@profile-dot-files.timer`, read it as **disabled**, reported `ok — leave them that way` |
+
+**The enabled branch of the lock check was deliberately not verified live.** Arming that unit is
+the one combination measured to corrupt this repository, and doing it to confirm a message is not
+a trade worth making. The classification is unit-tested and the parser is tested against the prune
+host's verbatim `list-unit-files` line.
+
+**390 tests** (330 unit + 5 doc + 55 integration), up from 358.
+
+#### Also in this release
+
+The `doctor` backlog item in §4 was rewritten before any of the above was built: two candidate
+checks existed only in `WIP.md`, which is gitignored and Syncthing-synced, so they were in neither
+this repository's history nor any clone — they would have died with the working copy. Promoting
+them is what turned the item into something implementable, and the argument for a command rather
+than validation rules had likewise been in `PLAN.md` and nowhere in `NOTES.md`.
+
+*One incidental finding, recorded because it will recur:* `~/.cargo/config.toml` sets
+`target-cpu=native`, so a binary built on one fleet machine **SIGILLs on another** — exit 132 when
+a 13th-gen build was copied to a 10th-gen host. Cross-host testing needs
+`RUSTFLAGS="-C target-cpu=x86-64-v2"`.
 
 ### v0.2.12 — `aur-srcinfo` destroyed the file it generates, and `open-pr` now pushes
 

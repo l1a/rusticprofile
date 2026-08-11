@@ -1692,3 +1692,143 @@ fn status_json_reports_the_host_gate_rather_than_omitting_it() {
     let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(v["not_on_this_host"][0]["job"], "dot-files-prune");
 }
+
+// ---------------------------------------------------------------------------
+// doctor
+// ---------------------------------------------------------------------------
+
+/// A profile naming a password file, so the secrets check has something to look at.
+///
+/// Separate from [`PROFILE_TOML`] rather than extending it: every existing golden test
+/// renders that constant, and adding a `[repository]` block to it would churn goldens that
+/// have nothing to do with this feature.
+const PROFILE_WITH_SECRET: &str = r#"
+[[backup.snapshots]]
+name = "core"
+sources = ["/x"]
+
+[repository]
+password-file = "PW_PATH"
+
+[snapshot-filter]
+filter-hosts = ["THIS_HOST"]
+
+[forget]
+group-by = "host,label"
+"#;
+
+const DOCTOR_CONFIG: &str = "
+schema: 1
+defaults:
+  rustic-config-dir: RUSTIC_DIR
+jobs:
+  dot-files:
+    profile: p
+    operations: [backup, forget]
+";
+
+/// Build a fixture whose profile names `pw_name`, optionally creating that file.
+fn doctor_fixture(pw_name: &str, create: bool) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let host = rusticprofile::config::hosts::current_hostname().expect("hostname");
+    let pw = dir.path().join(pw_name);
+    if create {
+        std::fs::write(&pw, "correct horse\n").unwrap();
+    }
+    std::fs::write(
+        dir.path().join("p.toml"),
+        PROFILE_WITH_SECRET
+            .replace("THIS_HOST", &host)
+            .replace("PW_PATH", &as_config_path(&pw)),
+    )
+    .unwrap();
+    let jobs = dir.path().join("jobs.yaml");
+    std::fs::write(
+        &jobs,
+        DOCTOR_CONFIG.replace("RUSTIC_DIR", &as_config_path(dir.path())),
+    )
+    .unwrap();
+    let path = jobs.display().to_string();
+    (dir, path)
+}
+
+#[test]
+fn doctor_reports_a_present_secret_and_exits_zero() {
+    let (_dir, config) = doctor_fixture("real.pw.txt", true);
+    let (stdout, _stderr, success) = run(&["doctor", "--config", &config]);
+    assert!(success, "a healthy host must exit 0:\n{stdout}");
+    assert!(stdout.contains("present and readable"), "{stdout}");
+}
+
+#[test]
+fn doctor_warns_and_exits_three_when_a_secret_is_missing() {
+    let (_dir, config) = doctor_fixture("gone.pw.txt", false);
+    let output = command()
+        .args(["doctor", "--config", &config])
+        .output()
+        .unwrap();
+    // 3, not 1 and not 2: a warning is neither "everything is fine" nor "your configuration
+    // is broken", and a monitor has to tell the three apart.
+    assert_eq!(output.status.code(), Some(3));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("missing or unreadable"), "{stdout}");
+    assert!(stdout.contains("gone.pw.txt"), "names the file: {stdout}");
+}
+
+#[test]
+fn doctor_does_not_touch_the_repository_unless_asked() {
+    // The whole reason `--repository` exists. If this ever regresses, the default path
+    // starts needing a network and a credential, and a command people run to find out
+    // whether things are fine becomes flaky by default.
+    let (_dir, config) = doctor_fixture("real.pw.txt", true);
+    let (stdout, _stderr, success) = run(&["doctor", "--config", &config]);
+    assert!(success);
+    assert!(
+        stdout.contains("the repository was not checked"),
+        "the default run must say the expensive check did not happen: {stdout}"
+    );
+
+    // Asserted against the machine-readable output, not by grepping the prose: the human
+    // note explaining `--repository` contains the words "retention authority" itself, so a
+    // substring test on stdout passes or fails for the wrong reason.
+    let output = command()
+        .args(["doctor", "--config", &config, "--json"])
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        !v["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["check"] == "retention-authority"),
+        "no repository finding may appear without --repository: {v}"
+    );
+}
+
+#[test]
+fn doctor_json_carries_the_severity_and_whether_the_repository_was_read() {
+    let (_dir, config) = doctor_fixture("gone.pw.txt", false);
+    let output = command()
+        .args(["doctor", "--config", &config, "--json"])
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(v["schema"], 1);
+    // A reader cannot otherwise tell a clean repository from one nobody looked at.
+    assert_eq!(v["repository_checked"], false);
+    let findings = v["findings"].as_array().expect("findings array");
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["check"] == "secrets-present" && f["severity"] == "warn")
+    );
+    assert!(findings.iter().any(|f| f["check"] == "lock-authority"));
+}
+
+#[test]
+fn doctor_appears_in_help() {
+    let (stdout, _stderr, success) = run(&["--help"]);
+    assert!(success);
+    assert!(stdout.contains("doctor"), "{stdout}");
+}

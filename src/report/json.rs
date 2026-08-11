@@ -166,6 +166,42 @@ impl JobStatusJson {
 /// A consumer that asked for JSON must receive JSON. Printing a human error into a stream
 /// something is parsing turns a reportable problem into a parse error two systems away.
 #[must_use]
+/// `doctor`'s findings.
+///
+/// `severity` is a string rather than a boolean pair because there are **three** answers,
+/// not two: `ok`, `warn`, and `unknown` for a check that could not run. Collapsing the
+/// third into `ok` is how a check that silently stopped working reads as a pass — the
+/// failure shape this project keeps rediscovering, and the same reasoning as
+/// `unknown_state_stays_null_rather_than_false` below.
+#[derive(Debug, Serialize)]
+pub struct DoctorJson {
+    pub schema: u32,
+    pub host: String,
+    /// Whether the repository check was asked for. A reader cannot otherwise tell a clean
+    /// repository from one that was never looked at.
+    pub repository_checked: bool,
+    pub findings: Vec<FindingJson>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FindingJson {
+    pub check: String,
+    pub severity: String,
+    pub summary: String,
+    pub detail: Vec<String>,
+}
+
+impl FindingJson {
+    pub fn from_finding(f: &crate::doctor::Finding) -> Self {
+        Self {
+            check: f.check.to_string(),
+            severity: f.severity.as_str().to_string(),
+            summary: f.summary.clone(),
+            detail: f.detail.clone(),
+        }
+    }
+}
+
 pub fn to_string<T: Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|e| {
         format!("{{\n  \"schema\": {SCHEMA},\n  \"error\": \"could not serialise: {e}\"\n}}")
