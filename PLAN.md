@@ -1200,13 +1200,78 @@ exist triggers nothing.** That was assumed on Linux and is now measured, and it 
 in production — re-arming a live timer left its stamp file byte-for-byte unchanged and `status`
 reporting the same `last run`.
 
-### Whether it fails as reliably: no, because the race has never happened on this host
+### Whether it fails as reliably: YES — measured on a real resume, and it cost this section its conclusion
 
-**The host does not suspend.** Zero `systemd-suspend.service` invocations and zero kernel
-`PM: suspend entry` records since 2026-08-01. It is shut down and booted instead, and it stays
-awake overnight — there is a successful run in every hour through the night. So the event §7.10
-measured on Windows, four times in one day, has had **no opportunities here at all**, and the
-`Persistent=true` catch-up on boot is the only form of the race this host can express.
+> **This subsection was written the wrong way round and was falsified 56 minutes later, on the
+> first suspend this host took.** It is corrected in place rather than rewritten, because the
+> error is the more useful half. What stood here was:
+>
+> > *"**The host does not suspend.** Zero `systemd-suspend.service` invocations and zero kernel
+> > `PM: suspend entry` records since 2026-08-01. It is shut down and booted instead, and it
+> > stays awake overnight — there is a successful run in every hour through the night. So the
+> > event §7.10 measured on Windows, four times in one day, has had **no opportunities here at
+> > all**, and the `Persistent=true` catch-up on boot is the only form of the race this host can
+> > express."*
+>
+> Every number in that paragraph is still correct. **The claim built on them is not.** "No
+> invocations in the ten days I looked at" is a fact about the *sample*; "the host does not
+> suspend" is a claim about the *host*, and the second does not follow from the first. This is
+> the project's most-repeated failure shape — **an absence of evidence written down as an
+> impossibility** — and it survived less than an hour. The lesson is not "look at a longer
+> window": a suspend is a thing a laptop may do at any moment, so no window could have licensed
+> that sentence. **Absence can bound a rate. It cannot establish a property.**
+
+**Measured 2026-08-11 across two suspends on the same afternoon, and it is the sample the whole
+section was missing. Both catch-ups failed — 2 of 2.** The first suspend (`s2idle`) ran 08:47:05 →
+09:20:04, the second resumed at 10:44:41, and each slept through an hourly slot:
+
+| | first resume | second resume |
+|---|---|---|
+| `PM: suspend exit` | 09:20:04 | 10:44:41 |
+| **catch-up fires** | **09:20:04 — the same second** | **10:44:41 — the same second** |
+| outcome | `backup saved nothing (exit 1)`, `forget` skipped | identical |
+| cause | **DNS** failure resolving the cloud token endpoint | **the same DNS failure, same endpoint** |
+| network usable (`CONNECTED_GLOBAL` + lease) | 09:20:15 | 10:44:53 |
+| **margin missed by** | **11 s** | **12 s** |
+
+**So the catch-up misses the network by about eleven seconds, reproducibly**, and the Windows
+finding reproduces exactly: `Persistent=true` spends the missed hour at the one instant guaranteed
+to fail. Both failed on the *same endpoint* as `WIP.md` §12's single Linux data point, which is now
+confirmed under controlled resumes rather than inferred from one log line — and the two margins
+agreeing to within a second is what makes this a measurement rather than an anecdote.
+
+**Neither run had the retry**, because the flag that enables it (§7.12) is emitted by `schedule` and
+the units on this host had not yet been regenerated. A retry two minutes out would have found the
+network up for well over a minute in both cases.
+
+**This is a clean sample, and it is clean only because the confound below was fixed first.** The
+argv carried the absolute `--rustic-binary`, so the failure cannot be the PATH defect — it is the
+network and nothing else. `last success` stayed at the previous hour, `last run` recorded the
+failure, and the next scheduled run covered the gap, so **no backup was lost and retention was
+skipped for one hour** — precisely §7.10's accounting.
+
+**Resume and boot are two different latencies, and only one is understood.** The resume catch-up
+fired at ~0 s, agreeing with the probe's ~5 ms. The two *boot* catch-ups fired at 185 s and 204 s.
+Same directive, same host, two behaviours — so the residual recorded at the end of this section is
+specific to the boot path, and the resume path is now measured and immediate.
+
+### The eight-day window, and why it was measuring the wrong thing
+
+Over eight days on the armed timer: **153 runs, 6 failures (3.9%), and none of them was a network
+failure.**
+
+| failures | cause |
+|---|---|
+| 5 | `could not run rustic: No such file or directory (os error 2)` |
+| 1 | exit 2, a configuration error, on the cutover day itself |
+
+**The five are the finding, and they were also a mask.** Every one is the first scheduled run
+after a boot, failing for the reason in the next subsection — and because they all failed *loudly
+and identically*, for a reason that had nothing to do with the network, **the resume race was
+invisible behind them.** The instant the louder defect was fixed, the very next suspend produced
+the failure above. That is the transferable part: **a defect that fails every candidate run can
+hide a second defect on the same runs**, and the count of failures says nothing about how many
+causes are in it.
 
 Over eight days on the armed timer: **153 runs, 6 failures (3.9%), and not one of them was a
 network failure.**
@@ -1297,24 +1362,60 @@ service between the timer starting and the run. **Cause unknown.** It matters, b
 seconds and three minutes are the difference between a retry being necessary and being marginal,
 so the honest position is that the *mechanism* is measured and the *live latency* is not yet.
 
-### Consequence for §7.10
+### Consequence for §7.10 — the race is confirmed on systemd, and the mechanism is now the open question
 
-The retry's premise **holds mechanically** — the catch-up is immediate and unspread, exactly as
-on Windows — so extending it is not ruled out. But it is not what this host needed, and shipping
-it here would have been the mirror of the error §7.10 was written to avoid:
+> **This subsection reversed once, in the hour between the two halves of the measurement.** What
+> stood here concluded that §7.10's *"not extended to systemd or launchd"* **stands**. It was
+> written from the eight-day window alone, i.e. before this host had ever been observed
+> suspending, and the resume above overturns it. Kept per this file's convention:
+>
+> > *"The retry's premise **holds mechanically** … But it is not what this host needed, and
+> > shipping it here would have been the mirror of the error §7.10 was written to avoid: a retry
+> > would have made every one of the five failures worse, and fixed none of them … So §7.10's
+> > 'not extended to systemd or launchd' **stands**, and now stands on a measurement rather than
+> > on the absence of one."*
+>
+> **The bullet about the five failures was true and is still true** — a retry does nothing for a
+> `rustic` that is missing from `PATH`, and would have turned each into three failures over four
+> minutes. **The conclusion drawn from it was wrong**, because those five were not the population
+> the retry is for. Reasoning correctly about the only failures visible, while a second cause sat
+> masked behind them, produced a confident answer to the wrong question — which is the same
+> mistake in a new costume as the sentence corrected further up.
 
-- **A retry would have made every one of the five failures worse, and fixed none of them.**
-  `rustic` is no more on the user manager's `PATH` two minutes later than at zero, so each
-  failure would have become three failures over four minutes, and §7.10's own note — that a
-  broken configuration "fails three times instead of once" — would have been the entire effect.
-- **The two defects above are the ones costing this fleet runs**, and both are cheaper than a
-  retry.
-- **The measurement §7.10 asked for is still incomplete**, because it needs a Linux host that
-  suspends. Deciding the retry from `host-b` would be designing past the evidence in the opposite
-  direction to `0.2.10`.
+**The race is real on systemd, and the retry as specified would have prevented this run's
+failure, in both samples.** The network became usable 11 and 12 seconds after resume; §7.10's policy is two further
+attempts at two-minute intervals, so the first retry would have found the network up for 1 m 49 s.
+**2 of 2 resume-race failures would have been saved.**
 
-So §7.10's "not extended to systemd or launchd" **stands**, and now stands on a measurement
-rather than on the absence of one.
+So the honest position is the opposite of what stood here: **extending the retry to systemd is
+now supported by evidence rather than merely not ruled out.** Two things still stop this section
+from simply prescribing it.
+
+**First, there are now two candidate fixes for one failure, and the measurement prices both.**
+
+| | what it costs | what it leaves |
+|---|---|---|
+| **retry** (§7.10's mechanism, ported) | ~2 min of latency; the first attempt still *is* a failure, so the log, the status record and any monitor see a `failure` verdict that later resolves | works whatever the cause — no assumption about *why* the run failed |
+| **make the ordering real** (a working wait-for-network) | ~11-12 s of latency on these samples; the run succeeds first time and nothing ever reports a failure | only helps for a *network* cause, and needs a dependable user-level mechanism that does not currently exist |
+
+The second is strictly better where it applies, and it is also the fix for the inert directive
+this section already documents — the unit *claims* that ordering today. But `RunOnlyIfNetworkAvailable`
+was rejected in `schtasks.rs` for a reason that transfers exactly: **the repository may be local**,
+and gating a backup on the OS's idea of connectivity adds a silent skip. A repository on an
+external disk needs no network and must not wait for one.
+
+**Second, §7.10's own constraint 1 does not have an obvious systemd analogue.** The Windows retry
+is confined to detached runs, because `--background` is emitted only by `schedule` and only there,
+so a hand-typed `run` still fails immediately for the person watching. On systemd nothing
+distinguishes a scheduled run from a typed one at the argv level today — the unit runs the same
+`run --name …` a human would. Porting the retry therefore needs a gate to be *chosen*, not merely
+reused, and that is a design decision rather than a translation.
+
+**So: the measurement §7.10 asked for is delivered and its answer is "yes, port it" — but which
+mechanism, and how the detached-only gate is expressed on systemd, are open and belong in a
+decision section before any code**, on the same §5.9/§7.9/§7.10 precedent that put each of those
+decisions in this file first. What is no longer open is whether Linux has the race: it does, it is
+immediate, and it has now cost a real run.
 
 ## Safety rules observed during this testing
 
@@ -2035,6 +2136,99 @@ the wrong reason*: the `ls`/`eza` empty listing, `$PIPESTATUS` in zsh, the `wsl.
 came back blank, the man-page `sed` that quietly did nothing. `unknown` does not set the exit
 code, because "could not look" is not evidence of a problem — it is an absence of evidence, and
 the two must not be spelled the same way.
+
+## 7.12 SETTLED: the retry extends to systemd, gated on `--background` (2026-08-11)
+
+**Decision: `schedule` emits `--background` into the generated systemd service, which turns on
+§7.10's existing retry for scheduled Linux runs. launchd is deliberately not included.**
+
+> **Written alongside the code rather than before it, which is a deviation from §5.9/§7.9/§7.10
+> and is recorded rather than glossed.** Those three sections each preceded their implementation,
+> and §7.10 says so in as many words. Here the measurement (§5.11) came first and the design and
+> the code were written together, by explicit decision, because §5.11 had already narrowed the
+> choice to two candidates and priced both. The risk that ordering carries is that the design
+> gets shaped to fit whatever was easy to write — so the two rejected options below are stated
+> with what it would have cost to build them, not merely with why they lost.
+
+### Why the retry rather than making the network ordering real
+
+§5.11 measured both. The retry costs ~2 minutes of latency and a transient `failure` verdict; a
+working wait-for-network would have cost ~11-12 seconds and produced no failure at all, which is
+strictly better **where it applies**. It is not chosen, for two reasons that are about coverage
+rather than effort:
+
+1. **It only fixes a network cause.** The retry is indifferent to *why* the run failed, and §5.3
+   means rusticprofile cannot tell why anyway — rustic exits 1 for everything. A resume can also
+   break a run by way of a not-yet-mounted filesystem, a keyring that is still locked, or a VPN
+   that has not re-established; a network gate helps with none of those and a retry helps with
+   all of them.
+2. **`RunOnlyIfNetworkAvailable`'s rejection transfers exactly.** `schtasks.rs` declined that
+   setting because **the repository may be local** — a backup to an external disk needs no
+   network, and gating on the OS's idea of connectivity adds a silent skip, which is this
+   project's worst failure class. `Wants=network-online.target` on a *system* unit has the same
+   property.
+
+**And there is no dependable mechanism to build it out of.** `network-online.target` does not
+exist in the user manager at all (§5.11), so the only implementations available are a
+`podman`-shipped shim or one this project would write and install itself — a new unit in the
+user's `~/.config/systemd/user`, owned by us, ordered ahead of every job. That is a larger and
+more invasive change than the retry, for narrower coverage.
+
+**The inert directives stay in the unit and their comment is corrected.** They are right for a
+`permission: system` unit, where the target exists; they are inert for a user timer. A comment
+asserting a protection that is not there is exactly what this project refuses, so the generated
+unit now says which case is which, and a test asserts the caveat is present.
+
+### The gate: an explicit flag, because the environment cannot be trusted to say
+
+§7.10's constraint 1 is that a hand-typed `run` must fail immediately — nobody watching a failure
+wants four minutes of silence. On Windows `--background` supplies that gate for free, because only
+`schedule` emits it. **systemd needs the same gate and the obvious cheap version does not work.**
+
+`INVOCATION_ID` and `JOURNAL_STREAM` both look like "systemd started this process", and **both are
+set in an ordinary desktop terminal** — measured on this host, where the terminal lives in a
+transient `app-*.scope`, so a hand-typed run inherits them. Sniffing either would have switched the
+retry on for interactive runs, i.e. broken constraint 1 while appearing to implement it. That is
+the `hostname(1)` / `fpath` / `%COMPUTERNAME%` family again: **a variable whose name describes what
+you want and whose value answers a different question.**
+
+So the gate is the flag, emitted by `schedule` — one mechanism on all platforms, testable as a pure
+function of the generator, and with a test asserting `--background` appears for every interval and
+priority combination, because dropping it silently removes the retry from every Linux host.
+
+**`--background` now means two things and only one of them is universal.** On Windows it detaches
+the console *and* marks the run unattended; on Unix it marks the run unattended and touches nothing
+else. That was checked rather than assumed, and it is the property that makes this safe: the
+console detachment and the `Stdio::null()` that follows it are behind `#[cfg(windows)]`, so **a
+detached run on Linux still sends rustic's stderr to the journal.** Had it not, this change would
+have silenced the only diagnostic channel a scheduled Linux run has — and §5.11's whole diagnosis
+came out of that channel.
+
+The flag's name is now slightly wider than its Windows origin. Renaming it was rejected: it is on a
+published crate's CLI, `0.1.7` establishes that removing a flag is a loud breaking change to take
+deliberately rather than incidentally, and "detached" is already how §7.10 and the code describe
+the concept.
+
+### What is NOT extended, and why that is not symmetry for its own sake
+
+**launchd is unchanged.** The macOS race is plausible — `launchd.plist(5)` documents coalescing a
+missed `StartCalendarInterval` into one run on wake, which is the same shape — but **nothing has
+been measured there**, and `0.2.10` was written specifically to avoid drawing a shared abstraction
+from one platform. Extending to systemd is justified by §5.11's measurement on systemd; extending
+to launchd would be justified by nothing, and the agent is generated by different code with a
+different missed-run mechanism.
+
+**No new `jobs.yaml` key**, unchanged from §7.10 constraint 2: a shared config is only as new as
+the oldest binary reading it, so the policy stays non-configurable.
+
+### The consequence that has to be said out loud
+
+**Every existing Linux host keeps running its old unit until `schedule` is re-run**, so this change
+reaches nobody by upgrading the binary alone. That is the defect §5.11 documents in its own right —
+nothing re-emits a unit when the binary changes — and this release makes its cost concrete: a host
+that is not re-scheduled gets none of this. The README says so, and it is the strongest argument
+yet for the `doctor` check that compares the installed unit against what the current binary would
+generate.
 
 # Part 8 — Related state elsewhere
 

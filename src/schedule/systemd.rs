@@ -78,14 +78,23 @@ pub fn service_unit(job: &Job, schedule: &Schedule, ctx: &UnitContext) -> String
          [Unit]\n\
          Description=rusticprofile backup job {job_name}\n\
          Documentation=man:rusticprofile(1)\n\
-         # A backup that starts before the network is up fails slowly and confusingly.\n\
+         # Ordering against the network. NOTE: `network-online.target` does not exist in the\n\
+         # *user* manager, so on `permission: user` these two lines are inert — measured,\n\
+         # `PLAN.md` 5.11. They are kept because they are correct and load-bearing for a\n\
+         # `permission: system` unit, where the target does exist. The user-timer case is\n\
+         # covered by the retry on --background below, not by this ordering.\n\
          After=network-online.target\n\
          Wants=network-online.target\n\
          \n\
          [Service]\n\
          Type=oneshot\n\
+         # --background marks the run as unattended, which enables the retry (PLAN.md 7.10,\n\
+         # 7.12). It cannot be inferred from the environment: INVOCATION_ID and JOURNAL_STREAM\n\
+         # are both set in an ordinary desktop terminal, so only an explicit flag put here by\n\
+         # `schedule` can tell a scheduled run from a hand-typed one. On Unix the flag does not\n\
+         # touch stdio, so rustic's diagnostics still reach the journal.\n\
          ExecStart={binary} run --name {job_name} --config {config} \
-         --rustic-binary {rustic}\n\
+         --rustic-binary {rustic} --background\n\
          {priority}",
         job_name = job.name,
         binary = ctx.binary.display(),
@@ -239,6 +248,52 @@ mod tests {
         assert!(
             unit.contains("--rustic-binary /home/u/.cargo/bin/rustic"),
             "{unit}"
+        );
+    }
+
+    #[test]
+    fn the_unit_marks_the_run_as_unattended_so_the_retry_applies() {
+        // `PLAN.md` 5.11/7.12. A `Persistent=true` catch-up fires within milliseconds of the
+        // timer starting — measured, and `RandomizedDelaySec` does not delay it even at 3600s
+        // — so on a laptop the run replacing a missed hour lands seconds after a resume,
+        // before the network is up. Measured on a real host: a catch-up fired in the same
+        // second as `PM: suspend exit` and died on DNS, while the network became usable 11
+        // seconds later, so a retry two minutes out would have succeeded.
+        //
+        // The flag is the whole gate, and it has to be one: `INVOCATION_ID` and
+        // `JOURNAL_STREAM` are both set in an ordinary desktop terminal, so no environment
+        // check can tell a scheduled run from a hand-typed one. Dropping `--background` here
+        // silently removes the retry from every Linux host.
+        for at in [At::Hourly, At::Daily, At::Weekly, At::Monthly] {
+            for priority in [Priority::Standard, Priority::Background] {
+                let unit = service_unit(&job("dot-files"), &schedule(at, priority), &ctx());
+                let exec = unit
+                    .lines()
+                    .find(|l| l.starts_with("ExecStart="))
+                    .expect("ExecStart");
+                assert!(
+                    exec.split_whitespace().any(|t| t == "--background"),
+                    "no --background for {at:?}/{priority:?}: {exec}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_network_ordering_is_documented_as_inert_for_a_user_unit() {
+        // The directives stay because they are correct for a `permission: system` unit, where
+        // `network-online.target` exists. They are inert for a user timer — measured,
+        // `LoadState=not-found` — and a comment claiming a protection that is not there is
+        // exactly the failure this project exists to refuse, so the unit must say so.
+        let unit = service_unit(
+            &job("dot-files"),
+            &schedule(At::Hourly, Priority::Background),
+            &ctx(),
+        );
+        assert!(unit.contains("After=network-online.target"), "{unit}");
+        assert!(
+            unit.contains("does not exist in the"),
+            "the inert-on-user-manager caveat is missing: {unit}"
         );
     }
 

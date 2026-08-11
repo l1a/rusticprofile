@@ -52,10 +52,14 @@ rusticprofile owns **when** backups run, **which** jobs exist, and **on which ho
 - operation sequencing within a job (backup, then forget)
 - exit classification, including telling a partial backup apart from a failed one
 - refusing configurations that would quietly do less than they say
-- on Windows, retrying a failed operation twice at two-minute intervals **when the run was
-  started by Task Scheduler** — a missed hourly slot is replayed within seconds of the machine
-  waking, which is before the network is back, so without this the run that replaces a missed
-  hour is the one most likely to fail. A run you type yourself still fails immediately
+- on **Linux and Windows**, retrying a failed operation twice at two-minute intervals **when the
+  run was started by the scheduler** — a missed hourly slot is replayed within *seconds* of the
+  machine waking, which is before the network is back, so without this the run that replaces a
+  missed hour is the one most likely to fail. Measured on both platforms: on Linux the catch-up
+  fired in the same second as the resume and died on DNS, while the network became usable 11
+  seconds later. A run you type yourself still fails immediately. **macOS is not covered** — the
+  same race is plausible there and has not been measured, and this project does not generalise a
+  mechanism from an unmeasured platform
 - **recording what happened**: a per-run log, and a status file whose `last_success`
   survives a failed run — the one field that reveals a job which has quietly stopped
   working, since a schedule can be armed and green while every run fails
