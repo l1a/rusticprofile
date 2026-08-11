@@ -206,7 +206,9 @@ Requires [just](https://github.com/casey/just) and, for the man page, [mandown](
 
 `install-completions` tells you whether each shell will actually load them. **zsh is the one that usually will not**: unlike fish and bash-completion, it reads no user directory unless `fpath` names it, so the recipe checks and prints the `fpath+=(…)` line to add rather than claiming success.
 
-**PowerShell** is in the set and works on Windows — verified by generating the script, dot-sourcing it and asking `TabExpansion2`, not merely by the file appearing. It needs one explicit step and the recipe says so: PowerShell loads nothing automatically, so dot-source the file from your `$PROFILE`. `just install-completions` itself runs on Windows once Git's `usr\bin` is on `PATH` (see the Justfile header).
+**PowerShell** is in the set and works on Windows — verified by generating the script, dot-sourcing it and asking `TabExpansion2`, not merely by the file appearing. It needs one explicit step and the recipe says so: PowerShell loads nothing automatically, so dot-source the file from your `$PROFILE`.
+
+**`just install-completions` needs no PATH setup on Windows**, unlike `just check` and `just man`. It is deliberately a plain rather than a shebang recipe, so it runs through just's own `sh` and needs neither `cygpath` nor `bash` — measured on a default Windows PATH, from PowerShell. *This paragraph said the opposite until `0.2.14` ("runs on Windows once Git's `usr\bin` is on `PATH`"), contradicting the recipe body's own comment two files away; the sentence was written when that requirement was real and was not revisited when `0.2.2` removed it.*
 
 ## Development
 

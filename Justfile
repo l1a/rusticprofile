@@ -56,7 +56,34 @@ BASH_COMP  := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/comple
 ZSH_COMP   := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"`
 FISH_COMP  := `echo "${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions"`
 ELVISH_COMP := `echo "${XDG_CONFIG_HOME:-$HOME/.config}/elvish/lib"`
-NU_COMP    := `echo "${XDG_CONFIG_HOME:-$HOME/.config}/nushell/autoload"`
+# nushell's autoload directory is NOT the XDG one on Windows, and getting this wrong is silent.
+#
+# `$nu.user-autoload-dirs` on Windows is exactly `%APPDATA%\nushell\autoload`; nushell there does
+# not read `~/.config/nushell/autoload` at all, whatever XDG_CONFIG_HOME says. So the XDG form
+# writes a completion file to a directory nushell never consults: `install-completions` reports
+# success, and `rusticprofile <tab>` produces nothing, with no error anywhere to explain it.
+#
+# Three details this expression exists for, each of which breaks it if dropped:
+#   * `${APPDATA:-}`, not `$APPDATA` — just's default shell is `sh -cu`, and `-u` aborts on an
+#     unset variable, which is every Unix host.
+#   * `tr` — `$APPDATA` is a native Windows path full of backslashes, and `sh` treats those as
+#     escapes. Windows accepts forward slashes in every path API.
+#   * `'\\\\'`, four backslashes, NOT two. Two survive just and `sh` as a single backslash, which
+#     `tr` reads as a trailing unescaped one — it still substitutes correctly, but warns:
+#
+#         tr: warning: an unescaped backslash at end of string is not portable
+#
+#     on stderr, on every invocation that evaluates this variable. Four deliver the escaped `\\`
+#     `tr` expects. Measured on Windows through `just --evaluate` rather than a `sh -c` probe,
+#     because PowerShell rewrites backslashes in native arguments and reports the opposite.
+#   * the else branch is byte-for-byte the old expression, so no Unix host changes. `tr` runs
+#     only inside the then-branch, so this quoting cannot affect a host where APPDATA is unset.
+NU_COMP    := `if [ -n "${APPDATA:-}" ]; then printf '%s/nushell/autoload' "$(printf %s "$APPDATA" | tr '\\\\' '/')"; else echo "${XDG_CONFIG_HOME:-$HOME/.config}/nushell/autoload"; fi`
+
+# PS_COMP is very likely wrong on Windows in the same way, and is deliberately NOT changed here.
+# `~/.config/powershell` is correct for pwsh on Linux and macOS; on Windows the profile directory
+# is under `Documents\PowerShell`, which OneDrive folder-redirection can move. Guessing that path
+# from a Linux host would replace a known-harmless wrong answer with an unknown one. See NOTES.md.
 PS_COMP    := `echo "${XDG_CONFIG_HOME:-$HOME/.config}/powershell"`
 
 # Default recipe

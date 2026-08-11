@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.13)
+## Current State (v0.2.14)
 
 **`v0.2.7` is released on GitHub *and* on crates.io** as of 2026-08-07 — registry API
 `max_version 0.2.7`, 185,634 bytes, not yanked, re-confirmed 2026-08-08. It carries `0.2.3`
@@ -502,6 +502,17 @@ Smaller items:
       unguarded:** `0.1.24` guards "a shared `jobs.yaml` is only as new as the oldest binary
       reading it" and nothing guards "…or as current as the most stale checkout". It wants an
       answer somewhere other than here.
+- [ ] **`PS_COMP` points somewhere PowerShell does not read on Windows — now measured** (`0.2.14`).
+      `~/.config/powershell` is right for pwsh on Linux and macOS and is not the Windows profile
+      directory. `$PROFILE` on the Windows host is
+      `C:\Users\user\OneDrive\Documents\PowerShell\Microsoft.PowerShell_profile.ps1` — **OneDrive
+      folder-redirection is real there, not hypothetical** — and that profile does not source
+      `~/.config/powershell`, so the file written there is never read. Same silent-no-op shape as
+      the nushell path fixed in `0.2.14`, but **not** the same fix: there is no
+      `%APPDATA%`-shaped variable to key off, and the correct value is `$PROFILE`'s *directory*,
+      which no other platform can compute. So it wants a design decision — probably asking
+      `pwsh -NoProfile -c 'Split-Path $PROFILE'` when one is on PATH and falling back to the XDG
+      path otherwise — rather than a substitution.
 - [ ] **Verify that a `rustic prune` actually reclaimed packs.** Explicitly **not** one of
       `doctor`'s checks, recorded because it was nearly assumed to be. Check 2 detects a
       competing restic prune *schedule*; whether our own prune's deletion pass worked is pack
@@ -582,6 +593,140 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.14 — nushell completions were installed where Windows nushell never looks
+
+**Tooling only; no product code changed.** One `Justfile` variable.
+
+> **VERIFIED ON WINDOWS 2026-08-10**, which is what this entry was waiting for. It had said *"NOT
+> YET VERIFIED — the fix is written and tested on Linux, where it is provably a no-op; it needs one
+> `just install-completions` on the Windows machine before it can be called done"*, because `0.2.1`
+> and `0.2.2` were both regressions from Justfile edits that looked right in the shell they were
+> written in. That run happened; it passed; and it found one thing Linux could not — see the `tr`
+> quoting below.
+
+`NU_COMP` resolved to `${XDG_CONFIG_HOME:-$HOME/.config}/nushell/autoload` on every platform.
+**On Windows `$nu.user-autoload-dirs` is exactly `%APPDATA%\nushell\autoload`, and nushell there
+does not read the XDG path at all** — measured on the Windows host 2026-08-07, which is how the
+`rp`/`rsp` aliases turned out to have been unavailable on it for months while existing in the
+dotfiles the whole time.
+
+So the recipe wrote a real completion file to a directory nushell never consults, printed
+`Installed completions for rusticprofile`, and delivered nothing. **A step that quietly does
+nothing is this project's whole subject** — the same shape as `just man`'s collapse being a no-op
+on that host through `0.2.8`, and as `schtasks /Delete /TN` against a folder path.
+
+Three details the replacement expression turns on, each of which breaks it if dropped:
+
+- **`${APPDATA:-}`, not `$APPDATA`.** just's default shell is `sh -cu`, and `-u` aborts on an
+  unset variable — i.e. on every Unix host. This would have been a fleet-wide breakage of a
+  Windows-only fix.
+- **`tr '\\\\' '/'`, four backslashes.** `$APPDATA` is a native Windows path full of backslashes
+  and `sh` treats those as escapes. Windows accepts forward slashes in every path API. The count
+  is the part Linux could not check — see below.
+- **The else branch is byte-for-byte the old expression**, so no Unix host changes. Verified by
+  evaluating the variable on this branch and on `main` and diffing: identical.
+
+Proved before editing the Justfile and again after, with `just --evaluate NU_COMP`:
+
+```
+APPDATA unset              -> /home/user/.config/nushell/autoload      (unchanged)
+APPDATA=C:\Users\x\AppData\Roaming -> C:/Users/x/AppData/Roaming/nushell/autoload
+XDG_CONFIG_HOME=/tmp/xdg   -> /tmp/xdg/nushell/autoload                (override still honoured)
+```
+
+`just install-completions` then run for real on Linux: still writes the nushell file, still
+contains `doctor`, and no stray Windows-shaped directory appears.
+
+#### The Windows run, and the oracle it turned on
+
+The premise was re-established on the host itself rather than trusted from the 2026-08-07 note,
+and the control matters as much as the result:
+
+```
+$nu.user-autoload-dirs   ->  C:\Users\user\AppData\Roaming\nushell\autoload   (one entry, that is all)
+NU_COMP on main          ->  /c/Users/user/.config/nushell/autoload           (nushell never reads it)
+NU_COMP on this branch   ->  C:/Users/user/AppData/Roaming/nushell/autoload   (exact match)
+```
+
+`just install-completions` exits 0 there on a **genuinely default PATH** — no Git `usr\bin`
+prepended — which is `0.2.1`'s standing requirement and the environment a user actually has.
+
+**The oracle is nushell, not the filesystem.** "The file is in the right directory" would be
+`0.2.6`'s *"the window is gone"* mistake restated, so the check is what nushell knows afterwards:
+19 `rusticprofile *` commands in scope, **including `rusticprofile doctor`**. That subcommand
+only exists as of `0.2.13`, and the stale XDG copy left on that host contains zero mentions of
+it — so what is loaded is provably the new file and not a survivor. The negative control is the
+autoload list having exactly one entry, which makes the XDG copy not merely unused but
+unreachable.
+
+*Also confirmed rather than assumed, since the whole entry rests on it:* `tr` is **not** on a
+default Windows PATH, but just's backtick shell is Git's MSYS `sh`, which carries its own
+`/usr/bin` — so `tr` resolves to `/usr/bin/tr` with no PATH setup. The coreutils warning at the
+top of the `Justfile` is about *shebang* recipes; the backtick shell supplies its own.
+
+#### The one defect the Linux run could not see: `tr` warned on every invocation
+
+The first Windows run printed this to stderr, above `cargo build`, on every evaluation of the
+variable:
+
+```
+tr: warning: an unescaped backslash at end of string is not portable
+```
+
+Two backslashes survive just and `sh` as **one**, which `tr` reads as a lone trailing backslash.
+It substituted correctly anyway — the path was right both before and after — so this was never a
+wrong answer, only a warning line on every `just` run that reads these variables, which reads as
+a broken build. Four backslashes deliver the escaped `\\` that `tr` wants.
+
+**Measured through `just` itself on a throwaway Justfile, not through a `sh -c` probe.** The
+probe was tried first and gave the opposite answer, because PowerShell rewrites backslashes in
+native-command arguments — `v0.2.2`'s lesson exactly: *the tool that defines the semantics is the
+only reliable oracle for them.*
+
+| form | path | warning |
+|---|---|---|
+| `tr '\\' '/'` | correct | **yes** |
+| `tr '\\\\' '/'` | identical | no |
+| `tr '\134' '/'` | identical | no |
+
+`\\\\` is taken over the octal form as the more legible of two equals. **`tr` runs only inside
+the then-branch**, which fires only where `APPDATA` is set, so this quoting cannot reach a Unix
+host by construction — the else-branch render is unchanged and was re-diffed after the edit.
+
+**`PS_COMP` is wrong the same way. It is now measured rather than suspected — and still left
+alone**, because the answer is a separate change:
+
+```
+$PROFILE          C:\Users\user\OneDrive\Documents\PowerShell\Microsoft.PowerShell_profile.ps1
+sources ~/.config/powershell?   no
+```
+
+So OneDrive redirection is real on that host, exactly as this entry guessed, and the 15 KB
+`rusticprofile.ps1` written to `~/.config/powershell` is dead there. Two reasons it does not get
+fixed here: the correct Windows value is `$PROFILE`'s *directory*, which no other platform can
+compute, and unlike `NU_COMP` there is no `%APPDATA%`-shaped environment variable to key off — so
+it needs a design decision rather than a substitution. The backlog item below now carries the
+measurement.
+
+#### And a README sentence the same run disproved
+
+`README.md` said *"`just install-completions` itself runs on Windows once Git's `usr\bin` is on
+`PATH`"*. It does not need it: the recipe was made a **plain** rather than a shebang recipe in
+`0.2.2` precisely so it needs neither `cygpath` nor `bash`, and the recipe body says so in as many
+words. The run above is the proof — default PATH, from PowerShell, exit 0.
+
+The sentence was true when written and was not revisited when the requirement was removed one file
+away. **That is `0.2.4`'s finding in its third location:** the same fact stated in two places goes
+stale in the copy nobody re-reads, and here the two copies were a recipe comment and a README
+paragraph that no check compares. Corrected in place with the superseded text kept, per the
+`0.1.16`/`0.1.30`/`0.1.32` precedent.
+
+*Checked while writing this, because it would have changed the fix:* the chezmoi source has no
+`exact_` prefix on `AppData/Roaming/nushell/autoload`, so `chezmoi apply` will not delete a
+generated completion placed there. It already manages `50rusticprofile-aliases.nu` in that same
+directory, and the generated file is `50rusticprofile-completions.nu` — different names, no
+collision.
 
 ### v0.2.13 — `doctor`: the checks a hermetic `--check` cannot make
 
