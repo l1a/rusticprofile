@@ -456,17 +456,26 @@ Smaller items:
       scoped and filter nothing. All three checks — a scoping filter present, no misplaced
       filters, `group-by` explicit — are refusals at load time.
 - [ ] First benchmark + `benches/`, `criterion`, `[[bench]]` (see deviation 2 above)
+- [x] **The AUR package is PUBLISHED — 2026-08-11, `0.2.14-1`, a first publish** (`0.2.15`).
+      <https://aur.archlinux.org/packages/rusticprofile>. Outstanding since `0.1.2` and blocked the
+      whole time on their maintenance window, which lifted today. Verified from the SSH endpoint's
+      `list-repos`, the package page against a 404 control, and a fresh clone whose tip is our
+      commit — **not** from `rpc/v5/info`, which reported `resultcount: 0` for the freshly pushed
+      package and is an index, not an existence oracle.
 - [x] **Publishing decision — taken, and executed as recommended.** The recommendation was
       *publish at M2, when `schedule`/`unschedule`/`status` make the README's first paragraph
       true.* M2 landed in `0.0.19` and `v0.1.0` was tagged and published then, so it was
       followed rather than overtaken. `rusticprofile` was claimed; `rustic-profile` is still
       free and nothing depends on it. crates.io carries **`0.1.31`** as of 2026-08-04.
-      **AUR remains outstanding** — the package is written and container-verified against the
-      released `0.2.7` tarball (`0.2.8`), blocked solely on their maintenance window (rechecked
-      2026-08-08, still down; check `ssh aur@aur.archlinux.org help` **authenticated**, not the
-      web page, which returns 200 throughout, and not a keyless probe, which cannot tell "down"
-      from "will not talk to me"). The name is still unclaimed, so this is a first publish rather
-      than a bump.
+      **The AUR is now done too — published 2026-08-11 at `0.2.14-1`** (`0.2.15`), a first publish
+      of an unclaimed name. It had been blocked solely on their maintenance window, which lifted
+      that day after being shut since at least 2026-08-04. *Superseded text, kept because the probe
+      technique is the durable part:* "**AUR remains outstanding** — … blocked solely on their
+      maintenance window (rechecked 2026-08-08, still down; check `ssh aur@aur.archlinux.org help`
+      **authenticated**, not the web page, which returns 200 throughout, and not a keyless probe,
+      which cannot tell 'down' from 'will not talk to me')." All three cautions there still hold —
+      and `0.2.15` adds a fourth: `rpc/v5/info` is an index, not an existence check.
+      crates.io carries **`0.2.14`** as of 2026-08-11.
 - [x] **Decided in v0.0.5, as the design intended.** A partial backup is `Verdict::Partial`:
       loud in the report, the job continues, `forget` still runs, exit **0**. Partial is only
       claimed on at least one successfully parsed `--json` snapshot object — unparseable,
@@ -629,12 +638,47 @@ for the first time anywhere: `.SRCINFO` went 503 → **506 bytes** with a `pkgba
 rather than the 0 bytes the old recipe produced. **The three-way fix was right, and now two thirds
 of it is measured instead of one.**
 
-**Not published.** `aur-publish` is blocked on something that is *not* the maintenance window: the
-publishing host had never accepted the AUR's SSH host key, so an authenticated probe returns
-`Host key verification failed` — which is not evidence about the AUR's state either way. The
-fingerprint could not be corroborated from any second source available at the time, so it was left
-for a human rather than accepted unilaterally. Recorded because the failure reads like downtime and
-is not.
+#### PUBLISHED — the maintenance window lifted, and this is a first publish
+
+**`rusticprofile` is on the AUR as of 2026-08-11**, `0.2.14-1`, pushed as commit
+`rusticprofile 0.2.14`. The name had never been claimed, so this is a first publish rather than a
+bump — the thing this project has been waiting on since `0.1.2`. The window had been shut since at
+least 2026-08-04 and every recorded probe until today answered *"The AUR is down due to
+maintenance."*
+
+`aur-publish`'s guards all fired correctly before the push: `.SRCINFO` agrees with `PKGBUILD`, the
+declared sha256 was re-derived from **the tarball that will actually be downloaded**, and the
+maintenance/permission probes both passed.
+
+**One blocker along the way that was not the window, and reads exactly like it was.** The
+publishing host had never accepted the AUR's SSH host key, so the authenticated probe returned
+`Host key verification failed` — which is not evidence about the AUR's state in either direction.
+Also measured: **a Windows host cannot reach the AUR at all**, because its bundled OpenSSH cannot
+negotiate `sntrup761x25519-sha512@openssh.com`. AUR work belongs on a Linux host irrespective of
+podman.
+
+#### `resultcount: 0` from RPC `info` does NOT mean a package is absent
+
+This is the transferable finding, and it retires a claim this project has repeated for weeks. The
+evidence used to assert *"the name is still unclaimed, so this is a first publish"* was
+`rpc/v5/info` returning `resultcount: 0`. **Measured immediately after a successful push, with
+controls:**
+
+| | package page | RPC `info` | RPC `search` |
+|---|---|---|---|
+| `rusticprofile`, just pushed | **200**, `<title>AUR (en) - rusticprofile</title>` | **0** | **1** |
+| `retch`, published long ago | 200 | 1 | — |
+| a name that does not exist | **404**, `Not Found` | — | — |
+
+So `info` reported 0 for a package that demonstrably exists — while `search` found it, the page
+served it, and `git ls-remote` showed our commit as the tip. **`info` reflects an index that lags
+the git push; it is not an existence oracle.** The negative control is what makes this readable:
+a nonexistent package 404s, so the 200 is real rather than the Anubis interstitial that makes the
+front page useless for this (`0.2.8`).
+
+By symmetry the *original* claim was weaker than it looked too: `resultcount: 0` was consistent
+with "unclaimed" and equally consistent with "claimed but unindexed". It happened to be right.
+**Use `list-repos` on the SSH endpoint, or the package page with a 404 control — not `info`.**
 
 *Also measured, and it retires an assumption:* **a Windows host cannot talk to the AUR at all.**
 Windows' bundled OpenSSH cannot negotiate `sntrup761x25519-sha512@openssh.com`, which the AUR
