@@ -396,6 +396,8 @@ pub fn agent_status(job: &Job, permission: Permission, dir: &Path) -> TimerStatu
         enabled: loaded.map(|l| l && !disabled),
         active: loaded,
         next_elapse: None,
+        // Nothing to convert where there is nothing to report.
+        next_elapse_iso: None,
     }
 }
 
@@ -549,6 +551,58 @@ pub fn delete_task(job_name: &str) -> io::Result<(bool, String)> {
     schtasks_run(&["/Delete", "/TN", &schtasks::task_name(job_name), "/F"])
 }
 
+/// The next fire time for `job` as an unambiguous instant, or `None`.
+///
+/// **`schtasks` cannot answer this.** It formats `Next Run Time` in the user's locale, and there
+/// is no locale-free output mode — `/FO CSV` is formatted the same way and `/XML` carries no
+/// computed next run at all, both measured (`PLAN.md` §5.10). Parsing what it does print is
+/// rejected rather than merely avoided: `8/12/2026` parses *successfully* as 12 August under
+/// `M/d/yyyy` and as 8 December under `d/M/yyyy`, so a host in another locale would be shown a
+/// confident wrong date. That is a silent misparse, which is the one failure class this tool
+/// exists to refuse.
+///
+/// So the instant is asked for instead. `Get-ScheduledTaskInfo` returns a real `DateTime`, and
+/// `yyyy-MM-ddTHH:mm:sszzz` renders it in exactly the shape
+/// [`crate::run::status::STAMP_FORMAT`] parses — deliberately not `.ToString('o')`, which adds
+/// fractional seconds and fails that parse.
+///
+/// **Every failure returns `None`, so the caller keeps the verbatim `schtasks` string** and the
+/// worst case is the behaviour that shipped before this existed. Measured: an absent task gives
+/// empty stdout and exit 1, a null `NextRunTime` gives empty stdout and exit 0. Only trimmed
+/// stdout is read — never stderr — and only if it parses, so nothing unrecognised can reach the
+/// screen dressed as our own format.
+///
+/// `powershell.exe` is Windows PowerShell 5.1, which is in-box on every supported Windows;
+/// `pwsh` is a separate install and is deliberately not used. `-NoProfile -NonInteractive` keeps
+/// a user profile from printing into the value or slowing it down.
+pub fn task_next_run_iso(job_name: &str) -> Option<String> {
+    // Job names are an allowlist of ASCII alphanumerics plus `-_.`
+    // (`config::validate::is_valid_name`), so a quote cannot appear here and the single-quoted
+    // interpolation is safe by construction — the same argument `schtasks::task_name` makes for
+    // interpolating into a path. Doubled anyway, because a validator one module away is a weaker
+    // guarantee than an escape at the point of use.
+    let quoted = job_name.replace('\'', "''");
+    let script = format!(
+        "$ErrorActionPreference='Stop'; \
+         try {{ $t = Get-ScheduledTaskInfo -TaskPath '\\rusticprofile\\' -TaskName '{quoted}'; \
+         if ($null -ne $t.NextRunTime) \
+         {{ $t.NextRunTime.ToString('yyyy-MM-ddTHH:mm:sszzz') }} }} catch {{}}"
+    );
+
+    let out = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .ok()?;
+
+    let stamp = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // Validated before it is handed on. An unparseable value is discarded rather than displayed,
+    // so `next run` is always either our rendering or the platform's own string.
+    if stamp.is_empty() || !crate::report::is_recorded_stamp(&stamp) {
+        return None;
+    }
+    Some(stamp)
+}
+
 /// The registered definition for a job, as the service holds it.
 ///
 /// `None` when the task is not registered or cannot be read — which is what makes it usable as
@@ -571,9 +625,12 @@ pub fn query_task_xml(job_name: &str) -> Option<String> {
 /// | `enabled` | the registered task's `Scheduled Task State` is `Enabled` |
 /// | `active` | the task is registered and its status is not `Disabled` |
 /// | `next_elapse` | **a real value** — `Next Run Time`, which launchd never reports |
+/// | `next_elapse_iso` | the same instant, locale-free — see [`task_next_run_iso`] |
 ///
-/// That last row is the one place this backend is better than launchd rather than merely
-/// different, so `status` shows a genuine next fire time on Windows.
+/// That `next_elapse` row is the one place this backend is better than launchd rather than merely
+/// different, so `status` shows a genuine next fire time on Windows. The `_iso` row exists
+/// because the value `schtasks` prints is formatted in the user's locale and therefore cannot be
+/// re-rendered without risking a wrong date (`PLAN.md` §7.13).
 pub fn task_status(job: &Job, _permission: Permission, dir: &Path) -> TimerStatus {
     let units_present = dir.join(schtasks::task_file_name(&job.name)).exists();
 
@@ -598,6 +655,7 @@ pub fn task_status(job: &Job, _permission: Permission, dir: &Path) -> TimerStatu
             enabled: None,
             active: None,
             next_elapse: None,
+            next_elapse_iso: None,
         };
     };
 
@@ -616,12 +674,20 @@ pub fn task_status(job: &Job, _permission: Permission, dir: &Path) -> TimerStatu
         !v.is_empty() && !v.eq_ignore_ascii_case("N/A") && !v.eq_ignore_ascii_case("Disabled")
     });
 
+    // Only asked for when `schtasks` already reported a next run, so an unregistered or disabled
+    // task costs no extra process. `None` here is not a failure — it leaves `next_elapse` to be
+    // printed verbatim, which is what shipped before this existed.
+    let next_elapse_iso = next_elapse
+        .as_ref()
+        .and_then(|_| task_next_run_iso(&job.name));
+
     TimerStatus {
         job: job.name.clone(),
         units_present,
         enabled: state.map(|s| s.eq_ignore_ascii_case("Enabled")),
         active: status.map(|s| !s.eq_ignore_ascii_case("Disabled")),
         next_elapse,
+        next_elapse_iso,
     }
 }
 
@@ -635,8 +701,21 @@ pub struct TimerStatus {
     /// answers and only one of them means the schedule is off.
     pub enabled: Option<bool>,
     pub active: Option<bool>,
-    /// When the timer next fires, as systemd reports it.
+    /// When the timer next fires, **as the service manager reports it**.
+    ///
+    /// This is what `status --json` emits as `next_run`, verbatim and unconverted. It is
+    /// `schema: 1` and a monitor parses it, so it must keep meaning exactly that — `0.1.23`
+    /// permits adding a field and forbids redefining one.
     pub next_elapse: Option<String>,
+    /// The same instant in [`crate::run::status::STAMP_FORMAT`], where the backend can supply
+    /// one that is not locale-dependent. **Presentation only** — it never reaches the JSON.
+    ///
+    /// Exists because Task Scheduler formats its answer in the user's locale, which cannot be
+    /// re-rendered without risking a wrong date, while the platform will hand over the instant
+    /// directly if asked ([`task_next_run_iso`], `PLAN.md` §7.13). systemd already reports the
+    /// human shape `0.2.20` aligned everything else to, so `timer_status` leaves this `None` and
+    /// nothing about Linux output changes.
+    pub next_elapse_iso: Option<String>,
 }
 
 /// Inspect one job's schedule.
@@ -671,6 +750,9 @@ pub fn timer_status(job: &Job, permission: Permission, dir: &Path) -> TimerStatu
         enabled,
         active,
         next_elapse,
+        // systemd renders `NextElapseUSecRealtime` in the same human shape `0.2.20` aligned the
+        // record to, so there is nothing to convert and no second oracle to ask.
+        next_elapse_iso: None,
     }
 }
 

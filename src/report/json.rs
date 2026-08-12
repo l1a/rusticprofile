@@ -152,6 +152,7 @@ impl JobStatusJson {
             units_present: timer.units_present,
             enabled: timer.enabled,
             active: timer.active,
+            // The service manager's own value, never the rendered one — `0.1.23`'s contract.
             next_run: timer.next_elapse.clone(),
             last_run: recorded.map(|r| r.last_run.clone()),
             last_verdict: recorded.map(|r| r.last_verdict.clone()),
@@ -295,9 +296,34 @@ mod tests {
             enabled: None,
             active: None,
             next_elapse: None,
+            next_elapse_iso: None,
         };
         let v = parse(&to_string(&JobStatusJson::new("j", true, &timer, None)));
         assert!(v["enabled"].is_null(), "{v}");
         assert!(v["last_success"].is_null(), "{v}");
+    }
+
+    #[test]
+    fn the_json_reports_the_service_managers_own_value_not_the_rendered_one() {
+        // `next_run` is `schema: 1` and a monitor parses it, so `0.1.23`'s contract applies:
+        // a field may be added, never redefined. `0.2.20` made the same call for the status
+        // record — the conversion for legibility happens at the point of printing and nowhere
+        // else. Written as a guard because the locale-free instant now sits right beside the
+        // reported one in `TimerStatus`, and emitting the wrong one would be a silent schema
+        // break that no other test would notice.
+        let timer = TimerStatus {
+            job: "j".to_string(),
+            units_present: true,
+            enabled: Some(true),
+            active: Some(true),
+            next_elapse: Some("8/12/2026 11:02:28 AM".to_string()),
+            next_elapse_iso: Some("2026-08-12T11:02:28-07:00".to_string()),
+        };
+        let v = parse(&to_string(&JobStatusJson::new("j", true, &timer, None)));
+        assert_eq!(v["next_run"], "8/12/2026 11:02:28 AM", "{v}");
+        assert!(
+            v.get("next_run_iso").is_none(),
+            "the locale-free instant is presentation only and must not reach the schema: {v}"
+        );
     }
 }

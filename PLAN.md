@@ -1172,6 +1172,66 @@ was not; `RestartOnFailure` sounds like a retry and is a launch-failure retry. E
 three cost a session's worth of confident reasoning. **On this platform, read the setting's
 behaviour off a registered task rather than off its name.**
 
+### `Next Run Time` is locale-formatted *and* re-rolled on every query — measured 2026-08-12
+
+Reported by Ken reading his own `status` output, which is the fifth time in this series that
+using the tool found something no test could — `0.2.5`, `0.2.6`, `0.2.10` and `0.2.20` are the
+others. The complaint was the notation:
+
+```
+    next run             8/12/2026 10:06:36 AM
+    last run             Wed 2026-08-12 09:02:20 PDT (success)
+```
+
+`0.2.20` had already recorded that as known-and-not-fixed, on the grounds that normalising it
+*"would mean parsing a locale-dependent string from each platform and re-rendering it, which
+trades a cosmetic inconsistency for a class of silent misparse."* **That reasoning is correct
+and it is not the whole picture: it assumed parsing the string was the only route.** Measured
+on Windows 11, `en-US`, `M/d/yyyy`:
+
+| oracle | value | usable? |
+|---|---|---|
+| `schtasks /Query /FO LIST /V` | `8/12/2026 11:02:13 AM` | locale-formatted |
+| `schtasks /Query /FO CSV /V` | `8/12/2026 11:02:13 AM` | **also locale-formatted** |
+| `schtasks /Query /XML` | *no such field* | the definition only; no computed next run |
+| **`Get-ScheduledTaskInfo`** | **`System.DateTime`, `Kind=Local`** | **locale-free** |
+
+So `schtasks` has **no** locale-free output mode — CSV and XML were both checked rather than
+assumed — and the value rusticprofile passes through is unavoidably formatted in the user's
+locale. But the platform does expose the instant as a real `DateTime`, and
+`.ToString('yyyy-MM-ddTHH:mm:sszzz')` renders it as `2026-08-12T11:06:52-07:00`, which is
+**byte-for-byte the shape `run::status::STAMP_FORMAT` already parses**. Note `.ToString('o')`
+is *not* usable — it carries fractional seconds and fails that parse.
+
+**Parsing the locale string remains rejected, and the reason is worth stating precisely
+because it is not "parsing is hard".** `8/12/2026` parses *successfully* as 12 August under
+`M/d/yyyy` and as 8 December under `d/M/yyyy`. Both succeed; one is wrong; nothing in the
+string says which. That is a **silent misparse**, not a fallible parse — the difference that
+matters, and the same distinction as `check_sources_are_expanded` (§5.9), where a wrong answer
+that reports success is worse than an error.
+
+#### The finding the format complaint was hiding: the value is not a fixed time
+
+`RandomDelay` is `PT5M` and **Task Scheduler re-rolls it on every query.** Three back-to-back
+reads of the same unchanged task:
+
+| read | `schtasks` first row | `Get-ScheduledTaskInfo` |
+|---|---|---|
+| 1 | `11:06:21` | `11:05:12` |
+| 2 | `11:03:23` | `11:03:56` |
+| 3 | `11:06:27` | `11:04:28` |
+
+All 24 triggers report the same *task-level* next run, each independently jittered, so a single
+`/Query` yields 24 values spanning `11:02:28`–`11:06:47`. **The existing parser takes the first
+row, which is a valid sample inside the window rather than a wrong hour** — checked, because
+"first of 24" looked like a bug and is not. What it is not is *exact*: `status` printed a
+to-the-second time that changes between two invocations seconds apart.
+
+**That is a property of Task Scheduler, not of this tool**, and it is the honest reason the
+line needs a window rather than more precision. **It is measured only here.** Whether
+systemd's `NextElapseUSecRealtime` is stable across queries was *not* measured — it cannot be
+from a Windows host — so §7.13 deliberately annotates only this backend.
+
 ## 5.11 The resume race under systemd — measured 2026-08-11 on a Fedora 44 laptop
 
 §7.10 shipped the retry for Task Scheduler only and said the Linux half wanted *"the measurement
@@ -2237,6 +2297,78 @@ you want and whose value answers a different question.**
 So the gate is the flag, emitted by `schedule` — one mechanism on all platforms, testable as a pure
 function of the generator, and with a test asserting `--background` appears for every interval and
 priority combination, because dropping it silently removes the retry from every Linux host.
+
+## 7.13 SETTLED: `next run` is asked for locale-free on Windows (2026-08-12)
+
+**Decision: on Task Scheduler, `status` obtains the next fire time from `Get-ScheduledTaskInfo`
+as an unambiguous instant and renders it through the same `report::human_time` that `0.2.20`
+introduced, falling back to `schtasks`' verbatim string when that cannot be done. The line also
+carries the spread window, on this backend only.** §5.10 has the measurements.
+
+This reverses `0.2.20`'s *"known and not fixed"*, so it is written here before the code, per the
+§5.9/§7.9/§7.10 precedent.
+
+### What is actually being reversed
+
+`0.2.20` aligned `last run`/`last success` to the shape `next run` already had, and closed by
+recording that a Windows host still shows two notations because normalising `next run` would
+mean parsing a locale-dependent string. **The rejected thing was *parsing*, and parsing is still
+rejected** — §5.10 measures why: `8/12/2026` succeeds as two different dates and nothing in it
+says which. What changed is the discovery that the platform will hand over the instant directly,
+so the choice was never "parse it or live with it".
+
+### Three routes, and why the other two lose
+
+| route | why not |
+|---|---|
+| **parse the `schtasks` string** | silent misparse across locales (§5.10). A wrong date reported confidently is this project's own failure class |
+| **compute the next fire ourselves** | the definition is ours and the XML is ISO-8601, so it is *possible* — and it would be inventing a fact. `Persistent`/`StartWhenAvailable`/`RandomDelay` mean our answer can legitimately differ from the scheduler's, and §164 of the man page already refuses exactly this for launchd: *"computing one and presenting it as launchd's would be inventing a fact about a schedule"* |
+| **ask `Get-ScheduledTaskInfo`** | **chosen** |
+
+### The cost, stated rather than buried: a second external tool
+
+Until now the Windows backend needed only `schtasks.exe`. This adds `powershell.exe` and its
+in-box `ScheduledTasks` module. Four things make that acceptable, and the fourth is the one that
+matters:
+
+1. **`powershell.exe` is Windows PowerShell 5.1, which is in-box on every supported Windows.**
+   Not `pwsh`, which is a separate install. Verified 5.1 carries the cmdlet.
+2. **It is spawned only when `schtasks` already reported a next run**, so an unregistered or
+   disabled task costs no extra process — and `status` is the only caller, never a scheduled run.
+3. **`-NoProfile -NonInteractive`**, so a user profile can neither slow it nor print into it.
+4. **Failure degrades to exactly today's behaviour.** Empty stdout — measured for both an absent
+   task (exit 1) and a null `NextRunTime` (exit 0) — leaves the verbatim `schtasks` string in
+   place. Nothing new can produce a blank line or a wrong date, which is the only direction that
+   would matter. Only trimmed **stdout** is read, and only if it parses as
+   `run::status::STAMP_FORMAT`; anything else is discarded rather than displayed, so the value on
+   screen is always either our format or the platform's, never a third thing.
+
+### `status --json` is deliberately untouched
+
+`next_run` stays exactly what the service manager said. `0.1.23`'s contract permits **adding** a
+field and forbids **redefining** one, and a monitor parses this. So `TimerStatus` carries the
+locale-free instant as a *second* field used only at the point of printing — the same structure
+`0.2.20` chose for the status record, and for the same reason: the record is a record and the
+report is a report.
+
+*A schema-legal `next_run_iso` would be a real improvement for a Windows monitor, which today
+cannot parse `next_run` at all. It is deliberately not in this change — it is additive surface
+that nobody has asked for, and bundling it would put an unrequested schema addition inside a
+display fix.*
+
+### The window is printed for Task Scheduler and nowhere else
+
+§5.10 measures the `RandomDelay` re-roll here: three reads of one unchanged task gave three
+different times. Printing a to-the-second value that moves between invocations overstates it, so
+the line reads `(±5 min)`, taken from `calendar::spread_minutes` rather than a fresh literal —
+one definition of the spread, the rule that section already states.
+
+**systemd is not annotated, and that is the whole point of the restriction.** Whether
+`NextElapseUSecRealtime` is stable across queries has **not** been measured, and it cannot be
+from a Windows host. Annotating it anyway would put a claim in the output that nothing checked —
+the `network-online.target` failure in §5.11, where our own generated unit carried a comment
+describing a protection that never existed. If someone measures it on Linux and the value does
+jitter, extending the annotation is a one-line change at the call site.
 
 **`--background` now means two things and only one of them is universal.** On Windows it detaches
 the console *and* marks the run unattended; on Unix it marks the run unattended and touches nothing

@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.21)
+## Current State (v0.2.22)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -689,6 +689,121 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.22 — `next run` was the one line on Windows still in the platform's notation
+
+**Display only; `status --json`, the status file and the run log are untouched.** Reported by Ken
+reading his own `status` output, which is the **fifth** time in this series that using the tool
+found something no test could — `0.2.5`, `0.2.6`, `0.2.10` and `0.2.20` are the others.
+
+```
+    next run             8/12/2026 10:06:36 AM
+    last run             Wed 2026-08-12 09:02:20 PDT (success)
+    last success         Wed 2026-08-12 09:02:20 PDT
+```
+
+`0.2.20` fixed the bottom two lines and closed by recording the top one as **known and not
+fixed**: normalising it *"would mean parsing a locale-dependent string from each platform and
+re-rendering it, which trades a cosmetic inconsistency for a class of silent misparse — the wrong
+direction here."*
+
+#### That reasoning was right about parsing and wrong about the options
+
+**Parsing is still rejected, and the measurement sharpens why.** `8/12/2026` parses
+*successfully* as 12 August under `M/d/yyyy` and as 8 December under `d/M/yyyy`. Both succeed, one
+is wrong, and nothing in the string says which — a **silent** misparse rather than a fallible
+parse, which is the distinction that matters here.
+
+What the entry had not established is that parsing was the only route. It is not:
+
+| oracle | value | usable? |
+|---|---|---|
+| `schtasks /FO LIST /V` | `8/12/2026 11:02:13 AM` | locale-formatted |
+| `schtasks /FO CSV /V` | `8/12/2026 11:02:13 AM` | **also locale-formatted** |
+| `schtasks /XML` | *no such field* | definition only |
+| **`Get-ScheduledTaskInfo`** | **`System.DateTime`** | **locale-free** |
+
+So `schtasks` has no locale-free mode — CSV and XML were both checked rather than assumed — while
+the platform will hand over the instant directly, and
+`.ToString('yyyy-MM-ddTHH:mm:sszzz')` renders it in exactly the shape
+`run::status::STAMP_FORMAT` already parses. `status` now asks for it and renders it through
+`0.2.20`'s `report::human_time`, so one function formats all three lines.
+
+**`.ToString('o')` is the near-miss worth recording**: valid ISO 8601, looks correct, and fails
+that parse on its fractional seconds. A test pins it by name.
+
+#### The finding the format complaint was hiding
+
+**`RandomDelay` is re-rolled on every query.** Three back-to-back reads of one unchanged task:
+
+| read | `schtasks` | `Get-ScheduledTaskInfo` |
+|---|---|---|
+| 1 | `11:06:21` | `11:05:12` |
+| 2 | `11:03:23` | `11:03:56` |
+| 3 | `11:06:27` | `11:04:28` |
+
+So `status` was printing a to-the-second time that moves between two invocations seconds apart.
+The line now reads `Wed 2026-08-12 11:02:28 PDT (±5 min)`, with the window taken from
+`calendar::spread_minutes` rather than a fresh literal — one definition of the spread.
+
+**The window is printed on Task Scheduler and nowhere else, and the restriction is the point.**
+Whether systemd's `NextElapseUSecRealtime` moves across queries has **not** been measured, and
+cannot be from a Windows host. Annotating it anyway would put a claim in our own output that
+nothing checked — the `network-online.target` failure `0.2.16` found, an inert directive whose
+comment described a protection that never existed.
+
+Also checked rather than assumed: all 24 triggers report the same task-level next run, so the
+parser taking the **first of 24 rows** is a valid sample inside the window and not a wrong hour.
+It looked like a bug and is not.
+
+#### Three things that deliberately did not change
+
+- **`status --json`'s `next_run` stays exactly what the service manager reported.** `0.1.23`
+  permits *adding* a field and forbids *redefining* one, and a monitor parses this. The
+  locale-free instant rides as a second field on `TimerStatus` used only at the moment of
+  printing — the same structure `0.2.20` chose, for the same reason: the record is a record.
+  A schema-legal `next_run_iso` would genuinely help a Windows monitor and is left out on
+  purpose, because bundling an unrequested schema addition inside a display fix is how surface
+  arrives unnoticed.
+- **Linux and macOS output is byte-identical.** `timer_status` and `agent_status` leave the new
+  field `None`, so nothing about either platform is touched.
+- **Computing the next fire ourselves was rejected**, though the definition is ours and its XML
+  is ISO-8601. `Persistent`/`StartWhenAvailable`/`RandomDelay` mean our answer can legitimately
+  differ from the scheduler's, and the man page already refuses exactly this for launchd:
+  *"computing one and presenting it as launchd's would be inventing a fact about a schedule."*
+
+#### The cost, stated rather than buried
+
+The Windows backend now needs `powershell.exe` as well as `schtasks.exe`. It is Windows
+PowerShell **5.1**, in-box on every supported Windows — not `pwsh`, which is a separate install —
+it runs `-NoProfile -NonInteractive`, and it is spawned **only when `schtasks` already reported a
+next run**, so an unregistered or disabled task costs no extra process. `status` is the only
+caller; no scheduled run touches it.
+
+**Every failure degrades to the previous behaviour.** Measured: an absent task gives empty stdout
+and exit 1, a null `NextRunTime` gives empty stdout and exit 0 — both leave the verbatim
+`schtasks` string in place. Only trimmed **stdout** is read, never stderr, and only if it parses,
+so the value on screen is always either this crate's format or the platform's own, never a third
+thing. Nothing new can produce a blank line or a wrong date.
+
+#### Four guards, all four watched failing
+
+`0.2.17`'s rule, and `0.2.20` is why it is not optional here — that release shipped a guard that
+rendered its own input with the constant it was verifying and therefore could not fail. Each new
+test was broken on purpose and each failed **alone**, with the other report tests staying green:
+
+| break | test that caught it |
+|---|---|
+| ignore the locale-free instant | `a_locale_free_instant_is_rendered_and_a_locale_formatted_one_is_left_alone` |
+| annotate the window unconditionally | `the_spread_window_is_stated_only_when_the_caller_supplies_one` |
+| accept any stamp from the other tool | `only_a_stamp_in_the_recorded_shape_is_accepted_from_another_tool` |
+| emit the rendered value as `next_run` | `the_json_reports_the_service_managers_own_value_not_the_rendered_one` |
+
+The third reported `accepted "2026-08-12T11:02:28.0000000-07:00"` — it names the `.ToString('o')`
+trap in its own failure message.
+
+`PLAN.md` gains **§7.13** (the decision) and a subsection of **§5.10** (the measurements), written
+before the code per the §5.9/§7.9/§7.10 precedent.
 
 ### v0.2.21 — stop hand-maintaining the sentence that says which version is out
 

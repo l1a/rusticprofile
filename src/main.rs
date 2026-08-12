@@ -940,7 +940,20 @@ fn show_status(args: &StatusArgs) -> ExitCode {
                 "declared", s.at, s.permission, s.priority
             );
         }
-        match &st.next_elapse {
+        // The spread window is stated only on Task Scheduler, because that is the only backend
+        // where the reported time is *measured* to be re-rolled between queries (`PLAN.md`
+        // §5.10). systemd is left unannotated deliberately: whether `NextElapseUSecRealtime`
+        // moves has not been measured, and a window asserted without evidence is the
+        // `network-online.target` failure — a claim in our own output that nothing checked.
+        let spread = match (backend, job.schedule) {
+            (Backend::TaskScheduler, Some(s)) => Some(schedule::calendar::spread_minutes(s.at)),
+            _ => None,
+        };
+        match rusticprofile::report::next_run_display(
+            st.next_elapse.as_deref(),
+            st.next_elapse_iso.as_deref(),
+            spread,
+        ) {
             Some(next) => println!("    {:<20} {next}", "next run"),
             // Said out loud rather than omitted, the same way `never recorded` is. launchd
             // reports the calendar descriptor and no next fire time — measured — so a blank
@@ -1196,6 +1209,7 @@ fn status_as_json(config: &Config, args: &StatusArgs) -> ExitCode {
                     enabled: None,
                     active: None,
                     next_elapse: None,
+                    next_elapse_iso: None,
                 },
             };
             let recorded = rusticprofile::run::status::read(&rusticprofile::run::status::path_for(
