@@ -15,9 +15,18 @@
 > `NOTES.md`, `AGENTS.md`, `WIP.md`, the shipped `config --example` and the source. Nothing
 > is renumbered or deleted when material is promoted — the section stays, with a pointer.
 
-**Status as of 2026-08-04: Milestones 1, 2, 3 and 5 are complete and `v0.1.31` is released**
-on GitHub and crates.io. M4 (lock coordination) is deliberately deferred and is defence in
-depth rather than a precondition — see §7.6. `NOTES.md` is authoritative for all of this.
+**Milestones 1, 2, 3 and 5 are complete; M6 is effectively delivered.** M4 (lock coordination) is
+deliberately deferred and is defence in depth rather than a precondition — see §7.6. `NOTES.md` is
+authoritative for all of this, and **which version is released is not stated in any file** —
+`git describe --tags --abbrev=0`, the GitHub release and the crates.io API are the record.
+
+*This line used to read "**Status as of 2026-08-04: … `v0.1.31` is released**", and by the time
+anyone read it that was nine releases stale. It is the second copy of the claim `NOTES.md` deleted
+for the same reason, and finding it took going to look — which is exactly `0.2.4`'s finding, where
+`0.1.32` fixed this file's "pre-code" header and nobody checked whether `AGENTS.md` said the same
+thing. It did, for thirty-five releases. **Duplicated state goes stale one copy at a time, and the
+copy nobody re-reads is the one that survives**, so the fix is to stop writing the fact down twice
+rather than to correct it twice.*
 
 *The line that stood here until 2026-08-04 read "pre-code. Nothing has been implemented." It
 was written on 2026-07-30, before the first commit, and stayed through thirty-one releases —
