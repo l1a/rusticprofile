@@ -238,22 +238,24 @@ the validator.
 
 ---
 
-## Current State (v0.2.19)
+## Current State (v0.2.20)
 
-**`v0.2.14` is released on GitHub *and* on crates.io** as of 2026-08-11 — registry API
-`max_version 0.2.14`, 205,795 bytes, not yanked. It carries **`0.2.8` through `0.2.14` together**,
-a seven-version backlog, and it is the first release to include `doctor`.
+**`v0.2.19` is released on GitHub *and* on crates.io** as of 2026-08-11 — 214,931 bytes, not
+yanked. It carries **`0.2.18` and `0.2.19` together**, and its tag resolves to the exact commit all
+three Linux hosts are pinned to, so the fleet runs released code byte for byte.
 
 Verified three ways rather than from `cargo publish`'s own report, per the `0.2.2` precedent: the
-registry API; `cargo install --locked --version 0.2.14` into a throwaway root; and **running that
-binary**, which is what proves `doctor` reached the published crate and not only the tag.
+registry API; `cargo install --locked` into a throwaway root; and **running that binary** — the
+step that caught `0.2.16`'s false help text and has now earned its place twice.
 
-*This paragraph has now gone stale twice — it announced `0.2.2` until 2026-08-08 and `0.2.7` until
-2026-08-11, each time two or more releases after it stopped being true, and each time it was
-corrected only because someone happened to be bumping the header on the line above. **A "Current
-State" section that has to be maintained by hand will be wrong most of the time it is read**;
-`0.2.4` says the same thing about the same class of sentence. Left as prose rather than automated,
-but the repetition is the record.*
+*This paragraph has now gone stale **three** times — it announced `0.2.2` until 2026-08-08,
+`0.2.7` until 2026-08-11, and `0.2.14` after `v0.2.16`, `v0.2.17` and `v0.2.19` had all shipped. Each
+time it was corrected only because someone happened to be bumping the header on the line above, and
+this time is no exception: it was found while bumping to `0.2.20` for an unrelated change. **A
+"Current State" section that has to be maintained by hand will be wrong most of the time it is
+read**; `0.2.4` says the same thing about the same class of sentence. Left as prose rather than
+automated, but the repetition is the record — and three instances is now enough that the honest
+options are to derive it or to delete it.*
 
 **Windows is a fully supported platform as of `0.2.0`**, including scheduling: `schedule`,
 `unschedule` and `status` drive **Task Scheduler**, the third backend. 344 tests green there (294
@@ -679,6 +681,90 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.20 — `status` printed one clock in two notations
+
+**Display only; the record, the log and `status --json` are untouched.** Reported by Ken reading his
+own `status` output, which is the fourth time in this series that using the tool found something no
+test could — `0.2.5`, `0.2.6` and `0.2.10` are the others.
+
+```
+    next run             Tue 2026-08-11 21:03:52 PDT
+    last run             2026-08-11T20:28:57-07:00 (success)
+    last success         2026-08-11T20:28:57-07:00
+```
+
+Three lines, read together, in two notations. `next run` is whatever the service manager reports —
+systemd renders `NextElapseUSecRealtime` in exactly that human form — while `last run` and
+`last success` were printed straight out of the record, which is RFC 3339. Answering *"did it run
+recently, and when does it go again"* meant converting one to the other in your head, every time.
+
+`report::human_time` now renders the record in the same shape, in this machine's own time zone:
+
+```
+    last run             Tue 2026-08-11 20:28:57 PDT (success)
+```
+
+#### What deliberately did not change, and why that is the whole design
+
+**The record stays RFC 3339 everywhere it is a record.** `status --json` emits `last_run` and
+`last_success` under `schema: 1`, and `0.1.23` set the rule that a field may be *added* without a
+bump but not **redefined** — reshaping one a monitor parses, for legibility, would be a schema break
+paid for by somebody's alerting. The status file and the run log are likewise records rather than
+reports: `run/log.rs` already renders separately from the terminal for this exact reason, and
+ISO-8601 is what makes a log file sort. So the conversion happens at the moment of printing and
+nowhere else.
+
+`doctor`'s repository check is untouched too. Those timestamps are **rustic's**, not ours, and
+`PLAN.md` §7.11 compares them as strings on purpose.
+
+#### Three decisions inside a thirty-line function
+
+- **Rendered in the system time zone**, because that is the frame `next run` is already in. Both
+  lines then describe one clock — which is the point — and the instant is identical either way. The
+  recorded stamp carries an offset and no zone *name*, so the abbreviation can only come from the
+  system.
+- **`TimeZone::try_system()`, not `system()`.** The infallible one falls back to UTC **silently**,
+  which would move the displayed wall clock by seven hours without saying so — a scheduled backup
+  reading as though it ran in the middle of the night. `v0.1.21` is the precedent that a machine
+  with no time-zone database is real. Without one the offset the record carries is shown instead.
+- **A stamp this version cannot parse is printed exactly as stored.** Losing a recorded value to
+  make the column look tidier would be this project's own failure class, in its own output.
+
+#### The test written to prevent the bug could not detect it
+
+Worth the entry on its own. A guard was added asserting that what `run/status.rs` writes is what
+`report` reads — and it rendered its own input **with the very constant it was verifying**, so
+corrupting that constant corrupted both halves together and it stayed green. Found by breaking the
+constant on purpose, which is `0.2.17`'s rule: *a guard nobody has watched fail is a check that may
+not be able to.* Three neighbouring tests failed; that one passed.
+
+**Fixed by deleting the duplication rather than by testing for it.** The format is now one
+`run::status::STAMP_FORMAT`, used by the status file, the run log and the renderer, so reader and
+writer cannot drift apart at all. The rewritten guard goes through `status::next` — the code that
+actually writes the file — and **was watched failing**: decoupling the two ends makes it report the
+stamp passed through verbatim.
+
+*Same shape as `0.2.4`, `0.2.14` and `0.2.17`: duplicated state goes stale one copy at a time. The
+difference here is that the copies were two format strings rather than two sentences, which is why
+the fix could be structural instead of editorial.*
+
+#### Also corrected: `Current State` had gone five releases stale
+
+It announced `0.2.14` while `v0.2.16`, `v0.2.17` and `v0.2.19` were all released and published.
+**Third instance of that paragraph specifically**, after `0.2.8` and `0.2.15` — each found the same
+way, by someone bumping the header on the line above for an unrelated change.
+
+#### Known and not fixed
+
+**`next run` still reads differently per platform**, because it is passed through from the service
+manager: `Tue 2026-08-11 21:03:52 PDT` on systemd, `8/11/2026 9:03:52 PM` on Task Scheduler, and
+under launchd there is no next fire time at all. Normalising it would mean parsing a
+locale-dependent string from each platform and re-rendering it, which trades a cosmetic
+inconsistency for a class of silent misparse — the wrong direction here. So a Windows host still
+shows two notations, one of them ours.
+
+400 tests (338 unit + 5 doc + 57 integration), up from 395.
 
 ### v0.2.19 — two guards that were not guarding
 

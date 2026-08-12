@@ -114,6 +114,8 @@ On **Linux** that means systemd units driven by `systemctl`; on **macOS**, a lau
 
 On **Windows** it means one Task Scheduler task under `\rusticprofile\`*JOB*, driven by `schtasks`. Where there is no backend at all, **status** still prints each job's `last run` and `last success`, because that record is written by **run** and does not come from a service manager; it is the field to watch in any case, since a run that never happens reports nothing.
 
+**status** prints `last run` and `last success` in the same shape the service manager reports `next run` — `Tue 2026-08-11 20:28:57 PDT` — and in this machine's own time zone, so the three lines describe one clock and can be read against each other. **The record itself is unchanged**: the status file and `status --json` both keep RFC 3339, which is what a monitor parses. Where no time-zone database is available the zone cannot be named, so the offset the record carries is shown instead (`Tue 2026-08-11 20:28:57 -07:00`); a stamp this version cannot parse is printed exactly as it was stored rather than dropped.
+
 **-n** *JOB*
 :   The job to act on. Optional for **schedule**, where omitting it installs every job declaring a `schedule:` block. Required for **unschedule** — removal is always named explicitly.
 

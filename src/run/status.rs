@@ -38,6 +38,18 @@ use serde::{Deserialize, Serialize};
 use super::steps::JobReport;
 use crate::rustic::exit::Verdict;
 
+/// The format every recorded timestamp is written in — this file and the run log alike.
+///
+/// **One constant rather than a copy per writer.** `0.2.4` and `0.2.17` both record the same
+/// finding — duplicated state goes stale one copy at a time, and the copy nobody re-reads is
+/// the one that survives — and there are now three call sites: here, [`crate::run::log`], and
+/// [`crate::report::human_time`], which has to be able to *read* exactly what this writes.
+///
+/// RFC 3339, and it stays that way: this is the record, not the report. `status --json` emits
+/// it verbatim under `schema: 1`, so a monitor depends on the shape. Rendering it for a person
+/// is [`crate::report::human_time`]'s job and happens at the point of printing.
+pub const STAMP_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%:z";
+
 /// The recorded outcome of a job's runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
@@ -85,7 +97,7 @@ pub fn read(path: &Path) -> Option<Status> {
 #[must_use]
 pub fn next(report: &JobReport, now: &jiff::Zoned, previous: Option<&Status>) -> Status {
     let verdict = report.verdict();
-    let stamp = now.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string();
+    let stamp = now.strftime(STAMP_FORMAT).to_string();
 
     // Partial counts as success here on purpose. A partial backup saved data and, by the
     // rule in `run/steps.rs`, retention still ran — treating it as "never succeeded" would

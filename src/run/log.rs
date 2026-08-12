@@ -47,7 +47,7 @@ pub fn render(report: &JobReport, now: &jiff::Zoned) -> String {
     let _ = writeln!(
         out,
         "{} {} {} on {}{}",
-        now.strftime("%Y-%m-%dT%H:%M:%S%:z"),
+        now.strftime(crate::run::status::STAMP_FORMAT),
         verdict,
         report.job,
         report.host,

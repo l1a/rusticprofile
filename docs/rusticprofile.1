@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.19" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.20" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -135,6 +135,8 @@ Exit status is \fB0\fP for success or partial, \fB1\fP for failure, \fB130\fP fo
 On \fBLinux\fP that means systemd units driven by `\f[CR]systemctl\fP`; on \fBmacOS\fP, a launchd agent driven by `\f[CR]launchctl\fP`\. On a platform with neither, \fBschedule\fP refuses and writes nothing \-\- files on disk plus a success message are indistinguishable from a working install, so refusing is the only honest answer\. \fBstatus\fP reports the backend it found, and `\f[CR]status \-\-json\fP` names it in a `\f[CR]backend\fP` field\.
 .PP
 On \fBWindows\fP it means one Task Scheduler task under `\f[CR]\rusticprofile\\fP`\fIJOB\fP, driven by `\f[CR]schtasks\fP`\. Where there is no backend at all, \fBstatus\fP still prints each job's `\f[CR]last run\fP` and `\f[CR]last success\fP`, because that record is written by \fBrun\fP and does not come from a service manager; it is the field to watch in any case, since a run that never happens reports nothing\.
+.PP
+\fBstatus\fP prints `\f[CR]last run\fP` and `\f[CR]last success\fP` in the same shape the service manager reports `\f[CR]next run\fP` \-\- `\f[CR]Tue 2026\-08\-11 20:28:57 PDT\fP` \-\- and in this machine's own time zone, so the three lines describe one clock and can be read against each other\. \fBThe record itself is unchanged\fP: the status file and `\f[CR]status \-\-json\fP` both keep RFC 3339, which is what a monitor parses\. Where no time\-zone database is available the zone cannot be named, so the offset the record carries is shown instead (`\f[CR]Tue 2026\-08\-11 20:28:57 \-07:00\fP`); a stamp this version cannot parse is printed exactly as it was stored rather than dropped\.
 \fB\-n\fP \fIJOB\fP
 .RS
 The job to act on\. Optional for \fBschedule\fP, where omitting it installs every job declaring a `\f[CR]schedule:\fP` block\. Required for \fBunschedule\fP \-\- removal is always named explicitly\.
