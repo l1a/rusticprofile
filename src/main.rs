@@ -805,12 +805,21 @@ fn print_recorded_outcome(config: &Config, job: &rusticprofile::config::job::Job
     let path = rusticprofile::run::status::path_for(&config.state_dir, &job.name);
     match rusticprofile::run::status::read(&path) {
         Some(rec) => {
+            // Rendered the way `next run` above already is, rather than as the RFC 3339 the
+            // record holds. The two lines are read together and were in two notations.
+            // Presentation only — the file, and `status --json`, are unchanged.
             println!(
                 "    {:<20} {} ({})",
-                "last run", rec.last_run, rec.last_verdict
+                "last run",
+                rusticprofile::report::human_time(&rec.last_run),
+                rec.last_verdict
             );
             match &rec.last_success {
-                Some(t) => println!("    {:<20} {t}", "last success"),
+                Some(t) => println!(
+                    "    {:<20} {}",
+                    "last success",
+                    rusticprofile::report::human_time(t)
+                ),
                 None => println!("    {:<20} {}", "last success", "never".red().bold()),
             }
             if !rec.skipped.is_empty() {
