@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.21" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.22" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -137,6 +137,8 @@ On \fBLinux\fP that means systemd units driven by `\f[CR]systemctl\fP`; on \fBma
 On \fBWindows\fP it means one Task Scheduler task under `\f[CR]\rusticprofile\\fP`\fIJOB\fP, driven by `\f[CR]schtasks\fP`\. Where there is no backend at all, \fBstatus\fP still prints each job's `\f[CR]last run\fP` and `\f[CR]last success\fP`, because that record is written by \fBrun\fP and does not come from a service manager; it is the field to watch in any case, since a run that never happens reports nothing\.
 .PP
 \fBstatus\fP prints `\f[CR]last run\fP` and `\f[CR]last success\fP` in the same shape the service manager reports `\f[CR]next run\fP` \-\- `\f[CR]Tue 2026\-08\-11 20:28:57 PDT\fP` \-\- and in this machine's own time zone, so the three lines describe one clock and can be read against each other\. \fBThe record itself is unchanged\fP: the status file and `\f[CR]status \-\-json\fP` both keep RFC 3339, which is what a monitor parses\. Where no time\-zone database is available the zone cannot be named, so the offset the record carries is shown instead (`\f[CR]Tue 2026\-08\-11 20:28:57 \-07:00\fP`); a stamp this version cannot parse is printed exactly as it was stored rather than dropped\.
+.PP
+On \fBWindows\fP `\f[CR]next run\fP` is rendered into that same shape too, and reads `\f[CR]Wed 2026\-08\-12 11:02:28 PDT (+\-5 min)\fP`\. Two details behind it are worth knowing, because both are properties of Task Scheduler rather than of this tool\. The instant is obtained from `\f[CR]Get\-ScheduledTaskInfo\fP` via Windows PowerShell, because the value `\f[CR]schtasks\fP` prints is formatted in the account's locale and `\f[CR]8/12/2026\fP` means two different dates depending on it \-\- so that string is never parsed, and where the lookup is unavailable the line falls back to printing it verbatim rather than risking a wrong date\. And `\f[CR](+\-5 min)\fP` is the schedule's own randomised spread, which Task Scheduler \fBre\-rolls on every query\fP: two `\f[CR]status\fP` invocations seconds apart legitimately report times a few minutes apart, so the window is stated rather than implying a precision that is not there\. `\f[CR]status \-\-json\fP` is unaffected \-\- `\f[CR]next_run\fP` stays exactly what the service manager reported\. The window is not printed on Linux or macOS, where no such re\-roll has been measured\.
 \fB\-n\fP \fIJOB\fP
 .RS
 The job to act on\. Optional for \fBschedule\fP, where omitting it installs every job declaring a `\f[CR]schedule:\fP` block\. Required for \fBunschedule\fP \-\- removal is always named explicitly\.

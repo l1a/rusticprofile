@@ -53,6 +53,51 @@ pub fn human_time(stamp: &str) -> String {
     human_time_in(stamp, jiff::tz::TimeZone::try_system().ok().as_ref())
 }
 
+/// Whether `stamp` is in the shape the record is written in.
+///
+/// Used by a backend that has asked another tool for an instant, to establish that what came
+/// back is what it asked for before handing it on. A value that fails this is discarded rather
+/// than displayed, so `next run` is always either this crate's rendering or the service
+/// manager's own string — never a third thing.
+#[must_use]
+pub fn is_recorded_stamp(stamp: &str) -> bool {
+    jiff::fmt::strtime::BrokenDownTime::parse(RECORDED, stamp)
+        .is_ok_and(|p| p.offset().is_some() && p.to_timestamp().is_ok())
+}
+
+/// The `next run` value to print, and whether to qualify it with a spread window.
+///
+/// **Pure, and the two arguments are the whole decision.** `iso` is present only where a
+/// backend could supply a locale-free instant, and `spread_minutes` is `Some` only on a backend
+/// where the reported time is *measured* to move between queries. Both are decided by the
+/// caller, which is what keeps this testable without a service manager and keeps the
+/// "annotate only what was measured" judgement visible at the call site rather than buried here.
+///
+/// The window matters because on Task Scheduler `RandomDelay` is re-rolled on every query —
+/// three reads of one unchanged task gave three different times (`PLAN.md` §5.10) — so a
+/// to-the-second value overstates what is known. It is *not* applied to systemd, where whether
+/// `NextElapseUSecRealtime` is stable across queries has never been measured; asserting a window
+/// that may not exist is the `network-online.target` mistake, a comment describing a protection
+/// that never existed.
+#[must_use]
+pub fn next_run_display(
+    reported: Option<&str>,
+    iso: Option<&str>,
+    spread_minutes: Option<u8>,
+) -> Option<String> {
+    // Falling back to `reported` rather than to nothing is the load-bearing part: where the
+    // locale-free lookup is unavailable the line degrades to exactly what shipped before it
+    // existed, so this change cannot produce a blank or a wrong date.
+    let base = match iso {
+        Some(stamp) => human_time(stamp),
+        None => reported?.to_string(),
+    };
+    Some(match spread_minutes {
+        Some(m) => format!("{base} (±{m} min)"),
+        None => base,
+    })
+}
+
 /// [`human_time`] with the zone supplied, so both branches are testable without a tz database.
 ///
 /// Same shape as `path_candidates` and the XDG rules: the environment is a parameter rather
@@ -218,6 +263,73 @@ mod tests {
         for odd in ["2026-08-11T20:28:57Z", "2026-08-11 20:28:57", "never", ""] {
             assert_eq!(human_time_in(odd, Some(&jiff::tz::TimeZone::UTC)), odd);
             assert_eq!(human_time_in(odd, None), odd);
+        }
+    }
+
+    #[test]
+    fn a_locale_free_instant_is_rendered_and_a_locale_formatted_one_is_left_alone() {
+        // The two halves of `PLAN.md` §7.13. Where the backend could ask for the instant, the
+        // line matches `last run`; where it could not, it degrades to exactly the string the
+        // service manager printed rather than to a guess or a blank.
+        let reported = "8/12/2026 11:02:28 AM";
+        let iso = "2026-08-12T11:02:28-07:00";
+
+        let rendered = next_run_display(Some(reported), Some(iso), None).unwrap();
+        assert_eq!(rendered, human_time(iso));
+        assert!(
+            !rendered.contains("AM"),
+            "the locale-formatted string leaked into the rendered form: {rendered}"
+        );
+
+        assert_eq!(
+            next_run_display(Some(reported), None, None).as_deref(),
+            Some(reported),
+            "without an instant to render, the platform's own value must survive untouched"
+        );
+        assert_eq!(next_run_display(None, None, None), None);
+    }
+
+    #[test]
+    fn the_spread_window_is_stated_only_when_the_caller_supplies_one() {
+        // Measured on Task Scheduler and nowhere else (`PLAN.md` §5.10), so the annotation is
+        // the caller's decision. A window printed on a backend where the value does not move
+        // would be a claim in our own output that nothing checked.
+        let iso = "2026-08-12T11:02:28-07:00";
+        assert!(
+            next_run_display(None, Some(iso), Some(5))
+                .unwrap()
+                .ends_with("(±5 min)")
+        );
+        assert!(
+            !next_run_display(None, Some(iso), None)
+                .unwrap()
+                .contains('±'),
+            "systemd and launchd must not be annotated with an unmeasured window"
+        );
+        // It qualifies the fallback too: the jitter is a property of the scheduler, not of how
+        // the value was obtained.
+        assert_eq!(
+            next_run_display(Some("8/12/2026 11:02:28 AM"), None, Some(5)).as_deref(),
+            Some("8/12/2026 11:02:28 AM (±5 min)")
+        );
+    }
+
+    #[test]
+    fn only_a_stamp_in_the_recorded_shape_is_accepted_from_another_tool() {
+        // What `task_next_run_iso` gates on. `.ToString('o')` is the trap this exists for: it is
+        // valid ISO 8601, looks right, and fails the parse on its fractional seconds — so
+        // without the check it would have been rendered by falling through `human_time`'s
+        // print-it-verbatim branch, putting a raw ISO string in the slot that is supposed to
+        // hold this crate's own format.
+        assert!(is_recorded_stamp("2026-08-12T11:02:28-07:00"));
+        for bad in [
+            "2026-08-12T11:02:28.0000000-07:00", // .ToString('o')
+            "2026-08-12T11:02:28Z",              // no numeric offset
+            "8/12/2026 11:02:28 AM",             // what schtasks prints
+            "N/A",
+            "",
+        ] {
+            assert!(!is_recorded_stamp(bad), "accepted {bad:?}");
         }
     }
 
