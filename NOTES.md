@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.22)
+## Current State (v0.2.23)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -689,6 +689,91 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.23 — the sibling repos carry completion bugs this one already fixed
+
+**Tooling only; no product code changed.** Prompted by finding this host's installed man page at
+**`0.2.11`** — eleven releases stale, with nothing reporting it — and by Ken asking for one
+standard across `rusticprofile`, `retch` and `etr`. Surveying the three turned a tidying job into a
+defect report.
+
+#### `cargo install` replaces the binary and nothing else, and no recipe covered the gap
+
+`just install` was never broken: it already reads `install: install-man install-completions`. What
+had no recipe at all was **installing a released tag**, which is what every fleet upgrade actually
+does — a hand-typed `cargo install --git --tag`, binary-only, with the other two artefacts left at
+whatever version last ran them. Hence **`install-tag VERSION`**.
+
+**It deliberately does not depend on `install-man`/`install-completions`, and that is the whole
+correctness argument.** Those two work from the *checkout* — one copies the working tree's page, the
+other runs `target/debug/<bin>` — so reusing them would install a binary from the tag beside a man
+page and completions from the worktree. On a checkout one release ahead that is a v0.2.22 binary
+with a v0.2.23 man page: mismatched artefacts that each look fine, which is the failure class this
+project exists to refuse. The three sources are made to agree instead:
+
+| artefact | source |
+|---|---|
+| binary | `cargo install --git --tag` — never `--path`, which on this Syncthing-shared checkout builds from a directory other machines write into |
+| completions | **the installed binary**, so they cannot disagree with its CLI |
+| man page(s) | **`git show v<V>:<path>`** — the tag's own text, not the worktree's |
+
+Verified by running it: `just install-tag v0.2.22` normalised the leading `v`, asserted the
+installed version as a post-condition, and the installed man page hashed **identically to the tag's
+blob** rather than to the working tree's. A missing tag and an empty version both refuse by name.
+
+#### The survey: two sibling repos carry three defects this repo measured and fixed
+
+| defect | fixed here in | still live in |
+|---|---|---|
+| nushell completions written to the XDG path, which Windows nushell never reads | `0.2.14` | **retch and etr** |
+| output claiming zsh is "auto-loaded from the default `$fpath`" — false on every distribution | `0.1.13`/`0.1.14` | **etr** |
+| `install-completions` as a shebang recipe, unrunnable on Windows without `cygpath` | `0.2.2` | **etr** |
+
+Plus, in etr alone: **`install` installs the *debug* binary** (`cp target/debug/…`) and installs no
+completions at all, and there is **no `install-hooks` and no `open-pr`** — so its pre-push gate is
+installed by nothing and its PR path has no gated call site.
+
+**That is `0.2.4`'s finding at a new scale.** Duplicated state goes stale one copy at a time, and
+the copy nobody re-reads is the one that survives — except here the duplicated thing is *behaviour
+across three repositories*, and what nobody re-read was a recipe rather than a sentence. Three
+repos, three implementations of one job: inline `sh` here, Python helpers in retch, a `bash` shebang
+in etr. Only one of them had been run on all three platforms.
+
+#### So the fix is a checked standard, not a tidier copy
+
+`templates/justfile-common.just` is now the canonical text, and the Justfile carries it verbatim
+between `# >>> COMMON (template v1)` and `# <<< COMMON`. **`just standard-check` diffs the two and
+`just check` depends on it**, so drift is a build failure.
+
+**Why a vendored copy rather than `just import`:** these are three separate repositories, so an
+import still needs the file present in each one — it moves the duplication rather than removing it,
+and a submodule for one file costs more than it saves. What makes a copy safe is not that it is a
+copy, it is that something checks it. The two sibling repos are the evidence: copying a convention
+is fine, copying it with no check is how two of three ship a recipe that reports success and does
+nothing.
+
+**Every body is written against a `PROJECT` header** (`BINS`, `MAN_PAGES`) because etr ships two
+binaries. A block with a hardcoded binary name cannot be copied, and a standard that cannot be
+copied is decoration.
+
+**Watched failing, twice, per `0.2.17`:** corrupting `MAN_DIR` inside the block produces the diff
+and exits 1; *removing the marker* also fails, by name, rather than reporting a clean result — an
+extraction that silently matched nothing would call a Justfile with no common block compliant,
+which is the emptiness trap this project keeps rediscovering.
+
+#### Scope, stated so the gaps are not read as oversights
+
+Template v1 covers the completion/man/install family — where the measured defects were. It does
+**not** yet cover `check`/`lint`/`test`/`pr`/`open-pr`/`merge-pr`, because those legitimately differ
+today (`--workspace` in retch, `--all-targets` in etr, bare here) and reconciling them is a
+behaviour change per repo rather than a copy. `man` stays project-specific: one repo commits its
+page, one gitignores it, one builds two. Also left alone and recorded in the template: `Justfile`
+vs `justfile`, `lint` vs `clippy`, and the two `NOTES.md` header formats.
+
+Verified by *running* every affected recipe rather than reading them — `0.2.12`'s lesson, where the
+one recipe that could destroy a tracked file was found by running it. `just --list` shows exactly
+two additions and no removals, and all nine variables still evaluate, `NU_COMP` included, which is
+what `0.2.1` broke fleet-wide by adding one `set windows-shell` line.
 
 ### v0.2.22 — `next run` was the one line on Windows still in the platform's notation
 
