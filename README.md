@@ -262,7 +262,7 @@ had moved on is exactly the kind of individually-plausible mismatch this tool ex
 
 **PowerShell** is in the set and works on Windows — verified by generating the script, dot-sourcing it and asking `TabExpansion2`, not merely by the file appearing. It needs one explicit step and the recipe says so: PowerShell loads nothing automatically, so dot-source the file from your `$PROFILE`.
 
-**`just install-completions` needs no PATH setup on Windows**, unlike `just check` and `just man`. It is deliberately a plain rather than a shebang recipe, so it runs through just's own `sh` and needs neither `cygpath` nor `bash` — measured on a default Windows PATH, from PowerShell. *This paragraph said the opposite until `0.2.14` ("runs on Windows once Git's `usr\bin` is on `PATH`"), contradicting the recipe body's own comment two files away; the sentence was written when that requirement was real and was not revisited when `0.2.2` removed it.*
+**`just install-completions` needs no PATH setup on Windows**, unlike `just check` and `just man`. The work is done by `scripts/install_completions.py`, so it needs neither `cygpath`, nor `bash`, nor an `sh` on `PATH` — only a Python interpreter. That mechanism comes from `retch`, which adopted it for exactly this reason; `0.2.23` made it the shared standard across all three repos and moved this repo onto it. *Until `0.2.23` this was a plain rather than a shebang recipe, which also worked but still needed an `sh`.* *This paragraph said the opposite until `0.2.14` ("runs on Windows once Git's `usr\bin` is on `PATH`"), contradicting the recipe body's own comment two files away; the sentence was written when that requirement was real and was not revisited when `0.2.2` removed it.*
 
 ## Development
 

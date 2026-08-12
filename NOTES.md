@@ -739,41 +739,84 @@ across three repositories*, and what nobody re-read was a recipe rather than a s
 repos, three implementations of one job: inline `sh` here, Python helpers in retch, a `bash` shebang
 in etr. Only one of them had been run on all three platforms.
 
-#### So the fix is a checked standard, not a tidier copy
+#### The reference repo was not the repo with the right mechanism, and picking one without reading both would have shipped a regression as a standard
 
-`templates/justfile-common.just` is now the canonical text, and the Justfile carries it verbatim
-between `# >>> COMMON (template v1)` and `# <<< COMMON`. **`just standard-check` diffs the two and
-`just check` depends on it**, so drift is a build failure.
+**This is the finding of the release.** rusticprofile was chosen as the reference because it had the
+*correctness* fixes. Reading retch's release log then showed its Python helpers are **a deliberate,
+documented portability decision, not drift** — its `v0.6.16` converted these exact recipes *to*
+Python to eliminate bash-shebang escaping bugs and run natively on Windows PowerShell, CMD and Unix
+shells **without requiring Git's `usr\bin` on PATH**.
 
-**Why a vendored copy rather than `just import`:** these are three separate repositories, so an
-import still needs the file present in each one — it moves the duplication rather than removing it,
-and a submodule for one file costs more than it saves. What makes a copy safe is not that it is a
-copy, it is that something checks it. The two sibling repos are the evidence: copying a convention
-is fine, copying it with no check is how two of three ship a recipe that reports success and does
-nothing.
+So the first draft of this standard would have replaced retch's measured portability work with
+rusticprofile's `sh` recipes **in the name of consistency**, and called it an improvement. The two
+repos had each solved half the problem:
 
-**Every body is written against a `PROJECT` header** (`BINS`, `MAN_PAGES`) because etr ships two
-binaries. A block with a hardcoded binary name cannot be copied, and a standard that cannot be
-copied is decoration.
+| | rusticprofile | retch |
+|---|---|---|
+| correctness (Windows nushell path, zsh `fpath` check, fail-loudly) | ✅ | ✗ |
+| mechanism (no `sh`, no `cygpath`, no coreutils, no Git `usr\bin`) | ✗ | ✅ |
 
-**Watched failing, twice, per `0.2.17`:** corrupting `MAN_DIR` inside the block produces the diff
-and exits 1; *removing the marker* also fails, by name, rather than reporting a clean result — an
-extraction that silently matched nothing would call a Justfile with no common block compliant,
-which is the emptiness trap this project keeps rediscovering.
+**Template v2 keeps retch's mechanism and this repo's correctness.** The logic moves into two
+vendored helpers, `scripts/install_completions.py` and `scripts/install_man.py`, and the Justfile
+recipes become one line each. A `bash` shebang recipe cannot run on Windows without `cygpath` at
+all; a plain `sh` recipe still needs an `sh` on PATH; a Python helper needs only an interpreter —
+**and its logic is unit-testable off-platform, which matters because the branch that keeps being
+wrong is the Windows one, on machines that never take it.**
+
+*Recorded rather than quietly corrected, because the near-miss is the useful part: "the repo with
+the fixes" and "the repo with the right mechanism" were different repos, and the only thing that
+surfaced it was reading the sibling's release log before touching its files — which its own
+`AGENTS.md` requires and which existed precisely so this would happen.*
+
+#### `standard-check` runs self-tests rather than diffing text, and that is stronger
+
+With the logic in a script, a within-repo text diff checks nothing useful, and across repos it is
+impossible — git cannot diff a file it does not have. So each helper asserts its own invariants and
+`standard-check` runs them; **`just check` depends on it**, so a violation fails the build.
+
+That is the property that was actually broken. A text diff would also pass happily on a repo that
+never adopted the standard at all, which is the emptiness trap again.
+
+**Watched failing, three ways, per `0.2.17`** — and the first is literally the bug both siblings
+still have:
+
+| break | caught as |
+|---|---|
+| revert the nushell path to the XDG form | `windows nushell dir: expected …AppData\Roaming… got …/.config/…` |
+| drop a shell from the set | hard failure; the six-shell count assertion cannot be satisfied |
+| treat an empty `XDG_DATA_HOME` as a location | `empty XDG_DATA_HOME falls back` — otherwise every path resolves against `/` |
+
+**Exit codes were checked without a pipe**, because the first attempt read `$?` from `head` rather
+than from python and reported `exit 0` on a failing self-test — the `$PIPESTATUS`/`| head` trap
+`~/AGENTS.md` records, in the check written to verify a check.
+
+**A fourth defect in retch turned up while reading it**: its helper logs a generation failure to
+stderr, carries on, and then prints `Installed completions for retch:` with the full path list
+regardless. Success reported over work not done. The canonical helper raises instead — verified: a
+bad binary name exits 1 with **no** `Installed` line.
+
+#### Two Windows defects the rework found in its own output
+
+- **Non-ASCII printed output is mangled by the Windows console codepage** — `NOT ACTIVE — $PROFILE`
+  rendered as `NOT ACTIVE ? $PROFILE`. All *printed* strings are now ASCII; docstrings and comments
+  keep their typography, and a scan asserts the distinction rather than trusting it.
+- **PowerShell is now reported as `NOT ACTIVE` on Windows** rather than instructing the user to
+  source a file that `$PROFILE` demonstrably does not read. `0.2.14` measured that; nothing said it
+  out loud at install time until now.
 
 #### Scope, stated so the gaps are not read as oversights
 
-Template v1 covers the completion/man/install family — where the measured defects were. It does
-**not** yet cover `check`/`lint`/`test`/`pr`/`open-pr`/`merge-pr`, because those legitimately differ
-today (`--workspace` in retch, `--all-targets` in etr, bare here) and reconciling them is a
-behaviour change per repo rather than a copy. `man` stays project-specific: one repo commits its
-page, one gitignores it, one builds two. Also left alone and recorded in the template: `Justfile`
-vs `justfile`, `lint` vs `clippy`, and the two `NOTES.md` header formats.
+Template v2 covers the install/man/completions family. It does **not** cover
+`check`/`lint`/`test`/`pr`/`open-pr`/`merge-pr`, because those legitimately differ today
+(`--workspace` in retch, `--all-targets` in etr, bare here) and reconciling them is a behaviour
+change per repo rather than a copy. `man` stays project-specific: one repo commits its page, one
+gitignores it, one builds two. Also left alone and recorded in the template: `Justfile` vs
+`justfile`, `lint` vs `clippy`, and the two `NOTES.md` header formats.
 
 Verified by *running* every affected recipe rather than reading them — `0.2.12`'s lesson, where the
 one recipe that could destroy a tracked file was found by running it. `just --list` shows exactly
-two additions and no removals, and all nine variables still evaluate, `NU_COMP` included, which is
-what `0.2.1` broke fleet-wide by adding one `set windows-shell` line.
+two additions and no removals; every pre-existing recipe body was hash-compared via `just --show`
+and only `check` differs, being the one that gained the dependency.
 
 ### v0.2.22 — `next run` was the one line on Windows still in the platform's notation
 
