@@ -238,24 +238,32 @@ the validator.
 
 ---
 
-## Current State (v0.2.20)
+## Current State (v0.2.21)
 
-**`v0.2.19` is released on GitHub *and* on crates.io** as of 2026-08-11 — 214,931 bytes, not
-yanked. It carries **`0.2.18` and `0.2.19` together**, and its tag resolves to the exact commit all
-three Linux hosts are pinned to, so the fleet runs released code byte for byte.
+**Which version is released is deliberately not stated here.** The newest tag, the GitHub release
+and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
+knowing before quoting any of them: `0.2.18` measured the AUR's RPC confidently reporting the
+*previous* version of a package whose git repository was already correct. The release log below
+keeps what each version *did*, which is the part a document is good at. A release is still verified three
+ways rather than from `cargo publish`'s own report (`0.2.2`): the registry API, `cargo install
+--locked` into a throwaway root, and **running that binary** — the step that caught `0.2.16`'s false
+help text and `0.2.20`'s time-zone conversion, and has now earned its place twice.
 
-Verified three ways rather than from `cargo publish`'s own report, per the `0.2.2` precedent: the
-registry API; `cargo install --locked` into a throwaway root; and **running that binary** — the
-step that caught `0.2.16`'s false help text and has now earned its place twice.
-
-*This paragraph has now gone stale **three** times — it announced `0.2.2` until 2026-08-08,
-`0.2.7` until 2026-08-11, and `0.2.14` after `v0.2.16`, `v0.2.17` and `v0.2.19` had all shipped. Each
-time it was corrected only because someone happened to be bumping the header on the line above, and
-this time is no exception: it was found while bumping to `0.2.20` for an unrelated change. **A
-"Current State" section that has to be maintained by hand will be wrong most of the time it is
-read**; `0.2.4` says the same thing about the same class of sentence. Left as prose rather than
-automated, but the repetition is the record — and three instances is now enough that the honest
-options are to derive it or to delete it.*
+> **This section used to announce the newest release, and it was wrong most of the time it was
+> read.** It said `0.2.2` until 2026-08-08, `0.2.7` until 2026-08-11, `0.2.14` after three further
+> releases had shipped, and `0.2.19` for about twelve hours — corrected in `0.2.20` and stale again
+> inside the same session, because `v0.2.20` went out immediately afterwards. **Four corrections,
+> each one found by accident**, always because somebody happened to be bumping the header on the
+> line above for an unrelated reason.
+>
+> The header *is* maintained, and the contrast is the whole finding: `just pr` fails unless
+> `## Current State (vX.Y.Z)` matches `Cargo.toml`. **The gated line stayed correct through every
+> release; the prose one line below it did not.** A fact nothing checks is a fact that rots, and
+> `0.2.4` says the same thing about the same class of sentence in `AGENTS.md`.
+>
+> Deleted rather than corrected a fifth time, and rather than derived: deriving it would put a
+> network call to a registry inside a gate that is otherwise offline, to keep a sentence that three
+> one-line commands already answer better.
 
 **Windows is a fully supported platform as of `0.2.0`**, including scheduling: `schedule`,
 `unschedule` and `status` drive **Task Scheduler**, the third backend. 344 tests green there (294
@@ -681,6 +689,59 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.21 — stop hand-maintaining the sentence that says which version is out
+
+**Documentation only; no code changed.** `Current State` announced the newest release, in prose, and
+was wrong most of the time it was read. It is deleted rather than corrected a fifth time.
+
+#### The count is the argument
+
+| said | while the truth was |
+|---|---|
+| `0.2.2` until 2026-08-08 | `0.2.7` |
+| `0.2.7` until 2026-08-11 | `0.2.14` |
+| `0.2.14` | `0.2.16`, `0.2.17` and `0.2.19` had all shipped |
+| `0.2.19`, for about twelve hours | `0.2.20`, released the same session |
+
+**Four corrections, and every one was found by accident** — always because somebody was bumping the
+header on the line above for an unrelated reason. The fourth is the sharpest: `0.2.20` corrected the
+paragraph, and `v0.2.20` went out immediately afterwards and made it wrong again before the session
+ended.
+
+#### The contrast one line up is the whole finding
+
+`## Current State (vX.Y.Z)` **is** maintained, on every release, without fail — because `just pr`
+refuses unless it matches `Cargo.toml`. The prose directly beneath it, saying the same kind of
+thing, rotted continuously. **A fact nothing checks is a fact that rots**, and the two lines sat
+together the entire time as a controlled experiment nobody had set up on purpose.
+
+#### Deleted, not derived
+
+Deriving it would put a network call to a registry inside a gate that is otherwise offline — and
+`0.2.1`'s rule is that a check which silently degrades where its dependency is missing is worse than
+no check. What replaces it is a sentence naming the three authorities, which is all a reader needed:
+the tag, the GitHub release and crates.io.
+
+*It replaced them briefly with a three-command block, in both `Current State` **and** this entry —
+the remedy for writing a fact down twice, written down twice, with a `curl` incantation that would
+itself have needed maintaining. Caught in review before it shipped. **The instinct to be helpful is
+how a document acquires the thing it was being cleaned of**; naming an authority is the job, teaching
+`git describe` is not.*
+
+#### And there was a second copy, exactly as `0.2.4` predicts
+
+`PLAN.md`'s header carried **"Status as of 2026-08-04: … `v0.1.31` is released"** — nine releases
+stale, in the file whose *own* header documents this failure mode, and it was found only by going to
+look for it. That is `0.2.4` precisely: `0.1.32` fixed this file's "pre-code" claim and nobody asked
+whether `AGENTS.md` said the same thing; it did, for thirty-five releases. Both copies are now
+version-free.
+
+`README.md`'s `## Status` was checked in the same pass and needed nothing — it names milestones and
+no version, which is why it has stayed correct on its own since `0.2.15`.
+
+*The general rule this leaves behind: **if a fact has an authority, point at the authority.** Write
+down only what nothing else can answer.*
 
 ### v0.2.20 — `status` printed one clock in two notations
 
