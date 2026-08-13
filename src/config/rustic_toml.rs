@@ -73,6 +73,14 @@ struct RawProfile {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct Repository {
+    /// `[repository] repository` — the backend string, read so `config --show` can state
+    /// where a job actually writes.
+    ///
+    /// Reported verbatim and never parsed. rustic splits it on `:` and reads the first
+    /// element as a backend type, which is why a bare Windows drive letter fails with
+    /// ``The backend type `C` is not supported`` (`PLAN.md` §5.10) — but interpreting it
+    /// here would be a second, drifting copy of rustic's own rule.
+    repository: Option<String>,
     password_file: Option<String>,
     /// Present instead of `password-file` on a host following `PLAN.md` §4.1's
     /// recommendation. There is no file to check in that case, which is a *better* state,
@@ -110,6 +118,11 @@ struct SnapshotEntry {
     /// Read only to check for paths rustic will not expand — see [`unexpandable_sources`].
     #[serde(default)]
     sources: Vec<String>,
+    /// `label` on the entry, which is what makes `group-by = "host,label"` retain each set
+    /// independently (§3a invariant 1). Read so `config --show` can state it: a set whose
+    /// label is missing shares the empty-label group with every other unlabelled snapshot,
+    /// including a second tool's.
+    label: Option<String>,
 }
 
 /// The scoping keys, as `Option`s so "absent" and "empty" stay distinguishable.
@@ -157,7 +170,30 @@ struct Forget {
     /// their presence can be reported.
     #[serde(flatten)]
     misplaced: Filters,
+    /// Everything else in `[forget]`, kept as raw TOML so the `keep-*` rules can be
+    /// reported without this crate holding a list of them.
+    ///
+    /// **Deliberately not a struct of 23 named fields.** rustic offers 23 `keep-*` options
+    /// (`quarter-yearly`, `half-yearly`, twelve `within-*` forms), their values are variously
+    /// integers, durations and lists, and the set grows. Enumerating them here would be a
+    /// second copy of somebody else's vocabulary that goes stale silently — the failure this
+    /// project exists to refuse. Collecting the table means a rule rusticprofile has never
+    /// heard of is still displayed correctly.
+    #[serde(flatten)]
+    rest: toml::Table,
 }
+
+/// `keep-*` keys that are **not** retention rules.
+///
+/// `keep-delete` is prune's grace period. Measured against rustic 0.11.3: a `[forget]`
+/// declaring `keep-delete` and nothing else is still refused with *"Invalid keep options
+/// specified, please make sure to specify at least one keep-\* option"*, so it does not
+/// satisfy rustic's own requirement and must not satisfy ours either. The name invites the
+/// opposite conclusion, which is why it was measured.
+///
+/// `keep-pack` is also a prune option and is excluded by the same reasoning — but that one
+/// was **not** measured, and the distinction is kept explicit rather than blurred.
+const NON_RETENTION_KEEP_KEYS: &[&str] = &["keep-delete", "keep-pack"];
 
 /// The parts of a rustic profile rusticprofile needs to see.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,6 +236,38 @@ pub struct Profile {
     /// configuration" instead of silently finding no password file and reporting nothing —
     /// an absence that would otherwise be indistinguishable from a check that did not run.
     pub uses_password_command: bool,
+    /// `[repository] repository`, verbatim. Reported by `config --show`, interpreted nowhere.
+    pub repository: Option<String>,
+    /// The `keep-*` rules `[forget]` declares, rendered as `(key, value)` text.
+    ///
+    /// **Sorted by key, not in the file's order** — `toml::Table` is a sorted map, so this is
+    /// what it yields and it is deterministic, which is the property a test and a diff want.
+    /// Stated because "as written in the file" is the natural assumption and is wrong.
+    ///
+    /// Empty means rustic will **refuse** a `forget` against this profile — measured, and
+    /// the refusal is rustic's own guard rather than one this tool adds (`PLAN.md` §5.12).
+    /// `keep-delete` and `keep-pack` are excluded; see [`NON_RETENTION_KEEP_KEYS`].
+    pub retention_rules: Vec<(String, String)>,
+    /// One entry per `[[backup.snapshots]]`, in declaration order.
+    ///
+    /// Alongside [`Profile::snapshot_set_names`] rather than replacing it: that field is what
+    /// validation compares a job's `--name` list against, and both are filled from the same
+    /// pass over the same input, so they cannot disagree.
+    pub sets: Vec<SetSummary>,
+}
+
+/// What `config --show` says about one `[[backup.snapshots]]` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetSummary {
+    /// `name`, or `None` for an entry `--name` cannot select.
+    pub name: Option<String>,
+    /// `label`. **`None` is the interesting case**: an unlabelled set shares the empty-label
+    /// retention group with every other unlabelled snapshot in the repository, including
+    /// another tool's — which is the mechanism §3a invariant 2 describes.
+    pub label: Option<String>,
+    /// How many `sources` the entry lists. A count rather than the paths: the point is to
+    /// show the set is not empty, and a fleet's source lists are long.
+    pub sources: usize,
 }
 
 /// A file named by a rustic profile that has to exist for a backup to work.
@@ -301,6 +369,7 @@ pub fn read_profile(path: &Path) -> Result<Profile, ReadError> {
 
     let mut snapshot_set_names = Vec::new();
     let mut unexpandable_sources = Vec::new();
+    let mut sets = Vec::new();
     for entry in raw.backup.snapshots {
         // An unnamed entry still backs something up, so it is still checked. It just
         // cannot be referenced by `--name`.
@@ -314,10 +383,23 @@ pub fn read_profile(path: &Path) -> Result<Profile, ReadError> {
                 source: source.clone(),
             });
         }
+        sets.push(SetSummary {
+            name: entry.name.clone(),
+            label: entry.label.filter(|l| !l.is_empty()),
+            sources: entry.sources.len(),
+        });
         if let Some(name) = entry.name {
             snapshot_set_names.push(name);
         }
     }
+
+    let retention_rules = raw
+        .forget
+        .rest
+        .iter()
+        .filter(|(k, _)| k.starts_with("keep-") && !NON_RETENTION_KEEP_KEYS.contains(&k.as_str()))
+        .map(|(k, v)| (k.clone(), render_toml_value(v)))
+        .collect();
 
     // Only *absolute-looking* entries are collected. rustic resolves a relative
     // `password-file` against its own working directory, which for a scheduled run is not
@@ -348,7 +430,29 @@ pub fn read_profile(path: &Path) -> Result<Profile, ReadError> {
             .repository
             .password_command
             .is_some_and(|c| !c.is_empty()),
+        repository: raw.repository.repository.filter(|r| !r.is_empty()),
+        retention_rules,
+        sets,
     })
+}
+
+/// Render a `[forget]` value for display.
+///
+/// A `keep-*` value may be an integer (`keep-daily = 14`), a duration string
+/// (`keep-within = "1 month"`) or a list (`keep-tags = ["pinned"]`). Rendering rather than
+/// typing it keeps this indifferent to which — a rule whose value shape this crate has never
+/// seen still displays, instead of failing to parse the whole profile and taking `--check`
+/// down with it.
+fn render_toml_value(value: &toml::Value) -> String {
+    match value {
+        toml::Value::String(s) => s.clone(),
+        toml::Value::Array(items) => items
+            .iter()
+            .map(render_toml_value)
+            .collect::<Vec<_>>()
+            .join(", "),
+        other => other.to_string(),
+    }
 }
 
 /// The names of every `[[backup.snapshots]]` entry in the profile at `path`.

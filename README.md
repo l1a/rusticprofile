@@ -33,6 +33,9 @@ rusticprofile schedule -n dot-files --write-only     # install it inert, to read
 rusticprofile status                                 # what is scheduled here, plus last run / last success
 rusticprofile status --json                          # ...for a monitor; alert on last_success
 rusticprofile snapshots -n dot-files                 # list snapshots (read-only passthrough to rustic)
+rusticprofile retention -n dot-files                 # how far back hourly/daily/weekly/monthly/yearly still reach
+rusticprofile retention -n dot-files --near 2026-05-15   # ...and what sits either side of a date
+rusticprofile retention -n dot-files --all           # ...and every snapshot with its reasons, oldest first
 rusticprofile unschedule -n dot-files                # remove the units
 
 rusticprofile doctor                                 # local checks: competing prune schedule, missing secrets
@@ -41,7 +44,7 @@ rusticprofile doctor --repository                    # ...plus: is anything else
 
 `schedule` and `unschedule` are each a single step, and each fully undoes the other. What a job becomes depends on the platform: **two** systemd units on Linux — a `.timer` and the `.service` it activates, because systemd has no way for a timer to run a command directly, which is true of every tool that schedules with systemd — **one** launchd agent on macOS, or **one** registered task on Windows. On Linux only the timer is enable-able: the service is `static`, so it cannot be armed on its own and run outside its schedule.
 
-`config` and `plan` are hermetic — no rustic binary, no repository, no network — so they are safe to run anywhere. **`doctor` is the deliberate counterpart**: it exists precisely to check what a hermetic command cannot, because the failures that have actually cost data here were configurations that were individually correct and only wrong in combination with another tool. Its default run is still local and instant; `--repository` is opt-in because it is the one check that needs the network and a credential. `run` is the one that actually invokes rustic, and `schedule` is the one that talks to the service manager (`systemctl`, `launchctl` or `schtasks`). Running the binary with no arguments exits non-zero and says so rather than doing anything by default.
+`config` and `plan` are hermetic — no rustic binary, no repository, no network — so they are safe to run anywhere. **`doctor` is the deliberate counterpart**: it exists precisely to check what a hermetic command cannot, because the failures that have actually cost data here were configurations that were individually correct and only wrong in combination with another tool. Its default run is still local and instant; `--repository` is opt-in because it is the one check *within `doctor`* that needs the network and a credential. `run` is the one that changes a repository; `snapshots` and `retention` read one, so both need the network and the credential too — `retention` always as a dry run. `schedule` is the one that talks to the service manager (`systemctl`, `launchctl` or `schtasks`). Running the binary with no arguments exits non-zero and says so rather than doing anything by default.
 
 ## What it does
 
@@ -66,6 +69,16 @@ rusticprofile owns **when** backups run, **which** jobs exist, and **on which ho
 - **`doctor`**: whether a **restic** prune schedule is still armed here (the one combination
   measured to corrupt the repository), whether the credential files the profile names exist,
   and — with `--repository` — whether anything else has been writing retention for a host
+- **`retention`**: how far back each retention period still reaches, what a `forget` would remove,
+  and — with `--near <DATE>` — which snapshots sit either side of a date and how far off they are.
+  It answers the question that sends you to a backup in the first place: *I need a file from around
+  then; what can I actually get?* Retention makes snapshot density non-uniform — the last day hour
+  by hour, the last week day by day, the last year month by month — so knowing which resolution
+  survives at a given age is the thing worth knowing. rustic computes all of it: its
+  `forget --dry-run` reports a reason per kept snapshot, and nothing is recomputed here.
+  **Always a dry run**, and not because a flag says so — the argv is the scheduled `forget`'s own
+  code path with `--dry-run` fixed in place, so the preview cannot differ from the operation it
+  previews and cannot be turned into one that deletes
 - **`--json`** on `run`, `status` and `doctor`, so a monitor never has to match English
 
 ## What it does not do *yet*
@@ -193,7 +206,7 @@ Note what is *not* in there: no source paths, no excludes, no retention numbers,
 
 The XDG variables are honoured **on macOS and Windows too**, falling back to `~/.config` and `~/.local/state` rather than `~/Library/Application Support` or `%APPDATA%` (0.1.25+, Windows in 0.2.0+). On Windows note that a path with no drive letter counts as relative, so a rooted-but-driveless `log:` is refused there — and `HOME` is normally unset, so a `jobs.yaml` written around `${env:HOME}` will not load until you set it. That is deliberate, and it follows from the box below: a `jobs.yaml` meant to be byte-identical across a fleet cannot have `${state_dir}` resolve to a different place depending on the operating system reading it.
 
-**`default-job` is honoured by `run`, `plan`, `snapshots` and `config --show`** — not by `unschedule`, where removal is always named explicitly, nor by `schedule`, where omitting `-n` already means "every job that declares a schedule".
+**`default-job` is honoured by `run`, `plan`, `snapshots`, `retention` and `config --show`** — not by `unschedule`, where removal is always named explicitly, nor by `schedule`, where omitting `-n` already means "every job that declares a schedule".
 
 > [!IMPORTANT]
 > `jobs.yaml` is designed to be **byte-identical across a fleet**, which makes it only ever as new as the *oldest binary* reading it. Unknown keys and variables are hard errors by design, so a config using `${state_dir}` (0.1.15+) or `default-job` (0.1.20+) will not load on an older build — and that host stops backing up at its next scheduled run. **Upgrade the binaries before pushing the config.**

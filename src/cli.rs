@@ -70,6 +70,9 @@ pub enum Command {
     /// List the repository's snapshots, via rustic
     Snapshots(SnapshotsArgs),
 
+    /// Show how far back each retention period reaches, without changing anything
+    Retention(RetentionArgs),
+
     /// Check the things `config --check` structurally cannot: the repository, another
     /// tool's schedules, and the credential files on disk
     Doctor(DoctorArgs),
@@ -147,6 +150,71 @@ pub struct SnapshotsArgs {
     /// flags.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
+}
+
+/// A **read-only preview** of what this job's `forget` would keep, and how far back each period
+/// still reaches.
+///
+/// Answers the question that sends someone to a backup: *I need a file from around then — what can
+/// I actually get, and how close is it?* Retention makes snapshot density non-uniform — the last
+/// day hour by hour, the last week day by day, the last year month by month — so the useful fact is
+/// which resolution survives at a given age.
+///
+/// rustic computes all of it: `forget --dry-run` reports a reason per kept snapshot (`hourly`,
+/// `daily`, `weekly`, `monthly`, `yearly`, `last`, …). Nothing is decided here; the policy is the
+/// profile's and this command groups and renders the answer.
+///
+/// **It deliberately reports each period's *oldest* holder, not its newest.** The newest holder is
+/// always the group's newest snapshot — it fills every period it is eligible for — so a per-period
+/// "newest" column repeats one fact and answers nothing. That was the first version, and it was
+/// useless in exactly that way.
+///
+/// **`--dry-run` is not optional and there is no flag for it.** The argv is built by
+/// [`crate::rustic::invoke::retention_argv`], which is the scheduled `forget`'s own code path
+/// with the dry run hardcoded — so this command cannot be turned into one that deletes, and the
+/// preview cannot describe a different operation than the one that runs. `PLAN.md` §7.14.
+///
+/// Deliberately **no `--json`**: a `schema:` is a promise, and `0.2.22` refused to put
+/// unrequested schema surface inside a display change. `rusticprofile plan` prints the argv for
+/// anyone who wants to parse rustic's own JSON.
+#[derive(Args, Debug)]
+pub struct RetentionArgs {
+    /// Job whose retention to preview. Omit to use `defaults.default-job`.
+    #[arg(short = 'n', long, value_name = "JOB")]
+    pub name: Option<String>,
+
+    /// List every snapshot and its reasons, not just the resolution summary
+    ///
+    /// Oldest first, so the table reads as a timeline: sparse monthly snapshots at the top,
+    /// thickening into hourly at the bottom. Off by default because a cut-over host holds well
+    /// over a hundred. Snapshots this run **would remove** are always listed, however many there
+    /// are — that is the one thing nobody should have to ask twice for.
+    #[arg(long)]
+    pub all: bool,
+
+    /// Show the snapshots either side of a date, and how far off each is
+    ///
+    /// For when you are recovering something and know roughly *when* rather than which snapshot:
+    /// `--near 2026-05-15`, `--near "2026-05-15 14:30"`, or anything carrying its own UTC offset.
+    /// A bare date or date-time is read in this machine's time zone, the one every time on screen
+    /// is printed in.
+    ///
+    /// Snapshots the policy would remove are included: a dry run has removed nothing, so they are
+    /// still places a file can be recovered from.
+    #[arg(long, value_name = "DATE")]
+    pub near: Option<String>,
+
+    /// Path to jobs.yaml (defaults to $XDG_CONFIG_HOME/rusticprofile/jobs.yaml)
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Evaluate as though running on this host, instead of the real hostname
+    #[arg(long, value_name = "HOST")]
+    pub as_host: Option<String>,
+
+    /// Use this rustic executable instead of the one the configuration names
+    #[arg(long, value_name = "PATH")]
+    pub rustic_binary: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -564,6 +632,31 @@ mod tests {
             .or_else(|| arg.get_help())
             .map(|h| h.to_string())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_retention_command_states_that_it_changes_nothing() {
+        // `0.2.17`'s rule, applied to the claim most worth not losing. This command's one-line
+        // description is where a reader learns that a command whose name contains no verb, and
+        // which is implemented by invoking `forget`, does not delete anything. A reword that drops
+        // that reassurance fails here rather than shipping.
+        //
+        // The *behaviour* is guarded separately and more strongly, by construction, in
+        // `rustic::invoke::retention_argv` and its tests. This guards the sentence.
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        let retention = cmd
+            .get_subcommands_mut()
+            .find(|c| c.get_name() == "retention")
+            .expect("retention subcommand");
+        let about = retention
+            .get_about()
+            .map(|a| a.to_string())
+            .unwrap_or_default();
+        assert!(
+            about.contains("without changing anything"),
+            "the retention description must say it changes nothing; got: {about:?}"
+        );
     }
 
     #[test]

@@ -185,6 +185,44 @@ pub fn query_argv(binary: &str, profile: &str, query: &str, extra: &[String]) ->
     argv
 }
 
+/// Build the argv that **previews** a job's `forget` without performing it.
+///
+/// The whole safety argument is one line of this function: it calls [`build_argv`] — the same
+/// function the scheduled `forget` goes through — with `dry_run: true` **hardcoded**, and then
+/// appends `--json`. Three properties follow, and none of them depends on anyone remembering
+/// something:
+///
+/// 1. **`--dry-run` cannot be omitted.** There is no parameter for it. A `forget` without it is
+///    the most destructive command this project could emit, so it is made unexpressible rather
+///    than guarded by care — the same call as refusing a snapshot-set name that starts with `-`.
+/// 2. **The preview cannot drift from the operation it previews.** Whatever flags a real
+///    `forget` gains, this gains too, because it is the same code path. A preview describing a
+///    *different* operation than the one that runs would be worse than no preview at all —
+///    `PLAN.md` §7.13's rule in a new place.
+/// 3. **`--filter-host` is included**, because the scheduled `forget` has carried it since
+///    `0.1.34`. Dropping it here would show retention across the whole fleet while the job that
+///    runs only ever touches this host.
+///
+/// `--json` is what makes the result readable rather than merely printable: rustic's own table
+/// is fine on a terminal, but the reasons have to be regrouped per slot, and `PLAN.md` §5.12
+/// records the shape. `forget --json` writes to stdout and diagnostics to stderr, measured.
+///
+/// Not part of [`plan_job`]: this is a query, not schedulable work, so it does not appear in
+/// `plan` output and cannot reach a generated unit. Same separation as [`query_argv`].
+#[must_use]
+pub fn retention_argv(binary: &str, profile: &str, hostname: Option<&str>) -> Vec<OsString> {
+    let mut argv = build_argv(
+        binary,
+        profile,
+        Operation::Forget,
+        &[],
+        hostname,
+        Options { dry_run: true },
+    );
+    argv.push(OsString::from("--json"));
+    argv
+}
+
 /// The resolved profile path for `job`, as rustic will receive it.
 ///
 /// Absolute, because a bare name makes rustic search its own paths — which need not include
@@ -413,6 +451,79 @@ mod tests {
                 "{op} scopes by host and takes no --name or --json"
             );
         }
+    }
+
+    #[test]
+    fn a_retention_preview_is_always_a_dry_run() {
+        // The single most important assertion in this module. `retention_argv` has no parameter
+        // that could switch this off, so the only way it regresses is by someone rewriting the
+        // body — and then this fails.
+        for hostname in [None, Some("host-a")] {
+            let argv = as_strings(&retention_argv("rustic", "p", hostname));
+            assert!(
+                argv.iter().any(|a| a == "--dry-run"),
+                "a retention preview without --dry-run would DELETE snapshots: {argv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_preview_is_the_real_forget_plus_exactly_two_output_flags() {
+        // What makes the preview trustworthy: it is not a separately-assembled command that
+        // happens to resemble the scheduled one, it *is* the scheduled one with `--dry-run` and
+        // `--json` added. Asserted as a relationship rather than against a literal, so a future
+        // flag added to `forget` is covered without touching this test.
+        for hostname in [None, Some("host-a")] {
+            let real = build_argv(
+                "rustic",
+                "p",
+                Operation::Forget,
+                &[],
+                hostname,
+                Options::default(),
+            );
+            let preview = retention_argv("rustic", "p", hostname);
+
+            let mut expected = real.clone();
+            expected.insert(4, OsString::from("--dry-run"));
+            expected.push(OsString::from("--json"));
+            assert_eq!(
+                as_strings(&preview),
+                as_strings(&expected),
+                "the preview must differ from the real forget only by --dry-run and --json"
+            );
+        }
+    }
+
+    #[test]
+    fn a_retention_preview_emits_no_flag_this_tool_does_not_own() {
+        // The `snapshots` precedent (`0.1.19`): a command outside `plan_job` gets its own
+        // inventory assertion rather than weakening the one guarding scheduled work.
+        let argv = retention_argv("rustic", "p", Some("host-a"));
+        assert_eq!(
+            flags_in(&argv),
+            vec!["-P", "--dry-run", "--filter-host", "--json"]
+        );
+        assert_eq!(find_secret_bearing_flag(&argv), None);
+
+        // No `--name`: `forget` has no snapshot-set concept, and no retention flags either —
+        // the policy is the profile's, which is what keeps the boundary where it is.
+        let argv = as_strings(&argv);
+        assert!(!argv.iter().any(|a| a == "--name"));
+        assert!(!argv.iter().any(|a| a.starts_with("--keep-")));
+    }
+
+    #[test]
+    fn a_retention_preview_scopes_to_this_host_when_the_tool_owns_the_name() {
+        // A preview that showed the whole fleet's retention while the job only forgets this
+        // host would be describing a different operation.
+        let argv = as_strings(&retention_argv("rustic", "p", Some("host-a")));
+        let at = argv.iter().position(|a| a == "--filter-host").unwrap();
+        assert_eq!(argv[at + 1], "host-a");
+
+        // Under `hostname: rustic` the tool supplies no name, and must not invent one.
+        let deferred = as_strings(&retention_argv("rustic", "p", None));
+        assert!(!deferred.iter().any(|a| a == "--filter-host"));
     }
 
     #[test]

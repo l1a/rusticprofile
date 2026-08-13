@@ -382,6 +382,85 @@ fn config_show_renders_a_resolved_job() {
 }
 
 #[test]
+fn config_show_reports_the_delegated_rustic_profile_too() {
+    // The predecessor's `show` prints the *effective* configuration, and here that is two files.
+    // Everything §3a invariant 5 lists as able to silently destroy data is in the delegated half,
+    // which `config --show` did not print at all until `0.2.27`.
+    let (_dir, path) = fixture(GOOD_CONFIG);
+    let (stdout, _stderr, code) = run_code(&[
+        "config",
+        "--show",
+        "-n",
+        "dot-files",
+        "--config",
+        &path,
+        "--as-host",
+        "host-c",
+    ]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("rustic profile:"),
+        "the delegated half must be shown: {stdout}"
+    );
+    assert!(stdout.contains("(read-only)"), "got: {stdout}");
+    // The grouping, which is the setting that turns a correct policy into a destructive one.
+    assert!(stdout.contains("host,label,paths"), "got: {stdout}");
+    assert!(
+        stdout.contains("scoped by      filter-hosts"),
+        "got: {stdout}"
+    );
+    // Both sets in the profile, with the source count. The fixture's sets carry no `label`, and
+    // saying so is the point — an unlabelled set shares one retention group with every other
+    // unlabelled snapshot, including a second tool's.
+    assert!(stdout.contains("core"), "got: {stdout}");
+    assert!(stdout.contains("gnupg"), "got: {stdout}");
+    assert!(stdout.contains("no label"), "got: {stdout}");
+    // Read-only means read-only: the profile is byte-identical afterwards.
+    let profile = _dir.path().join("p.toml");
+    let after = std::fs::read(&profile).unwrap();
+    let host = rusticprofile::config::hosts::current_hostname().expect("hostname");
+    assert_eq!(after, PROFILE_TOML.replace("THIS_HOST", &host).into_bytes());
+}
+
+#[test]
+fn config_show_says_when_the_delegated_profile_cannot_be_read() {
+    // An absence must not read as "there is nothing to say about it". `config --check` is what
+    // refuses; `--show` still resolves the job half and states why the other half is missing.
+    //
+    // **Reaching this branch at all took two attempts, and the boundary is the useful part.**
+    // Config loading refuses a missing profile with exit 2 whenever any job declares snapshot
+    // sets (`check_snapshot_sets_exist`) or a `forget` (`check_forget_is_scoped`) — and validation
+    // is **batched across every job in the file**, not scoped to the one being shown. So it is
+    // not enough to ask about a prune-only job; the whole configuration has to contain no job
+    // that reads the profile. That is a narrow case and a real one: a prune-only host, or a job
+    // backing up every set the profile defines.
+    //
+    // First attempt used `GOOD_CONFIG`/`dot-files` and got exit 2; second used
+    // `GOOD_CONFIG`/`dot-files-prune` and got exit 2 again, from the *other* job. Recorded
+    // because "the branch is unreachable" was the wrong conclusion both times.
+    const PRUNE_ONLY: &str = "
+schema: 1
+defaults:
+  rustic-config-dir: RUSTIC_DIR
+jobs:
+  only-prune:
+    profile: p
+    operations: [prune]
+";
+    let (dir, path) = fixture(PRUNE_ONLY);
+    std::fs::remove_file(dir.path().join("p.toml")).unwrap();
+    let (stdout, stderr, code) =
+        run_code(&["config", "--show", "-n", "only-prune", "--config", &path]);
+    // Still exit 0 — this command inspects, it does not validate.
+    assert_eq!(code, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("not found"), "got: {stdout}");
+    assert!(
+        stdout.contains("config --check"),
+        "it must point at the command that refuses: {stdout}"
+    );
+}
+
+#[test]
 fn config_show_explains_a_gated_off_job_rather_than_denying_it_exists() {
     let (_dir, path) = fixture(GOOD_CONFIG);
     let (_stdout, stderr, code) = run_code(&[
@@ -834,6 +913,207 @@ fn real_rustic_partial_backup_is_classified_as_partial() {
 }
 
 #[test]
+fn real_rustic_retention_names_the_holder_of_each_slot() {
+    // The whole feature, against real rustic rather than a JSON fixture: build a repository whose
+    // snapshots span years, ask what retention would keep, and check that the answer identifies
+    // which snapshot currently holds each period.
+    //
+    // `backup --time` is what makes this possible without waiting a year. Nothing here touches a
+    // shared repository — ladder rung 6, a throwaway `local:` repo under a temp dir.
+    if !rustic_available() {
+        eprintln!("skipping: rustic is not installed");
+        return;
+    }
+    use rusticprofile::rustic::{invoke, retention};
+
+    let (dir, profile) = throwaway_repo();
+    let root = as_config_path(dir.path());
+
+    // A policy on the profile, because that is where retention lives: rusticprofile emits no
+    // `keep-*` flags and this test would be meaningless if it did.
+    let profile_toml = dir.path().join("p.toml");
+    let mut text = std::fs::read_to_string(&profile_toml).unwrap();
+    text.push_str("\n[forget]\ngroup-by = \"host,label\"\nkeep-daily = 2\nkeep-yearly = 2\n");
+    std::fs::write(&profile_toml, &text).unwrap();
+
+    // Backdated snapshots, so a multi-year policy has something to act on.
+    for when in [
+        "2024-03-01 10:00:00",
+        "2025-06-01 10:00:00",
+        "2026-01-02 10:00:00",
+    ] {
+        let out = rusticprofile::exec::run(
+            &[
+                "rustic".into(),
+                "-P".into(),
+                profile.clone().into(),
+                "backup".into(),
+                "--time".into(),
+                when.into(),
+                "--label".into(),
+                "core".into(),
+                format!("{root}/src/good").into(),
+            ],
+            rusticprofile::exec::Stdout::Capture,
+        )
+        .expect("rustic backup should spawn");
+        assert!(out.exited_zero(), "backup failed: {}", out.describe());
+    }
+
+    // **And one WITHOUT `--time`, which is the whole reason this test is trustworthy.** A
+    // backdated snapshot lands on a whole second; a real backup stamps the instant it ran, to the
+    // nanosecond. `0.2.27` shipped a version that could not read the second kind, and every
+    // fixture here used only the first, so the suite stayed green while `retention` reported
+    // `newest (no readable timestamp)` for every slot against the live repository. This snapshot
+    // is the newest, so every assertion below runs against a real timestamp.
+    let out = rusticprofile::exec::run(
+        &[
+            "rustic".into(),
+            "-P".into(),
+            profile.clone().into(),
+            "backup".into(),
+            "--label".into(),
+            "core".into(),
+            format!("{root}/src/good").into(),
+        ],
+        rusticprofile::exec::Stdout::Capture,
+    )
+    .expect("rustic backup should spawn");
+    assert!(out.exited_zero(), "backup failed: {}", out.describe());
+
+    // Hash the repository so "read-only" is established rather than assumed.
+    let before = repo_fingerprint(dir.path());
+
+    let argv = invoke::retention_argv("rustic", &profile, None);
+    let out = rusticprofile::exec::run(&argv, rusticprofile::exec::Stdout::Capture)
+        .expect("rustic forget should spawn");
+    assert!(
+        out.exited_zero(),
+        "forget --dry-run failed: {}",
+        out.describe()
+    );
+
+    let stdout = String::from_utf8_lossy(out.stdout.as_deref().expect("captured"));
+    let plan = retention::parse(&stdout).expect("rustic's forget JSON should parse");
+
+    assert_eq!(
+        plan.groups.len(),
+        1,
+        "group-by host,label gives one group here"
+    );
+    let group = &plan.groups[0];
+    assert!(group.key.contains("label core"), "got: {}", group.key);
+
+    let slot = |reason: &str| {
+        group
+            .slots
+            .iter()
+            .find(|s| s.reason == reason)
+            .unwrap_or_else(|| panic!("no `{reason}` slot in {:?}", group.slots))
+    };
+
+    // The newest snapshot holds the newest daily AND the newest yearly, which is the behaviour
+    // that reads as a bug and is not.
+    let newest_daily = slot("daily").newest.as_ref().expect("a daily holder");
+    let newest_yearly = slot("yearly").newest.as_ref().expect("a yearly holder");
+    assert_eq!(
+        newest_daily.id, newest_yearly.id,
+        "the newest snapshot holds both slots"
+    );
+
+    // **Every slot must name a holder at both ends**, which is the assertion `0.2.27` needed and
+    // did not have: an unreadable timestamp leaves these `None`, and that is exactly what a real
+    // repository produced while this test passed.
+    for s in &group.slots {
+        assert!(
+            s.newest.is_some() && s.oldest.is_some(),
+            "slot `{}` names no holder — its snapshots' timestamps could not be read",
+            s.reason
+        );
+    }
+
+    // Oldest first, so the table reads as a timeline.
+    let times: Vec<&str> = group.snapshots.iter().map(|s| &*s.time).collect();
+    let mut sorted = times.clone();
+    sorted.sort();
+    assert_eq!(times, sorted, "snapshots must be listed oldest first");
+
+    // And the resolution map is not a restatement of the newest snapshot: `yearly` reaches
+    // further back than `daily` does, which is the whole point of printing it.
+    let reach = |reason: &str| {
+        slot(reason)
+            .oldest
+            .as_ref()
+            .map(|s| s.time.clone())
+            .expect("an oldest holder")
+    };
+    assert!(
+        reach("yearly") < reach("daily"),
+        "yearly should reach further back than daily: yearly={} daily={}",
+        reach("yearly"),
+        reach("daily")
+    );
+
+    // `--near` finds the snapshots either side of a date, including one the policy would remove.
+    let tz = jiff::tz::TimeZone::UTC;
+    let target = retention::parse_target("2025-01-01", &tz).expect("a parseable date");
+    let bracket = group.bracket(target);
+    assert!(
+        bracket.before.is_some() && bracket.after.is_some(),
+        "2025-01-01 sits inside this repository's history, so it is bracketed"
+    );
+    assert!(
+        bracket.before.unwrap().time < bracket.after.unwrap().time,
+        "before must precede after"
+    );
+
+    // And the holder is the un-backdated snapshot, i.e. the one carrying nanoseconds.
+    assert!(
+        newest_daily.time.contains('.'),
+        "the newest snapshot is the real backup, whose stamp has fractional seconds; got: {}",
+        newest_daily.time
+    );
+
+    // keep-yearly = 2 over four years means the older years are dropped, so the preview has to
+    // report removals rather than claim everything is held.
+    assert!(
+        plan.would_remove() > 0,
+        "this policy cannot keep all four snapshots: {plan:?}"
+    );
+
+    // And the preview changed nothing, measured rather than inferred from the flag's name.
+    assert_eq!(
+        before,
+        repo_fingerprint(dir.path()),
+        "a retention preview must leave the repository byte-identical"
+    );
+}
+
+/// Every file under `dir`, with its bytes, as a sorted list.
+///
+/// Used to establish that a dry run wrote nothing. A snapshot count would not have shown a
+/// rewritten index or a deleted pack.
+fn repo_fingerprint(dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    fn walk(at: &std::path::Path, out: &mut Vec<(String, Vec<u8>)>) {
+        let Ok(entries) = std::fs::read_dir(at) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if let Ok(bytes) = std::fs::read(&path) {
+                out.push((path.display().to_string(), bytes));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&dir.join("repo"), &mut out);
+    out.sort();
+    out
+}
+
+#[test]
 fn real_rustic_clean_backup_is_classified_as_success() {
     if !rustic_available() {
         eprintln!("skipping: rustic is not installed");
@@ -986,6 +1266,71 @@ fn rustic_binary_override_lets_a_shim_stand_in_for_rustic() {
     assert!(log.contains("backup"), "got log: {log}");
     assert!(log.contains("forget"), "forget must still run: {log}");
     assert!(log.contains("--name"));
+}
+
+#[test]
+fn retention_never_asks_rustic_to_forget_for_real() {
+    // **The assertion that matters most in this file.** `retention` is the only command that
+    // constructs a `forget`, and a `forget` without `--dry-run` deletes snapshots from a
+    // repository shared by seven machines. Verified at ladder rung 2 — the recording shim logs
+    // the argv rusticprofile actually spawned and never touches a repository — so this is the
+    // real argv rather than a unit test's idea of it.
+    let job = "retention-job";
+    let (dir, path) = fixture(&run_config_named(job));
+    let shim = recording_shim(dir.path());
+
+    let (_stdout, _stderr, _code) = run_code(&[
+        "retention",
+        "-n",
+        job,
+        "--config",
+        &path,
+        "--as-host",
+        "host-a",
+        "--rustic-binary",
+        &shim,
+    ]);
+    // The exit status is deliberately not asserted: the shim prints nothing, so the JSON parse
+    // fails and the command reports that. What is being checked is what was *spawned*.
+
+    let log = std::fs::read_to_string(dir.path().join("argv.log")).expect("shim should have run");
+    assert!(
+        log.contains("--dry-run"),
+        "a retention preview that omitted --dry-run would DELETE snapshots. argv was: {log}"
+    );
+    assert!(log.contains("forget"), "got argv: {log}");
+    assert!(log.contains("--json"), "got argv: {log}");
+    // Scoped to this host, exactly as the scheduled `forget` is.
+    assert!(log.contains("--filter-host"), "got argv: {log}");
+    // And it carries no retention flags of its own: the policy is the profile's.
+    assert!(!log.contains("--keep-"), "got argv: {log}");
+}
+
+#[test]
+fn retention_reports_rather_than_renders_output_it_could_not_read() {
+    // The shim exits 0 having printed nothing. Empty output must not render as a clean, empty
+    // repository — that is the emptiness trap, and here it would mean reporting that retention
+    // holds nothing when nothing was actually read.
+    let job = "retention-empty-job";
+    let (dir, path) = fixture(&run_config_named(job));
+    let shim = recording_shim(dir.path());
+
+    let (_stdout, stderr, code) = run_code(&[
+        "retention",
+        "-n",
+        job,
+        "--config",
+        &path,
+        "--as-host",
+        "host-a",
+        "--rustic-binary",
+        &shim,
+    ]);
+    assert_ne!(code, 0, "unreadable output must not exit 0");
+    assert!(
+        stderr.contains("could not read rustic's JSON"),
+        "got: {stderr}"
+    );
 }
 
 #[test]
@@ -1924,4 +2269,11 @@ fn doctor_appears_in_help() {
     let (stdout, _stderr, success) = run(&["--help"]);
     assert!(success);
     assert!(stdout.contains("doctor"), "{stdout}");
+}
+
+#[test]
+fn retention_appears_in_help() {
+    let (stdout, _stderr, success) = run(&["--help"]);
+    assert!(success);
+    assert!(stdout.contains("retention"), "{stdout}");
 }
