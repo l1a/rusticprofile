@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.22)
+## Current State (v0.2.23)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -689,6 +689,134 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.23 — the sibling repos carry completion bugs this one already fixed
+
+**Tooling only; no product code changed.** Prompted by finding this host's installed man page at
+**`0.2.11`** — eleven releases stale, with nothing reporting it — and by Ken asking for one
+standard across `rusticprofile`, `retch` and `etr`. Surveying the three turned a tidying job into a
+defect report.
+
+#### `cargo install` replaces the binary and nothing else, and no recipe covered the gap
+
+`just install` was never broken: it already reads `install: install-man install-completions`. What
+had no recipe at all was **installing a released tag**, which is what every fleet upgrade actually
+does — a hand-typed `cargo install --git --tag`, binary-only, with the other two artefacts left at
+whatever version last ran them. Hence **`install-tag VERSION`**.
+
+**It deliberately does not depend on `install-man`/`install-completions`, and that is the whole
+correctness argument.** Those two work from the *checkout* — one copies the working tree's page, the
+other runs `target/debug/<bin>` — so reusing them would install a binary from the tag beside a man
+page and completions from the worktree. On a checkout one release ahead that is a v0.2.22 binary
+with a v0.2.23 man page: mismatched artefacts that each look fine, which is the failure class this
+project exists to refuse. The three sources are made to agree instead:
+
+| artefact | source |
+|---|---|
+| binary | `cargo install --git --tag` — never `--path`, which on this Syncthing-shared checkout builds from a directory other machines write into |
+| completions | **the installed binary**, so they cannot disagree with its CLI |
+| man page(s) | **`git show v<V>:<path>`** — the tag's own text, not the worktree's |
+
+Verified by running it: `just install-tag v0.2.22` normalised the leading `v`, asserted the
+installed version as a post-condition, and the installed man page hashed **identically to the tag's
+blob** rather than to the working tree's. A missing tag and an empty version both refuse by name.
+
+#### The survey: two sibling repos carry three defects this repo measured and fixed
+
+| defect | fixed here in | still live in |
+|---|---|---|
+| nushell completions written to the XDG path, which Windows nushell never reads | `0.2.14` | **retch and etr** |
+| output claiming zsh is "auto-loaded from the default `$fpath`" — false on every distribution | `0.1.13`/`0.1.14` | **etr** |
+| `install-completions` as a shebang recipe, unrunnable on Windows without `cygpath` | `0.2.2` | **etr** |
+
+Plus, in etr alone: **`install` installs the *debug* binary** (`cp target/debug/…`) and installs no
+completions at all, and there is **no `install-hooks` and no `open-pr`** — so its pre-push gate is
+installed by nothing and its PR path has no gated call site.
+
+**That is `0.2.4`'s finding at a new scale.** Duplicated state goes stale one copy at a time, and
+the copy nobody re-reads is the one that survives — except here the duplicated thing is *behaviour
+across three repositories*, and what nobody re-read was a recipe rather than a sentence. Three
+repos, three implementations of one job: inline `sh` here, Python helpers in retch, a `bash` shebang
+in etr. Only one of them had been run on all three platforms.
+
+#### The reference repo was not the repo with the right mechanism, and picking one without reading both would have shipped a regression as a standard
+
+**This is the finding of the release.** rusticprofile was chosen as the reference because it had the
+*correctness* fixes. Reading retch's release log then showed its Python helpers are **a deliberate,
+documented portability decision, not drift** — its `v0.6.16` converted these exact recipes *to*
+Python to eliminate bash-shebang escaping bugs and run natively on Windows PowerShell, CMD and Unix
+shells **without requiring Git's `usr\bin` on PATH**.
+
+So the first draft of this standard would have replaced retch's measured portability work with
+rusticprofile's `sh` recipes **in the name of consistency**, and called it an improvement. The two
+repos had each solved half the problem:
+
+| | rusticprofile | retch |
+|---|---|---|
+| correctness (Windows nushell path, zsh `fpath` check, fail-loudly) | ✅ | ✗ |
+| mechanism (no `sh`, no `cygpath`, no coreutils, no Git `usr\bin`) | ✗ | ✅ |
+
+**Template v2 keeps retch's mechanism and this repo's correctness.** The logic moves into two
+vendored helpers, `scripts/install_completions.py` and `scripts/install_man.py`, and the Justfile
+recipes become one line each. A `bash` shebang recipe cannot run on Windows without `cygpath` at
+all; a plain `sh` recipe still needs an `sh` on PATH; a Python helper needs only an interpreter —
+**and its logic is unit-testable off-platform, which matters because the branch that keeps being
+wrong is the Windows one, on machines that never take it.**
+
+*Recorded rather than quietly corrected, because the near-miss is the useful part: "the repo with
+the fixes" and "the repo with the right mechanism" were different repos, and the only thing that
+surfaced it was reading the sibling's release log before touching its files — which its own
+`AGENTS.md` requires and which existed precisely so this would happen.*
+
+#### `standard-check` runs self-tests rather than diffing text, and that is stronger
+
+With the logic in a script, a within-repo text diff checks nothing useful, and across repos it is
+impossible — git cannot diff a file it does not have. So each helper asserts its own invariants and
+`standard-check` runs them; **`just check` depends on it**, so a violation fails the build.
+
+That is the property that was actually broken. A text diff would also pass happily on a repo that
+never adopted the standard at all, which is the emptiness trap again.
+
+**Watched failing, three ways, per `0.2.17`** — and the first is literally the bug both siblings
+still have:
+
+| break | caught as |
+|---|---|
+| revert the nushell path to the XDG form | `windows nushell dir: expected …AppData\Roaming… got …/.config/…` |
+| drop a shell from the set | hard failure; the six-shell count assertion cannot be satisfied |
+| treat an empty `XDG_DATA_HOME` as a location | `empty XDG_DATA_HOME falls back` — otherwise every path resolves against `/` |
+
+**Exit codes were checked without a pipe**, because the first attempt read `$?` from `head` rather
+than from python and reported `exit 0` on a failing self-test — the `$PIPESTATUS`/`| head` trap
+`~/AGENTS.md` records, in the check written to verify a check.
+
+**A fourth defect in retch turned up while reading it**: its helper logs a generation failure to
+stderr, carries on, and then prints `Installed completions for retch:` with the full path list
+regardless. Success reported over work not done. The canonical helper raises instead — verified: a
+bad binary name exits 1 with **no** `Installed` line.
+
+#### Two Windows defects the rework found in its own output
+
+- **Non-ASCII printed output is mangled by the Windows console codepage** — `NOT ACTIVE — $PROFILE`
+  rendered as `NOT ACTIVE ? $PROFILE`. All *printed* strings are now ASCII; docstrings and comments
+  keep their typography, and a scan asserts the distinction rather than trusting it.
+- **PowerShell is now reported as `NOT ACTIVE` on Windows** rather than instructing the user to
+  source a file that `$PROFILE` demonstrably does not read. `0.2.14` measured that; nothing said it
+  out loud at install time until now.
+
+#### Scope, stated so the gaps are not read as oversights
+
+Template v2 covers the install/man/completions family. It does **not** cover
+`check`/`lint`/`test`/`pr`/`open-pr`/`merge-pr`, because those legitimately differ today
+(`--workspace` in retch, `--all-targets` in etr, bare here) and reconciling them is a behaviour
+change per repo rather than a copy. `man` stays project-specific: one repo commits its page, one
+gitignores it, one builds two. Also left alone and recorded in the template: `Justfile` vs
+`justfile`, `lint` vs `clippy`, and the two `NOTES.md` header formats.
+
+Verified by *running* every affected recipe rather than reading them — `0.2.12`'s lesson, where the
+one recipe that could destroy a tracked file was found by running it. `just --list` shows exactly
+two additions and no removals; every pre-existing recipe body was hash-compared via `just --show`
+and only `check` differs, being the one that gained the dependency.
 
 ### v0.2.22 — `next run` was the one line on Windows still in the platform's notation
 

@@ -52,40 +52,91 @@ set positional-arguments := true
 #
 # Adjust the prefix for a non-scoop install (typically `C:\Program Files\Git\usr\bin`).
 
-BASH_COMP  := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"`
-ZSH_COMP   := `echo "${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"`
-FISH_COMP  := `echo "${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions"`
-ELVISH_COMP := `echo "${XDG_CONFIG_HOME:-$HOME/.config}/elvish/lib"`
-# nushell's autoload directory is NOT the XDG one on Windows, and getting this wrong is silent.
+# ===== PROJECT — the only part of the install family this repo owns =====
 #
-# `$nu.user-autoload-dirs` on Windows is exactly `%APPDATA%\nushell\autoload`; nushell there does
-# not read `~/.config/nushell/autoload` at all, whatever XDG_CONFIG_HOME says. So the XDG form
-# writes a completion file to a directory nushell never consults: `install-completions` reports
-# success, and `rusticprofile <tab>` produces nothing, with no error anywhere to explain it.
-#
-# Three details this expression exists for, each of which breaks it if dropped:
-#   * `${APPDATA:-}`, not `$APPDATA` — just's default shell is `sh -cu`, and `-u` aborts on an
-#     unset variable, which is every Unix host.
-#   * `tr` — `$APPDATA` is a native Windows path full of backslashes, and `sh` treats those as
-#     escapes. Windows accepts forward slashes in every path API.
-#   * `'\\\\'`, four backslashes, NOT two. Two survive just and `sh` as a single backslash, which
-#     `tr` reads as a trailing unescaped one — it still substitutes correctly, but warns:
-#
-#         tr: warning: an unescaped backslash at end of string is not portable
-#
-#     on stderr, on every invocation that evaluates this variable. Four deliver the escaped `\\`
-#     `tr` expects. Measured on Windows through `just --evaluate` rather than a `sh -c` probe,
-#     because PowerShell rewrites backslashes in native arguments and reports the opposite.
-#   * the else branch is byte-for-byte the old expression, so no Unix host changes. `tr` runs
-#     only inside the then-branch, so this quoting cannot affect a host where APPDATA is unset.
-NU_COMP    := `if [ -n "${APPDATA:-}" ]; then printf '%s/nushell/autoload' "$(printf %s "$APPDATA" | tr '\\\\' '/')"; else echo "${XDG_CONFIG_HOME:-$HOME/.config}/nushell/autoload"; fi`
+# The COMMON block below is written against these, so it can be byte-identical across
+# repos that ship different binaries. `etr` sets BINS to two names; this repo has one.
+BINS      := "rusticprofile"
+MAN_PAGES := "docs/rusticprofile.1"
 
-# PS_COMP is very likely wrong on Windows in the same way, and is deliberately NOT changed here.
-# `~/.config/powershell` is correct for pwsh on Linux and macOS; on Windows the profile directory
-# is under `Documents\PowerShell`, which OneDrive folder-redirection can move. Guessing that path
-# from a Linux host would replace a known-harmless wrong answer with an unknown one. See NOTES.md.
-PS_COMP    := `echo "${XDG_CONFIG_HOME:-$HOME/.config}/powershell"`
+# Do NOT edit inside the markers below. Edit templates/justfile-common.just, bump the
+# version in the marker, and propagate to the sibling repos in their own PRs.
+# `just standard-check` fails if this block and that file disagree, and `just check`
+# depends on it — so drift is a build failure rather than a discovery years later.
+# >>> COMMON (template v2)
+# The interpreter is resolved ONCE per line, and a missing one is a hard error. The
+# `python3 … 2>/dev/null || python …` idiom is deliberately NOT used: it retries on ANY
+# failure, so a real error inside the script gets re-run and reported as if the
+# interpreter were the problem.
+PY := `command -v python3 || command -v python || echo PYTHON-NOT-FOUND`
 
+# Install from this checkout: binary, man page(s) and completions.
+#
+# The dependencies are the point. `cargo install` alone replaces the binary and leaves the
+# man page and completions at whatever version last ran their recipe — measured on a host
+# whose page was ELEVEN releases stale with nothing reporting it.
+install: install-man install-completions
+    cargo install --path .
+
+# Install a RELEASED tag: binary, man page(s) and completions, all three FROM THAT TAG.
+#
+# **It deliberately does NOT depend on `install-man`/`install-completions`**, because those
+# work from the checkout. Reusing them would pair a tag's binary with the worktree's man
+# page and completions — on a checkout one release ahead, a v0.2.22 binary with a v0.2.23
+# page. Mismatched artefacts that each look fine is the failure class this standard exists
+# to remove, so the three sources are made to agree: binary from the tag, completions from
+# THE INSTALLED BINARY (`--from-path`), man page from the tag (`--from-tag`).
+#
+# Never `--path`: on a Syncthing-shared checkout that builds from a directory other
+# machines write into. Takes a bare version and normalises a leading `v`.
+install-tag VERSION:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    V="{{VERSION}}"; V="${V#v}"
+    [ -n "$V" ] || { echo "error: install-tag needs a version, e.g. just install-tag 0.2.22" >&2; exit 1; }
+    git rev-parse -q --verify "refs/tags/v${V}" >/dev/null || {
+        echo "error: tag v${V} is not in this clone. Run: git fetch --tags" >&2; exit 1; }
+    REPO=$(git config --get remote.origin.url)
+    echo "Installing from tag v${V} of ${REPO}"
+    cargo install --git "$REPO" --tag "v${V}" --locked --force
+    # POST-CONDITION: cargo prints a replacement line, but only a version query proves which
+    # binary is on PATH now.
+    for b in {{BINS}}; do
+        command -v "$b" >/dev/null 2>&1 || { echo "error: $b is not on PATH after install" >&2; exit 1; }
+        echo "  $b -> $("$b" --version)"
+    done
+    "{{PY}}" scripts/install_man.py {{MAN_PAGES}} --from-tag "v${V}"
+    "{{PY}}" scripts/install_completions.py {{BINS}} --from-path
+
+# Install the man page(s) to the XDG man directory.
+install-man: man
+    @"{{PY}}" scripts/install_man.py {{MAN_PAGES}}
+
+# Generate and install shell completions for every binary.
+#
+# Python rather than a just recipe, which is retch's finding and the more portable
+# mechanism: no `sh`, no `cygpath`, no coreutils, nothing from Git's `usr\bin` on Windows.
+# A `bash` shebang recipe cannot run on Windows without `cygpath` at all, and even a plain
+# `sh` recipe still needs an `sh` on PATH.
+install-completions: build
+    @"{{PY}}" scripts/install_completions.py {{BINS}}
+
+# Prove the vendored helpers still behave the way the standard requires.
+#
+# **This runs the helpers' own self-tests rather than diffing text**, and that is the whole
+# point: three separate repositories cannot diff each other's files, but each can prove its
+# copy still behaves correctly — which is the property that was actually violated when two
+# repos quietly shipped the pre-fix nushell path for months. A text diff would also have
+# passed happily on a repo that had never adopted the standard at all.
+standard-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "{{PY}}" != "PYTHON-NOT-FOUND" ] || { echo "error: no python3/python on PATH" >&2; exit 1; }
+    "{{PY}}" scripts/install_completions.py --self-test
+    "{{PY}}" scripts/install_man.py --self-test
+# <<< COMMON
+
+# ===== PROJECT-SPECIFIC — everything below is this repo's own =====
 # Default recipe
 default:
     @just --list
@@ -115,7 +166,7 @@ lint:
     cargo clippy -- -D warnings
 
 # Run strict checks (formatting, linting, golden argv files) as done in CI
-check: golden-is-current
+check: golden-is-current standard-check
     cargo fmt -- --check
     cargo clippy -- -D warnings
 
@@ -156,10 +207,6 @@ golden-is-current:
 audit:
     @command -v cargo-audit >/dev/null || cargo install cargo-audit
     cargo audit
-
-# Install the binary, man page, and shell completions
-install: install-man install-completions
-    cargo install --path .
 
 # The version is read from Cargo.toml into the .TH footer, so the man page and the
 # package can never disagree about which release is being documented.
@@ -203,71 +250,6 @@ man:
         echo "       substitution did nothing on this platform." >&2
         exit 1
     fi
-
-# Install man page to XDG user location (~/.local/share/man)
-install-man: man
-    @mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/man/man1"
-    install -m 644 docs/rusticprofile.1 "${XDG_DATA_HOME:-$HOME/.local/share}/man/man1/rusticprofile.1"
-    @echo "Man page installed to ${XDG_DATA_HOME:-$HOME/.local/share}/man/man1/"
-
-# Install shell completions for all supported shells to XDG user locations
-install-completions: build
-    @# Rationale lives INSIDE the body, prefixed `@#`, for two reasons that pull together here.
-    @# just takes the last contiguous comment block ABOVE a recipe as its `--list` description, so
-    @# putting this there replaces the description with its own last line — the v0.1.2 bug. And in
-    @# a non-shebang recipe an unprefixed `#` line is echoed as if it were a command, so the `@`
-    @# is what keeps it quiet. `@#` gives a comment that neither displaces the description nor
-    @# prints: just suppresses the echo, and `sh` treats the rest as a comment.
-    @#
-    @# **This is deliberately NOT a shebang recipe, and that is a portability fix rather than a
-    @# style choice.** On Windows, just translates a shebang recipe's temporary script path with
-    @# `cygpath`, so this recipe used to fail before running a single line:
-    @#
-    @#     error: could not find `cygpath` executable to translate recipe
-    @#     `install-completions` shebang interpreter path: program not found
-    @#
-    @# Identically from PowerShell and from nushell — the calling shell was never the variable,
-    @# and the per-shell PATH workarounds suggested along the way were treating the symptom. A
-    @# plain recipe runs through just's own default `sh -cu`, needs neither `cygpath` nor `bash`,
-    @# and therefore works with no setup at all, from any shell. Measured on a default Windows
-    @# PATH: `mkdir -p` runs, and `sh` resolves the extensionless `.exe`. `install-man` was always
-    @# a plain recipe, which is exactly why it kept working while this one did not.
-    @#
-    @# The cost is that each line is its own shell, so nothing here may depend on state from the
-    @# line above — hence the zsh check being one long line, and the binary path being
-    @# interpolated rather than held in a variable.
-    @mkdir -p "{{BASH_COMP}}" "{{ZSH_COMP}}" "{{FISH_COMP}}" "{{ELVISH_COMP}}" "{{NU_COMP}}" "{{PS_COMP}}"
-    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions bash        > "{{BASH_COMP}}/rusticprofile"
-    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions zsh         > "{{ZSH_COMP}}/_rusticprofile"
-    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions fish        > "{{FISH_COMP}}/rusticprofile.fish"
-    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions elvish      > "{{ELVISH_COMP}}/rusticprofile.elv"
-    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions nushell     > "{{NU_COMP}}/50rusticprofile-completions.nu"
-    @"{{justfile_directory()}}/target/debug/rusticprofile" --completions power-shell > "{{PS_COMP}}/rusticprofile.ps1"
-    @echo "Installed completions for rusticprofile"
-    @echo ""
-    @# zsh only reads completion functions from directories on `fpath`, and
-    @# ~/.local/share/zsh/site-functions is NOT on it by default on every distribution.
-    @# Writing the file there and printing "auto-loaded" was a lie on any such machine —
-    @# the completion silently never loaded, and `rusticprofile config --<tab>` produced
-    @# nothing with no indication why. Check instead of claiming.
-    @#
-    @# `zsh -i` is required, not optional. A non-interactive zsh sources neither .zshrc nor
-    @# anything it includes, so `fpath` there is the built-in default and this check reported
-    @# NOT ACTIVE on a machine where completion was working perfectly — a false alarm telling
-    @# the user to fix something already correct, which is the mirror of the bug it replaced.
-    @if command -v zsh >/dev/null 2>&1; then if zsh -i -c 'print -l $fpath' 2>/dev/null | grep -qx "{{ZSH_COMP}}"; then echo "  zsh        auto-loaded from {{ZSH_COMP}}"; else printf '  zsh        NOT ACTIVE — %s is not on your $fpath.\n             The file is written but zsh will never read it. Add this to\n             ~/.zshrc BEFORE compinit runs, then restart the shell:\n\n                 fpath+=(%s)\n\n' "{{ZSH_COMP}}" "{{ZSH_COMP}}"; fi; fi
-    @echo "Notes:"
-    @echo "  bash       source {{BASH_COMP}}/rusticprofile  (or restart shell)"
-    @echo "  fish       auto-loaded from {{FISH_COMP}}"
-    @echo "  elvish     add to rc.elv:  eval (slurp < {{ELVISH_COMP}}/rusticprofile.elv)"
-    @echo "  nushell    auto-loaded from {{NU_COMP}}"
-    @echo "  powershell add to \$PROFILE:  . {{PS_COMP}}/rusticprofile.ps1"
-    @echo ""
-    @echo "  Shell aliases do not inherit completions automatically. For an alias like"
-    @echo "  \`rp\`, tell your shell they are the same command:"
-    @echo "      zsh   compdef rp=rusticprofile"
-    @echo "      fish  complete -c rp -w rusticprofile"
-    @echo "      bash  complete -o default -F _rusticprofile rp"
 
 # Run criterion micro-benchmarks (none yet — see the NOTES.md backlog)
 bench:
