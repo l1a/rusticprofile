@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.27)
+## Current State (v0.2.28)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -756,6 +756,53 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.28 — the AUR package tracks 0.2.27, and container egress was broken on the publishing host
+
+**Packaging only; no code changed.** `packaging/aur/` moves `0.2.24` → **`0.2.27`**. `pkgver` tracks
+the **released** tag, which is why this release carries `pkgver=0.2.27` while calling itself
+`0.2.28` — the repository moves on after a release; the package does not. Same call `0.1.22`,
+`0.2.8`, `0.2.15`, `0.2.18` and `0.2.25` made.
+
+Container-verified before pushing, not assumed: `makepkg` completes, **440 tests pass, 0 failed**
+(372 unit + 5 doc + 63 integration), and the container reports **`rustic 0.11.3`** — so the three
+rustic-backed integration tests genuinely ran instead of skipping themselves with a printed notice,
+which is the whole reason `aur-verify` installs rustic (`0.1.1`). `namcap PKGBUILD` clean; the
+package warnings are the two expected ones (`gcc-libs`, `rustic`) plus the standard glibc/libgcc
+implicit-satisfaction notices. Payload: the binary, three shell completions, the gzipped man page,
+README and LICENSE.
+
+#### `just aur-verify` failed on this host, and the cause is not in this repository
+
+It reported only `container verification failed`, because the recipe sends `pacman` to
+`/dev/null` — reasonable for a clean run and unhelpful for a broken one. Reproducing the container
+step by hand showed `Could not resolve host` for every Arch mirror, and then that a container had
+**no egress at all**: a raw TCP connect to `1.1.1.1:443` failed as well, so it was never a DNS
+problem.
+
+**The cause is a stale default route on the publishing host.** Rootless podman uses `pasta`, which
+picks an interface by route priority, and this machine carries two default routes to the same
+gateway:
+
+```
+default via 10.10.1.1 dev eth0    metric 100    <- up, holds a lease, no working egress
+default via 10.10.1.1 dev wlp2s0  metric 300    <- what actually carries traffic
+```
+
+Measured: `--network=pasta:--interface,eth0` fails, `--interface,wlp2s0` succeeds, and
+`--network=host` succeeds. The host itself is unaffected, which is what makes this hard to see —
+every `curl`, `git push` and `cargo publish` in the same session worked.
+
+**The recipe was not changed.** It is correct, it worked from this host for `0.2.25`, and editing a
+tracked recipe to route around one machine's stale route is the mistake `~/AGENTS.md` records for
+patching a shared Makefile to work around a local `eget` failure. The verification was run by hand
+with `--network=host` as the single deviation, and that is stated rather than glossed. **The host
+fix — dropping or de-prioritising the dead `eth0` default route — belongs to the host, not here.**
+
+*Worth noting for the next person who hits it: the recipe's silence is what cost the time. A
+`pacman` failure inside it is invisible, so the first useful signal only appeared on running the
+container step manually. Giving that step a visible failure path is a candidate change, and it is
+deliberately not made in a packaging-only release.*
 
 ### v0.2.27 — `retention` shows how far back each period reaches, and `config --show` shows both halves
 
