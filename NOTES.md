@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.23)
+## Current State (v0.2.24)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -689,6 +689,66 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.24 — the gate triad is now checked, and two repos have no CI gate on merge at all
+
+**Tooling only.** `0.2.23` brought the install family under `standard-check` and recorded that the
+`pr`/`open-pr`/`merge-pr` triad was **not** covered — their behaviour was aligned by hand and
+nothing verified it. This covers it, and auditing the three repos to build the check found
+something worse than drift.
+
+#### `merge-pr` has no CI gate at all in retch and etr
+
+Both go straight from the branch check to `gh pr merge --squash --delete-branch`. No check of the
+status rollup, in any form.
+
+**`v0.1.5` added that gate here after PR #19 merged with `build (fedora-x64)` red**, and `0.2.1`
+extended it after an *empty* rollup passed vacuously — printing "CI is green." over a commit CI had
+never seen. Neither fix ever reached the siblings. Every merge performed in those repos this month
+went through ungated; they were safe only because the person merging checked CI by hand first.
+
+That is the same cross-repo staleness as the nushell completion path, but on the recipe that
+performs the irreversible action.
+
+#### `scripts/gate_conformance.py` — and what it honestly does not do
+
+It asserts nine guards across the three recipes: `pr` reads `PR_CONFIRM`, refuses rather than
+defaulting to yes, and still demands an explicit `y`; `open-pr` runs the gate first, creates the
+PR, and pushes **only** when there is no upstream; `merge-pr` refuses on a red check, on an empty
+rollup, and while checks are still running.
+
+**It is structural, not behavioural, and its docstring says so.** It proves a guard is present, not
+that it works. That limit is deliberate: the install helpers are pure functions over a path and an
+environment, so their self-test can *call* them — but `pr` runs the whole suite and regenerates the
+man page, `open-pr` pushes and opens a PR, and `merge-pr` merges. Executing those from a `check`
+dependency would be slow, side-effecting and occasionally destructive. So the guards are asserted
+present here and exercised for real on every PR, which is the strongest thing available short of
+making `just check` open pull requests.
+
+**Assertions run against code with comments stripped.** A comment explaining a guard must not
+satisfy the check for a recipe that lost it — precisely how an `if: false` inside a comment read as
+an active guard during this work, in retch's review workflow.
+
+#### The self-test caught two of my own rules being too loose
+
+Worth recording, because it is the check checking itself:
+
+| rule | why it was wrong |
+|---|---|
+| `pr:confirm-env` | matched the *string* `PR_CONFIRM` anywhere, so help text mentioning it passed. Now requires a parameter expansion — the variable must actually be **read**. |
+| `merge-pr:refuse-pending` | accepted a bare `""` as evidence of a pending check, which matches almost any shell. Now requires the state to be **named**. |
+
+**And one "watch it fail" of mine was itself broken**, which is the more useful half: the first
+attempt to break the empty-rollup guard changed only its *message*, so the rule correctly still
+passed — and a second attempt silently matched nothing at all. Only a loose regex that removed four
+real lines actually tripped it. A check that returns the expected answer for the wrong reason is
+this project's most-repeated failure, and it showed up here inside the verification of a checker
+written to prevent it.
+
+Verified failing on real removals: stripping the `FAILURE|TIMED_OUT` test, dropping `@{upstream}`
+so `open-pr` would push unconditionally, and deleting the empty-rollup comparison.
+
+Template v3. `just check` depends on `standard-check`, so a missing guard fails the build.
 
 ### v0.2.23 — the sibling repos carry completion bugs this one already fixed
 
