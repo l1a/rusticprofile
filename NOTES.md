@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.24)
+## Current State (v0.2.25)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -472,6 +472,45 @@ Smaller items:
       `list-repos`, the package page against a 404 control, and a fresh clone whose tip is our
       commit — **not** from `rpc/v5/info`, which reported `resultcount: 0` for the freshly pushed
       package and is an index, not an existence oracle.
+
+      **Kept up to date since: `0.2.17-1` (`0.2.18`) and `0.2.24-1` (`0.2.25`).** Each bump goes to
+      the newest *released* tag, once, rather than walking every version in between.
+- [ ] **Nothing reports that the AUR has fallen behind, and it is the only channel that can.**
+      Found while answering *"does this repo need a crates or AUR publish?"* — crates.io and the
+      GitHub release were both current at `0.2.24` while the AUR served `0.2.17`, **seven version
+      numbers and three releases old**, with a package page that looks perfectly healthy throughout.
+      Nothing surfaced it; the question did.
+
+      **The cause is structural, so it will recur.** `just aur-publish` refuses unless `.SRCINFO`
+      agrees with `PKGBUILD`, and regenerating `.SRCINFO` needs **podman**, which the Windows host
+      releases are cut from does not have. So the AUR step requires a second machine and therefore a
+      second session, and it is skipped by default rather than by decision. *(The older claim that a
+      Windows host cannot reach the AUR at all is no longer true — see `0.2.25`. Podman blocks
+      `.SRCINFO` generation, not the push.)*
+
+      **Not obviously fixable inside `just check`**, which is why this is an item rather than a
+      change: comparing the AUR's served version against `git describe` puts a network call to a
+      third-party registry inside an otherwise offline gate, and `0.2.21` refused exactly that trade
+      when it declined to derive the release sentence. A `doctor`-style separate command, or a step
+      in the release procedure rather than the gate, is the more likely shape. **Third member of the
+      set `0.2.23` names**: the binary is only as new as the last `cargo install`, the man page only
+      as new as the last `install-man`, and the package only as new as the last `aur-bump`.
+- [ ] **`README.md` does not mention the AUR package at all**, and has not since it was first
+      published on 2026-08-11 (`0.2.15`). The install section offers three routes — crates.io, a
+      prebuilt binary, a checkout — and an Arch user's shortest route is absent, so the one document
+      a new user reads points them past the package this project maintains.
+
+      **This is `0.2.15`'s own finding arriving again in the same section.** That release fixed the
+      install section for exactly this reason (*"it said `git clone` … and nothing else"* while the
+      crate had been on crates.io since `v0.1.0`) and, in the same breath, published the AUR package —
+      without adding it to the list it was rewriting. **The part of a document you are editing is not
+      the part that goes stale**; the section was open in the editor and the route still did not get
+      added.
+
+      Deliberately **not** fixed in `0.2.25`: that release is packaging-only and adding an install
+      route is a README change with its own wording to get right (which helper to name, whether to
+      caveat that AUR packages are user-maintained). Bundling it would put an unreviewed doc edit
+      inside a publish, which is the shape `0.2.4` refused. Cheap, and worth its own PR.
 - [x] **Publishing decision — taken, and executed as recommended.** The recommendation was
       *publish at M2, when `schedule`/`unschedule`/`status` make the README's first paragraph
       true.* M2 landed in `0.0.19` and `v0.1.0` was tagged and published then, so it was
@@ -689,6 +728,78 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.25 — the AUR package tracks 0.2.24, and it is the one channel that drifts by construction
+
+**Packaging only; no code changed.** `packaging/aur/` moves `0.2.17` → **`0.2.24`** and is published.
+`pkgver` tracks the **released** tag, which is why this release carries `pkgver=0.2.24` while calling
+itself `0.2.25` — the repository moves on after a release; the package does not. Same call `0.1.22`,
+`0.2.8`, `0.2.15` and `0.2.18` made.
+
+**PUBLISHED — <https://aur.archlinux.org/packages/rusticprofile>, `0.2.24-1`**, AUR git tip
+`7b448c5` *"rusticprofile 0.2.24"*, pushed as `b4c6bae..7b448c5`. Bumped once at the newest released
+tag rather than walked through the three intervening releases nobody could install (`v0.2.19`,
+`v0.2.20`, `v0.2.22`) — seven version numbers in all.
+
+#### The finding: the AUR cannot be published from the machine releases are cut from
+
+The other two channels went out with `v0.2.24` and this one did not, and the reason is structural
+rather than an oversight. **`just aur-publish` refuses unless `.SRCINFO` agrees with `PKGBUILD`, and
+regenerating `.SRCINFO` is `just aur-srcinfo`, which requires podman** — absent on the Windows host
+this project is built and released from. So the supported path needs a *second* machine, which means
+a second session, which means the step is skipped by default rather than by decision.
+
+**This is not the connectivity problem previously recorded**, and that correction matters because it
+sent a reader to the wrong cause: `0.2.15` and `0.2.18` both state that a Windows host cannot reach
+the AUR at all, its bundled OpenSSH being unable to negotiate
+`sntrup761x25519-sha512@openssh.com`. That has since stopped being true — OpenSSH there is now
+10.3p1, the algorithm is available, and an authenticated probe returns the full command list.
+**Podman is the only remaining blocker, and it blocks `.SRCINFO` generation, not the push.**
+
+**Nothing reports the drift.** `just pr` gates the version, the man page and the goldens; no gate
+knows what the AUR carries, and the package page looks perfectly healthy while serving a version
+seven numbers old. That is the same shape as `0.2.23`'s finding one layer out — a man page eleven
+releases stale on the release host, because `cargo install` replaces the binary and nothing else —
+and the same shape as the release-announcing paragraph `0.2.21` deleted. **An artefact nothing
+re-checks is an artefact that rots**, and this one rots publicly.
+
+*Deliberately not fixed here, on `0.2.11`'s precedent: a check that compares the AUR's served version
+against `git describe` would put a network call to a third-party registry inside an otherwise offline
+gate, which is the trade `0.2.21` refused when it declined to derive the release sentence. Recorded in
+§4 instead.*
+
+#### Container-verified before the push, not assumed
+
+`archlinux:base-devel`: `makepkg` completes, **404 tests pass, 0 failed** (342 unit + 5 doc + 57
+integration), and the container reports **`rustic 0.11.3`** — so the three rustic-backed integration
+tests genuinely ran instead of skipping themselves with a printed notice, which is the whole reason
+`aur-verify` installs rustic (`0.1.1`). `namcap PKGBUILD` clean; the package warnings are the two
+expected ones (`gcc-libs`, `rustic`) plus the standard glibc/libgcc implicit-satisfaction notices.
+Payload: the binary, three shell completions, the gzipped man page, README and LICENSE.
+
+`aur-publish`'s guards all fired first — `.SRCINFO` agrees with `PKGBUILD`, and the declared sha256
+was re-derived from **the tarball that will actually be downloaded** — and the checksum was
+independently re-derived a third time by hand against the same URL.
+
+#### The RPC lag, reproduced a third time and now stable enough to state as a rule
+
+Measured immediately after the push, with a 404 control:
+
+| oracle | says |
+|---|---|
+| `git ls-remote` on the AUR repo | tip `7b448c5` — **ours** |
+| a fresh clone's `PKGBUILD` and `.SRCINFO` | **byte-identical** to this repo's, `pkgver = 0.2.24` |
+| package page (against a 404 control) | **200** vs 404 for a nonexistent name |
+| **RPC `info`** | `resultcount: 1`, **version `0.2.17-1`** |
+| **RPC `search`** | `resultcount: 1`, **version `0.2.17-1`** |
+
+`0.2.15` found `info` returning `resultcount: 0` for a package that demonstrably existed; `0.2.18`
+found both endpoints reporting the *previous version*; this is the second observation of that second
+shape, from a different host. **So the rule is no longer provisional: after a push, the RPC answers
+about the state before it.** Asking either endpoint *"is `0.2.24` published?"* yields a confident,
+wrong "no". The authoritative oracle is the git repository the AUR actually serves — and the fresh
+clone diffing byte-identical against the working tree is a stronger form of that check than reading
+its `pkgver`, because it also proves nothing was mangled in transit.
 
 ### v0.2.24 — the gate triad is now checked, and two repos have no CI gate on merge at all
 
