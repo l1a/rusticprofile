@@ -204,10 +204,10 @@ The XDG variables are honoured **on macOS and Windows too**, falling back to `~/
 ## Installation
 
 > **`rustic` itself is a separate prerequisite.** rusticprofile *spawns* rustic — it does not
-> vendor, bundle or depend on it as a crate, so **none of the routes below bring it with them**.
-> This is not a theoretical footnote: a host in this project's own fleet had `cargo` and `restic`
-> and no `rustic` at all, and the failure surfaces at the first scheduled run rather than at
-> install time.
+> vendor, bundle or depend on it as a crate, so **no route below brings it with them except the
+> Arch package**, which declares it as a dependency. This is not a theoretical footnote: a host in
+> this project's own fleet had `cargo` and `restic` and no `rustic` at all, and the failure surfaces
+> at the first scheduled run rather than at install time.
 >
 > ```bash
 > cargo install rustic-rs      # or your distribution's rustic package
@@ -219,8 +219,24 @@ The XDG variables are honoured **on macOS and Windows too**, falling back to `~/
 cargo install rusticprofile
 ```
 
-That installs the binary only. The man page and shell completions come from a checkout (below) or
-from a distribution package.
+That installs the binary only. The man page and shell completions come from the Arch package or a
+checkout, both below.
+
+**On Arch Linux** — from the AUR, where it is maintained by this project:
+
+```bash
+paru -S rusticprofile        # or your AUR helper of choice
+```
+
+**This is the shortest route that also brings the man page, completions and `rustic`.** The package
+declares `depends=('gcc-libs' 'rustic')`, so an AUR helper installs rustic from Arch's own
+repositories alongside it — the one route where the prerequisite box above does not apply. Its
+payload is the binary, the gzipped man page, `LICENSE`, `README.md`, and completions for bash, fish
+and zsh.
+
+It tracks the newest **released tag**, not `main`, so it can sit a release behind while the
+repository moves on — that is by design, not staleness. `pacman -Qi rusticprofile` against
+[the latest release](https://github.com/l1a/rusticprofile/releases/latest) is the check.
 
 **A prebuilt binary** — every release ships five targets plus the man page, from
 [the latest release](https://github.com/l1a/rusticprofile/releases/latest):
@@ -235,7 +251,8 @@ Windows on arm64 is deliberately included rather than left to `cargo`: it is pre
 least likely to have a Rust toolchain on it, so "supported" without a binary would mean supported
 for nobody who needs it.
 
-**From a checkout** — the only route that also installs the man page and completions:
+**From a checkout** — the only route that installs completions for all **six** shells, and the only
+one that works from an arbitrary commit rather than a release:
 
 ```bash
 git clone https://github.com/l1a/rusticprofile.git

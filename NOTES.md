@@ -238,7 +238,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.25)
+## Current State (v0.2.26)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -495,10 +495,18 @@ Smaller items:
       in the release procedure rather than the gate, is the more likely shape. **Third member of the
       set `0.2.23` names**: the binary is only as new as the last `cargo install`, the man page only
       as new as the last `install-man`, and the package only as new as the last `aur-bump`.
-- [ ] **`README.md` does not mention the AUR package at all**, and has not since it was first
-      published on 2026-08-11 (`0.2.15`). The install section offers three routes — crates.io, a
-      prebuilt binary, a checkout — and an Arch user's shortest route is absent, so the one document
-      a new user reads points them past the package this project maintains.
+- [x] **DONE in `0.2.26` — `README.md` now lists the AUR.** It had not since the package was first
+      published on 2026-08-11 (`0.2.15`). The install section offered three routes — crates.io, a
+      prebuilt binary, a checkout — and an Arch user's shortest route was absent, so the one document
+      a new user reads pointed them past the package this project maintains.
+
+      **The addition falsified two claims one screen up, and that is the finding** (`0.2.26`): the
+      prerequisite box's *"none of the routes below bring it with them"* about `rustic`, which the
+      package's `depends=('gcc-libs' 'rustic')` breaks, and the checkout route's *"the only route
+      that also installs the man page and completions"*, which its payload breaks. Both corrected in
+      the same change — the first sits in a safety box, and `0.2.17`'s rule is that a false claim
+      there is worse than an absent one. **Adding an option costs you every comparative claim already
+      written about the others**, and none of those live near the diff.
 
       **This is `0.2.15`'s own finding arriving again in the same section.** That release fixed the
       install section for exactly this reason (*"it said `git clone` … and nothing else"* while the
@@ -728,6 +736,58 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.26 — the README lists the AUR, and adding it falsified two claims one screen up
+
+**Documentation only; no code changed.** `0.2.25` published the AUR package at `0.2.24-1` and closed
+by recording that **`README.md` had never mentioned it** — in the three-route install section, since
+the package first went up on 2026-08-11. This adds it, and the interesting part is not the addition.
+
+#### Adding a route made two existing sentences false, and neither was about the AUR
+
+Both were true when written and both are load-bearing, which is why this is an entry rather than a
+one-line commit:
+
+| claim | why the addition breaks it |
+|---|---|
+| the prerequisite box: *"**none of the routes below bring it with them**"* — of `rustic` | the `PKGBUILD` declares `depends=('gcc-libs' 'rustic')`, and **Arch ships `rustic` in its own repositories**, so an AUR helper installs it alongside. Measured rather than assumed: `aur-verify`'s container gets it with a plain `pacman -S rustic` and reports `rustic 0.11.3` |
+| the checkout route: *"the only route that **also installs the man page and completions**"* | the built package's payload is the binary, the **gzipped man page**, `LICENSE`, `README.md` and completions for bash, fish and zsh — read off `tar tf` on the real `.pkg.tar.zst`, not inferred from the `PKGBUILD` |
+
+**The first is the one that mattered.** It sits in a `>` box about a prerequisite whose absence
+surfaces at the first scheduled run rather than at install time — so leaving it would have put a
+false claim in a safety notice, which is `0.2.17`'s rule verbatim: *a false claim in a safety section
+is worse than an absent one.* It now reads "no route below brings it with them **except the Arch
+package**".
+
+**The second was rescued rather than deleted, and the precise version is more useful than the old
+one.** The AUR ships **three** shells' completions; the checkout ships **six**. So the checkout route
+is still unique, on a sharper axis — six shells, and the only route that works from an arbitrary
+commit rather than a release. A claim that has to be narrowed is usually hiding a distinction worth
+stating.
+
+*Generalises past this change: **the cost of adding an option is not the option, it is every
+comparative claim already written about the others.** "The only route that…" and "none of them…" are
+both assertions about a set, and they silently become wrong when the set grows. Neither is anywhere
+near the diff you are writing.*
+
+#### One loose end resolved rather than added to
+
+The crates.io paragraph already ended *"the man page and shell completions come from a checkout
+(below) or **from a distribution package**"* — pointing at a package the document never named, which
+had been dangling since `0.2.15` wrote it. It now names the route.
+
+#### What the entry says about the package that the package cannot say itself
+
+**`pkgver` tracks the newest *released tag*, not `main`**, so the README states that it can sit a
+release behind by design. Without that a reader diffing `pacman -Qi` against `Cargo.toml` on `main`
+finds a mismatch and reads it as neglect — and `0.2.25` had just finished establishing that the same
+number *is* sometimes neglect, which makes distinguishing the two cases worth a sentence.
+
+#### The §4 item this closes, and the one it does not
+
+The README item is done. **"Nothing reports that the AUR has fallen behind" is untouched and still
+open** — it wants a `doctor`-style check or a release-procedure step, not a paragraph, and `0.2.21`'s
+refusal to put a registry call inside an offline gate still applies.
 
 ### v0.2.25 — the AUR package tracks 0.2.24, and it is the one channel that drifts by construction
 
