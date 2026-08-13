@@ -196,6 +196,17 @@ qualifies and exists; `check` would qualify. `forget` and `prune` do not — des
 their scoping belongs in the rustic profile where a flag typed at a prompt cannot contradict
 it. `restore` never does.
 
+**A constructed read-only command is a third category, and `retention` is the only one**
+(`0.2.27`). It emits `forget --dry-run --json`, so it is not a passthrough — it adds flags —
+and `forget` is on the excluded list because it is destructive, which `--dry-run` is measured
+not to be. What makes it permissible is that the dry run is **unexpressibly-absent** rather
+than merely intended: `retention_argv` calls the same `build_argv` the scheduled `forget` goes
+through, with `dry_run: true` hardcoded and no parameter that could switch it off, so the
+preview provably differs from the real operation by exactly `--dry-run` and `--json`. Two tests
+assert that, one of them at ladder rung 2 against the argv actually spawned. **The bar for the
+next command of this shape is that same standard**: not "it is read-only in practice" but "the
+destructive form cannot be constructed". *Evidence: `PLAN.md` §7.14, §5.12.*
+
 Two deliberate exceptions, both **read-only**, both because nothing else in the chain can
 catch a silent failure: rusticprofile parses `rustic.toml` to validate every `--name` it
 emits (rustic ignores an unknown one whenever a valid one is also given, exit 0, no
@@ -238,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.26)
+## Current State (v0.2.27)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -584,6 +595,15 @@ Smaller items:
       which no other platform can compute. So it wants a design decision — probably asking
       `pwsh -NoProfile -c 'Split-Path $PROFILE'` when one is on PATH and falling back to the XDG
       path otherwise — rather than a substitution.
+- [ ] **`retention` has no `--json`, on purpose — revisit only if someone asks** (`0.2.27`). Every
+      other reporting command here has one, so this is the asymmetry rather than the omission. A
+      `schema:` is a promise (`0.1.23`) and `0.2.22` refused to bundle unrequested schema surface
+      into a display change; nobody has asked for a machine-readable retention feed, and
+      `rusticprofile plan` prints the argv for anyone who wants to parse rustic's own
+      `forget --dry-run --json` directly. **If it is ever added**, the shape to emit is the
+      per-group slot summary rather than a re-serialisation of rustic's JSON, and the reason
+      strings must stay rustic's own words — a closed set of period names would silently drop
+      `quarter-yearly`, `half-yearly` or any of the twelve `within-*` forms.
 - [ ] **Verify that a `rustic prune` actually reclaimed packs.** Explicitly **not** one of
       `doctor`'s checks, recorded because it was nearly assumed to be. Check 2 detects a
       competing restic prune *schedule*; whether our own prune's deletion pass worked is pack
@@ -736,6 +756,224 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.27 — `retention` shows how far back each period reaches, and `config --show` shows both halves
+
+**Two requests, both from using the tool**: a `show` like the predecessor's, and a way to see which
+snapshot is the most recent yearly, monthly, daily. `PLAN.md` §7.14 carries the decision and §5.12
+the measurements, both written before the code per the §5.9/§7.9/§7.10/§7.13 precedent, because the
+first half moves the delegation boundary.
+
+**A patch bump, and the precedent is `0.2.13`.** This adds a `cli::Command` variant, which breaks an
+exhaustive match downstream — and `doctor` did exactly that as a patch. `0.2.0`'s minor was
+`schedule::Backend` *plus* a reversed v1 non-goal; neither applies here. Stated rather than assumed,
+because "new subcommand" invites reaching for a minor.
+
+#### The finding: rustic already computes the answer, and it is one key away from being unreadable
+
+`rustic forget --dry-run` has carried an `Action`/`Reason` column all along — it is restic's
+forget-dry-run reasons table, which rustic kept — so *which snapshot is the current yearly one* was
+never a computation this project had to do. That turns the request from a retention feature into a
+rendering one, which is what keeps it inside the boundary: **rustic decides, rusticprofile
+displays.**
+
+The trap is in the JSON:
+
+```text
+rustic snapshots --json  ->  [ { group_key, snapshots: [ … ] } ]
+rustic forget    --json  ->  [ { group_key, items:     [ { snapshot, keep, reasons } ] } ]
+```
+
+**`items`, not `snapshots`.** `0.2.13` measured the first shape for `doctor`; a parser written from
+it reads **zero** entries out of the second and reports an empty repository. Two shapes from one
+tool, differing by one key name, and the wrong one fails by looking clean. Hence a distinct
+`ParseError::NoItems` rather than an empty plan — the emptiness trap, closed deliberately.
+
+#### The dangerous part is not the profile, it is the flag — so it is made unexpressible
+
+A `forget` without `--dry-run` is the most destructive command this project could emit. It is closed
+by construction rather than by care: `retention_argv` calls the **same `build_argv`** the scheduled
+`forget` uses, with `dry_run: true` hardcoded and no parameter that could omit it, then appends
+`--json`. Three properties follow without anyone having to remember them — the flag cannot be
+dropped, the preview cannot drift from the operation it previews, and `--filter-host` comes along
+automatically because the real `forget` carries it. Same call as refusing a snapshot-set name that
+starts with `-`: make the mistake inexpressible, then assert it.
+
+**Every new guard was watched failing** (`0.2.17`'s rule). Setting `dry_run: false` makes
+`a_retention_preview_is_always_a_dry_run` fail with *"a retention preview without --dry-run would
+DELETE snapshots"*, naming the consequence rather than the assertion; reversing the newest
+comparison fails the ordering tests **and** the rustic-backed one; and deleting the words *"without
+changing anything"* from the command's description fails
+`the_retention_command_states_that_it_changes_nothing`. That last one exists because the description
+is where a reader learns that a command implemented by invoking `forget` deletes nothing — `0.2.17`
+is the precedent for guarding the sentence as well as the behaviour.
+
+#### Three measurements that decided the shape
+
+| measured, rustic 0.11.3 | consequence |
+|---|---|
+| a dry-run `forget` leaves the repository **byte-identical** — hashed file by file, before and after | this is ladder rung 5 and is safe against production |
+| rustic **refuses** a `forget` with no keep rule, and **`keep-delete` alone does not satisfy it** | a profile with no policy cannot mass-delete, by rustic's guard rather than ours. `keep-delete` is prune's grace period; the name invites the opposite conclusion, which is why it was measured |
+| with `--json`, rustic emits **no** human table (it goes to stderr otherwise) | the command shows one rendering rather than two |
+
+The reason strings are passed through **verbatim**. rustic offers 23 `keep-*` options including
+`quarter-yearly`, `half-yearly` and twelve `within-*` forms, so a closed enum here would silently
+drop whichever one a user configures next — `0.2.22`'s argument against re-rendering what the
+platform already formats.
+
+#### `config --show` prints the effective configuration, which is two files
+
+The predecessor's `show` prints a profile's *effective* config; here that is `jobs.yaml` **and**
+`rustic.toml`, and only the first was ever printed — the half that cannot lose data. Everything §3a
+invariant 5 lists lives in the other one. So the same command grows a `rustic profile:` block:
+repository, password mechanism, `group-by`, the `keep-*` rules, the scoping filters, and each set
+with its label and source count. A set with no label is called out, because an unlabelled set shares
+one retention group with every unlabelled snapshot in the repository, including a second tool's.
+
+**Not a new verb**, and not an echo of the profile. A second command answering an overlapping
+question is how the copy nobody re-reads goes stale (`0.2.4`, now paid for in five places), and a
+partial reprint of rustic's format would be a second copy of it. **No new file is read either** —
+`config/rustic_toml` already parses that profile for three checks, and the added fields come out of
+the same pass.
+
+#### Then the summary turned out to answer nothing, and that is the bigger finding
+
+**Ken read the output and asked what it was for.** The `retention` command as first built reported,
+per period, the *newest* snapshot holding it — and that is **always the group's newest snapshot**,
+because the newest snapshot fills every period it is eligible for. Across his four groups, twenty
+summary lines named four snapshots. Every line was true; together they said nothing.
+
+**The requirement was never about retention policy.** It is restore-hunting: *I need a file from
+around date D — which snapshot do I use, and how close to D can I get?* Retention matters only
+because it makes snapshot density non-uniform — the last day hour by hour, the last week day by
+day, the last year month by month — so the useful fact is the one that varies per period: **how far
+back each resolution reaches.**
+
+```
+  host host-a / label (none)   38 snapshots, 38 kept, 0 would be removed
+    newest kept    0892a9f2  Mon 2026-08-03 10:00:43 PDT
+    resolution available, oldest snapshot holding each period
+      hourly          24 held   back to 8e843752  Tue 2026-07-28 20:00:08 PDT
+      daily            7 held   back to 31ca4661  Thu 2026-07-23 23:00:05 PDT
+      weekly           4 held   back to 885b2ae6  Tue 2026-07-14 06:00:21 PDT
+      monthly         12 held   back to fbe61648  Tue 2025-09-30 18:00:22 PDT
+      yearly           2 held   back to fb265bd8  Wed 2025-12-31 12:23:17 PST
+```
+
+The newest holder is stated **once**, and per-period only when it differs from the group's newest
+kept snapshot — which a `keep-tags`-only policy can make happen, so it is checked rather than
+assumed.
+
+**`--near DATE` is the other half**, and it is the direct answer to the question:
+
+```
+    nearest before   f93b52fc  Thu 2026-04-30 17:00:05 PDT      14d 6h earlier  (monthly)
+    nearest after    27d99f0d  Wed 2026-05-27 17:00:16 PDT     12d 17h later    (monthly)
+```
+
+The reasons in brackets name the resolution tier, which says whether looking for something closer
+is worth the effort. Snapshots the policy *would remove* are included and labelled — a dry run has
+removed nothing, so they are still places a file can be recovered from. A group with no snapshot on
+one side says so; on a migrated label that absence marks the cutover, which is how his `core` label
+reports nothing before 2026-08-03.
+
+**`--all` now lists oldest first**, matching the predecessor's `forget` table and reading as a
+timeline: sparse monthly snapshots at the top thickening into hourly at the bottom.
+
+**What is deliberately NOT built, because rustic already does it.** The exact query — *the single
+newest snapshot at or before a date* — is `rustic snapshots --filter-before`, reachable today
+through the existing passthrough. Verified against the live repository. It is documented in the man
+page instead of reimplemented, **including the trap**: rustic's default `group-by` includes `paths`,
+so the obvious form returns one row per distinct source list — three answers, all correct, none of
+them the one asked for. Pinning `--group-by host,label` gives the single right row.
+
+#### The one that got past the tests and out to the user: every timestamp read as unreadable
+
+**Reported by Ken running it against the live repository**, which is the sixth time in this series
+that using the tool found something no test could — `0.2.5`, `0.2.6`, `0.2.10`, `0.2.20` and
+`0.2.22` are the others. Every slot on every group printed:
+
+```
+    hourly            24 held   newest (no readable timestamp)
+```
+
+**The cause is one character, and the reason it survived is the fixture.** A real `rustic backup`
+stamps the instant it ran, to the nanosecond — `2026-08-13T09:01:09.283454653-07:00` — while this
+crate's own status record is written to whole seconds. Retention read rustic's stamps through
+`report::recorded_instant`, whose format is `run::status::STAMP_FORMAT`, and that rejects a
+fractional second. **It is the `.ToString('o')` trap `0.2.22` pinned by name**, arriving from the
+other direction: that release added a guard to *reject* fractional seconds on the Windows next-run
+path, and this one reused that same strict parser on a source that always has them.
+
+**Every fixture avoided it, and avoided it for a reason that looked like diligence.** Building a
+repository spanning 2024–2026 needs `rustic backup --time "2026-08-13 09:00:00"`, and a snapshot
+made that way lands on a **whole second**. So all eight fixture timestamps parsed, twelve unit
+tests and a rustic-backed integration test passed, and the one shape a production repository
+actually contains was the one never tested. `0.2.5`'s sentence, unchanged: *a check is only worth
+what its oracle is worth, and here the oracle was a repository built to make the test convenient.*
+
+**Fixed as two parsers, not one widened parser.** `%.f` would read both, and using it for
+`recorded_instant` would have removed `0.2.22`'s guard — so `report` now carries `RUSTIC`
+(`%Y-%m-%dT%H:%M:%S%.f%:z`) beside `RECORDED`, with one shared renderer so the layout cannot
+diverge and one shared `instant_in` so neither can drift from its own format. A test asserts the
+split in **both** directions, including that `recorded_instant` still cannot read a rustic stamp —
+if it ever can, the two have been merged and the Windows guard is gone.
+
+**The fixture is the real repair.** `MEASURED` now carries nanoseconds on its newest entries, the
+rustic-backed test takes one snapshot **without** `--time` so its newest is a real stamp, and it
+asserts that *every* slot names a holder — the assertion whose absence let a `None` on every slot
+look like a pass. Both were watched failing against the original parser.
+
+#### Four things running it found that the tests did not
+
+`0.2.6`'s rule — a green suite is not the evidence. Each of these came out of using the command:
+
+1. **The full 64-character snapshot id made every line wrap.** rustic's own tables show 8, and
+   `rustic forget --help` documents `"01a2b3c4"` as a way to identify a snapshot — so 8 is both
+   rustic's presentation and a value that can be pasted back into rustic.
+2. **`retention_rules` are sorted by key, not in file order.** `toml::Table` is a sorted map. The
+   doc comment claimed file order and was corrected; deterministic is the better property anyway.
+3. **`print_delegated_profile`'s "profile not found" branch is nearly unreachable**, and finding the
+   boundary took two failed tests. Loading refuses a missing profile with exit 2 whenever any job
+   declares snapshot sets *or* a `forget` — and validation is **batched across every job in the
+   file**, so asking about a prune-only job is not enough; the whole configuration has to contain
+   no job that reads the profile. "The branch is dead" was the wrong conclusion twice.
+4. **Two claims in `README.md` and two in the man page became false**, none of them about
+   retention: the `default-job` list, and the sentence dividing hermetic commands from the rest.
+   That is `0.2.26`'s finding again — **the cost of adding an option is every comparative claim
+   already written about the others**, and none of them is near the diff.
+
+#### Three oracles of mine broke while verifying this, which is the usual count
+
+- **zsh's `MULTIOS` made `2>&1 >/dev/null` tee stdout instead of discarding it**, so a probe for
+  "which stream carries the forget table" showed the JSON on stderr. Re-measured with two separate
+  files: the table is on **stderr**, the JSON on **stdout**. Same family as the `git show |
+  Out-String` CRLF trap.
+- **An `awk` extractor read `$7` as the verdict where it is `$6`**, so a differential check against
+  rustic's own table reported every snapshot as `remove` and printed `DIFFER`. The tool was right
+  the whole time. Corrected, and then run **with a positive control** proving a one-word change is
+  detected — after which all 8 snapshots' verdicts and reasons matched rustic's table exactly.
+- **A `for id in $IDS` and a `$RP` command variable each passed one argument, not many** — zsh does
+  not word-split unquoted expansions (`~/AGENTS.md` §11).
+
+*And one test of mine could only pass:* an assertion that every rendered group key `is_ascii()`,
+which held only because every fixture's input was ASCII. Replaced with one asserting repository
+content reaches the key unaltered, which is the property that matters.
+
+#### Deliberately not done
+
+**No `--json`.** Every other reporting command here has one, so the omission is what needs the
+argument: a `schema:` is a promise (`0.1.23`), and `0.2.22` refused to put unrequested schema
+surface inside a display change. `plan` prints the argv for anyone who wants rustic's own JSON.
+Recorded in §4 so it stays a decision.
+
+**No equivalent for `prune`.** `prune --dry-run` reports pack accounting, which is the open backlog
+item `0.2.13` declined to give `doctor` because it needs a stored baseline. Different problem,
+different answer; bundling it would smuggle it in.
+
+440 tests (372 unit + 5 doc + 63 integration), up from 404. `plan --format lines` is byte-identical
+and every golden file is unchanged — the new command is not a job invocation, so §4a's contract with
+rustic is untouched by construction.
 
 ### v0.2.26 — the README lists the AUR, and adding it falsified two claims one screen up
 

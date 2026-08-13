@@ -12,8 +12,8 @@ use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use owo_colors::OwoColorize;
 use rusticprofile::cli::{
-    Cli, Command, CompletionShell, ConfigArgs, DoctorArgs, PlanArgs, PlanFormat, RunArgs,
-    ScheduleArgs, SnapshotsArgs, StatusArgs, UnscheduleArgs,
+    Cli, Command, CompletionShell, ConfigArgs, DoctorArgs, PlanArgs, PlanFormat, RetentionArgs,
+    RunArgs, ScheduleArgs, SnapshotsArgs, StatusArgs, UnscheduleArgs,
 };
 use rusticprofile::config::schedule::Permission;
 use rusticprofile::config::{self, Config, LoadOptions};
@@ -119,6 +119,7 @@ fn main() -> ExitCode {
         Some(Command::Unschedule(args)) => unschedule_job(&args),
         Some(Command::Status(args)) => show_status(&args),
         Some(Command::Snapshots(args)) => list_snapshots(&args),
+        Some(Command::Retention(args)) => show_retention(&args),
         Some(Command::Doctor(args)) => run_doctor(&args),
         // Reachable only via a global flag that consumed the invocation without naming a
         // subcommand — `--completions` is handled above and returns, so in practice this
@@ -1144,6 +1145,364 @@ fn list_snapshots(args: &SnapshotsArgs) -> ExitCode {
     }
 }
 
+/// `retention` — preview what this job's `forget` would keep, and why.
+///
+/// **Read-only by construction.** The argv comes from [`invoke::retention_argv`], which is the
+/// scheduled `forget`'s own code path with `--dry-run` hardcoded, so there is no path through
+/// this function that deletes a snapshot. `PLAN.md` §7.14 has the decision, §5.12 the
+/// measurements — including that a dry-run `forget` leaves the repository byte-identical.
+fn show_retention(args: &RetentionArgs) -> ExitCode {
+    let (config, path) = match load_config(
+        args.config.clone(),
+        args.as_host.clone(),
+        args.rustic_binary.clone(),
+    ) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+
+    let name = match resolve_job_name(args.name.as_deref(), &config, &path) {
+        Ok(n) => n,
+        Err(code) => return code,
+    };
+    let Some(job) = config.job(&name) else {
+        return report_missing_job(&config, &name);
+    };
+
+    // Parsed **before** rustic is spawned. A typo in a date is a mistake to hear about now, not
+    // after several seconds of fetching a thousand snapshots over the network — the same "refuse
+    // before you spawn" rule the config validator follows.
+    let near = match args.near.as_deref() {
+        Some(text) => {
+            let tz = jiff::tz::TimeZone::try_system().unwrap_or(jiff::tz::TimeZone::UTC);
+            match rusticprofile::rustic::retention::parse_target(text, &tz) {
+                Some(ts) => Some(ts),
+                None => {
+                    eprintln!(
+                        "{} could not read `--near {text}` as a date.",
+                        "error:".red().bold()
+                    );
+                    eprintln!(
+                        "       Try `2026-05-15`, `\"2026-05-15 14:30\"`, `2026-05-15T14:30:00`, or a\n       \
+                         value carrying its own offset such as `2026-05-15T14:30:00-07:00`. A bare\n       \
+                         date or date-time is read in this machine's time zone."
+                    );
+                    return ExitCode::from(EXIT_CONFIG_ERROR);
+                }
+            }
+        }
+        None => None,
+    };
+
+    let profile_path = config::paths::profile_toml(&config.rustic_config_dir, &job.profile);
+    // Read for two things only: the policy to print above the table, and — if rustic refuses —
+    // whether the absence of a keep rule is the reason. Never to decide whether to proceed:
+    // pre-refusing on this crate's own classification of somebody else's keys would block a
+    // valid configuration, which is the worse direction (`PLAN.md` §7.14).
+    let profile = config::rustic_toml::read_profile(&profile_path).ok();
+
+    let argv = invoke::retention_argv(
+        &config.rustic_binary,
+        &invoke::profile_path(&config, job),
+        config.recorded_host.as_deref(),
+    );
+
+    let outcome = match rusticprofile::exec::run(&argv, rusticprofile::exec::Stdout::Capture) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!(
+                "{} could not run `{}`: {e}",
+                "error:".red().bold(),
+                config.rustic_binary
+            );
+            return ExitCode::from(EXIT_RUN_FAILED);
+        }
+    };
+
+    if outcome.code != Some(0) {
+        // rustic's own diagnostics went to the inherited stderr, so the reader has already seen
+        // them. What this adds is the one cause rustic's message does not name.
+        eprintln!(
+            "{} rustic exited {} without reporting a retention plan.",
+            "error:".red().bold(),
+            outcome
+                .code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "on a signal".to_string())
+        );
+        if profile
+            .as_ref()
+            .is_some_and(|p| p.retention_rules.is_empty())
+        {
+            eprintln!(
+                "       `{}` declares no `keep-*` rule under `[forget]`, and rustic refuses a\n       \
+                 forget without at least one. Note `keep-delete` does not count — it is prune's\n       \
+                 grace period, not a retention rule.",
+                profile_path.display()
+            );
+        }
+        return ExitCode::from(EXIT_RUN_FAILED);
+    }
+
+    // `None` is stdout never having been captured, which is a different thing from empty output
+    // and must not read as "no snapshots".
+    let Some(bytes) = outcome.stdout.as_deref() else {
+        eprintln!(
+            "{} rustic's output was not captured, so nothing could be read.",
+            "error:".red().bold()
+        );
+        return ExitCode::from(EXIT_RUN_FAILED);
+    };
+
+    match rusticprofile::rustic::retention::parse(&String::from_utf8_lossy(bytes)) {
+        Ok(plan) => {
+            print_retention(
+                &config,
+                job,
+                &profile_path,
+                profile.as_ref(),
+                &plan,
+                args.all,
+                near.as_ref(),
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{} {e}", "error:".red().bold());
+            ExitCode::from(EXIT_RUN_FAILED)
+        }
+    }
+}
+
+/// A snapshot id at the width rustic itself prints, and that rustic itself accepts back.
+///
+/// **Found by running the command rather than by a test.** `forget --json` carries the full
+/// 64-character id, and printing it made every line wrap and the summary unreadable — while
+/// rustic's own `snapshots` and `forget` tables show 8 characters.
+///
+/// This is not a shortening this tool invented: `rustic forget --help` documents a snapshot as
+/// identifiable by `"01a2b3c4"`, so an 8-character prefix is the form rustic's own ID matching
+/// takes, and a value copied off this output can be pasted straight back into rustic. Truncation
+/// is by byte count, which is safe because an id is hex.
+fn short_id(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
+/// How far back each retention period still reaches, which is the useful half of the summary.
+///
+/// **The newest holder is printed once, not once per period.** It is the same snapshot for every
+/// slot in the ordinary case — the newest snapshot fills every period it is eligible for — so a
+/// per-slot "newest" column says one thing five times and answers nothing. `0.2.27` shipped
+/// exactly that. What varies, and what someone hunting an old file needs, is how far back each
+/// resolution survives.
+///
+/// A slot whose newest holder is *not* the group's newest kept snapshot is annotated, because then
+/// the elision would be hiding something — a `keep-tags`-only policy can leave the newest snapshot
+/// holding nothing at all.
+fn print_resolution(group: &rusticprofile::rustic::retention::Group) {
+    if group.slots.is_empty() {
+        println!("    (no snapshot in this group is kept by any rule)");
+        return;
+    }
+
+    let newest_kept = group.newest_kept();
+    if let Some(s) = newest_kept {
+        println!(
+            "    newest kept    {}  {}",
+            short_id(&s.id),
+            rusticprofile::report::rustic_time(&s.time)
+        );
+    }
+    println!("    resolution available, oldest snapshot holding each period");
+    for slot in &group.slots {
+        let oldest = match &slot.oldest {
+            Some(s) => format!(
+                "{}  {}",
+                short_id(&s.id),
+                rusticprofile::report::rustic_time(&s.time)
+            ),
+            None => "(no readable timestamp)".to_string(),
+        };
+        print!(
+            "      {:<14} {:>3} held   back to {oldest}",
+            slot.reason, slot.held
+        );
+        // Only when the elision above would be wrong.
+        match (&slot.newest, newest_kept) {
+            (Some(n), Some(k)) if n.id != k.id => print!(
+                "   (newest holder {} {})",
+                short_id(&n.id),
+                rusticprofile::report::rustic_time(&n.time)
+            ),
+            _ => {}
+        }
+        println!();
+    }
+}
+
+/// The snapshots either side of a target instant.
+///
+/// The question this answers is the one that sends people to a backup in the first place: *I need
+/// something from about then — what can I actually get, and how close is it?* The reasons on each
+/// snapshot are printed because they say which resolution tier you have landed in, and therefore
+/// whether looking for something closer is worth the effort.
+fn print_bracket(group: &rusticprofile::rustic::retention::Group, target: jiff::Timestamp) {
+    use rusticprofile::report::rustic_time;
+    use rusticprofile::rustic::retention::describe_gap;
+
+    let bracket = group.bracket(target);
+    let line = |label: &str,
+                snapshot: Option<&rusticprofile::rustic::retention::Snapshot>,
+                later: bool| {
+        match snapshot {
+            Some(s) => {
+                let gap = rusticprofile::report::rustic_instant(&s.time)
+                    .map(|(ts, _)| describe_gap(ts.as_second() - target.as_second()))
+                    .unwrap_or_else(|| "?".to_string());
+                let held = if s.reasons.is_empty() {
+                    // Kept by nothing, i.e. this run would remove it. Still a place to recover
+                    // from — a dry run has removed nothing — so it is offered, and labelled.
+                    "would be removed".to_string()
+                } else {
+                    s.reasons.join(" ")
+                };
+                let direction = if later { "later" } else { "earlier" };
+                println!(
+                    "    {label:<16} {}  {}   {:>9} {direction:<7}  ({held})",
+                    short_id(&s.id),
+                    rustic_time(&s.time),
+                    gap
+                );
+            }
+            None => println!(
+                "    {label:<16} (none — this group has no snapshot {} that date)",
+                if later { "after" } else { "at or before" }
+            ),
+        }
+    };
+    line("nearest before", bracket.before, false);
+    line("nearest after", bracket.after, true);
+}
+
+/// Render a retention plan.
+///
+/// Punctuation follows what this crate already prints — an em dash, as in `print_job`'s
+/// `(none — run by hand)`, and the `±` `0.2.22` shipped in `next run`. `0.2.23`'s ASCII-only
+/// rule is about the vendored Python install helpers, whose output *was* mangled by the Windows
+/// console codepage; the binary's own output has rendered correctly on that host since `0.2.22`.
+/// Diverging here would create an inconsistency rather than remove a risk.
+fn print_retention(
+    config: &Config,
+    job: &rusticprofile::config::job::Job,
+    profile_path: &std::path::Path,
+    profile: Option<&config::rustic_toml::Profile>,
+    plan: &rusticprofile::rustic::retention::Plan,
+    all: bool,
+    near: Option<&jiff::Timestamp>,
+) {
+    match near {
+        Some(t) => println!(
+            "{} {}      near {}",
+            "retention:".bold(),
+            job.name,
+            rusticprofile::report::human_instant(*t)
+        ),
+        None => println!("{} {}", "retention:".bold(), job.name),
+    }
+    println!("  profile        {}", profile_path.display());
+    if let Some(p) = profile {
+        // Stated because it decides the grouping the whole report is organised by, and because
+        // `"host"` alone makes named sets compete for one slot (§3a invariant 1).
+        match &p.forget_group_by {
+            Some(g) => println!("  group-by       {g}"),
+            None => println!("  group-by       (not set - rustic's default host,label,paths)"),
+        }
+        if !p.retention_rules.is_empty() {
+            let rules: Vec<String> = p
+                .retention_rules
+                .iter()
+                .map(|(k, v)| format!("{k} {v}"))
+                .collect();
+            println!("  policy         {}", rules.join(", "));
+        }
+    }
+    match config.recorded_host.as_deref() {
+        Some(host) => println!("  scoped to      --filter-host {host}"),
+        None => println!(
+            "  scoped to      whatever the profile's `filter-hosts` says (`hostname: rustic`)"
+        ),
+    }
+    println!("  dry run        yes - nothing in the repository is changed by this command");
+
+    for group in &plan.groups {
+        println!();
+        println!(
+            "  {}   {} snapshots, {} kept, {} would be removed",
+            group.key.bold(),
+            group.snapshots.len(),
+            group.kept(),
+            group.would_remove()
+        );
+
+        match near {
+            Some(target) => print_bracket(group, *target),
+            None => print_resolution(group),
+        }
+
+        // Always listed, whatever `--all` says: a snapshot this policy would delete is the one
+        // thing that must never need a second command to see.
+        let removals: Vec<_> = group.snapshots.iter().filter(|s| !s.keep).collect();
+        if !removals.is_empty() {
+            println!("    {} kept by no rule:", "would remove".yellow().bold());
+            for s in removals {
+                println!(
+                    "      {}  {}",
+                    short_id(&s.id),
+                    rusticprofile::report::rustic_time(&s.time)
+                );
+            }
+        }
+
+        if all {
+            println!("    every snapshot:");
+            for s in &group.snapshots {
+                let verdict = if s.keep { "keep  " } else { "remove" };
+                // A removal has no reasons, so the line ends at the verdict rather than at two
+                // trailing spaces.
+                let reasons = if s.reasons.is_empty() {
+                    String::new()
+                } else {
+                    format!("  {}", s.reasons.join(" "))
+                };
+                println!(
+                    "      {}  {}  {verdict}{reasons}",
+                    short_id(&s.id),
+                    rusticprofile::report::rustic_time(&s.time),
+                );
+            }
+        }
+    }
+
+    println!();
+    if plan.would_remove() == 0 {
+        println!(
+            "  {} would remove nothing; {} snapshots are all held by a rule.",
+            "forget".bold(),
+            plan.kept()
+        );
+    } else {
+        println!(
+            "  {} would remove {} of {} snapshots.",
+            "forget".bold(),
+            plan.would_remove(),
+            plan.kept() + plan.would_remove()
+        );
+    }
+    if !all {
+        println!("  Pass --all to list every snapshot and its reasons.");
+    }
+}
+
 /// Resolve which job a command acts on: `-n`, else `defaults.default-job`.
 ///
 /// The error when neither exists names the configuration file, because "no job specified"
@@ -1575,10 +1934,143 @@ fn print_job(config: &Config, job: &rusticprofile::config::job::Job) {
         None => println!("  log            (none)"),
     }
 
+    let profile_path = config::paths::profile_toml(&config.rustic_config_dir, &job.profile);
+    println!("  profile file   {}", profile_path.display());
+
+    print_delegated_profile(&profile_path);
+}
+
+/// The second half of `config --show`: the rustic profile this job delegates to.
+///
+/// **The predecessor's `show` prints the *effective* configuration, and here that is two
+/// files.** rusticprofile owns almost nothing, so everything §3a invariant 5 lists as able to
+/// silently destroy data — the repository, the grouping, the retention policy, the scoping
+/// filters, whether a set carries a label — is in the other file, and until now `config --show`
+/// printed only the half that cannot lose anything.
+///
+/// **Read-only, and no new file is opened.** `config/rustic_toml` already parses this profile for
+/// the `--name` check (§7.2), the `sources` check (§5.9) and `doctor`'s credential check; these
+/// fields come from that same parse. The secret keys stay what they have always been: **paths,
+/// never contents** (`PLAN.md` §4.1).
+///
+/// It deliberately does **not** echo the profile. `cat` does that better, and a partial reprint
+/// of somebody else's format is a second copy that goes stale the moment rustic adds a key. Only
+/// what this tool already understands well enough to validate is reported.
+fn print_delegated_profile(profile_path: &std::path::Path) {
+    use config::rustic_toml::{ReadError, read_profile};
+
+    println!();
+    let profile = match read_profile(profile_path) {
+        Ok(p) => p,
+        Err(e) => {
+            // Not an error exit: `--show` is an inspection command and the job half above is
+            // genuinely resolved. But an absence must not read as "there is nothing to say" —
+            // `config --check` is what refuses, and it names the same path.
+            let why = match e {
+                ReadError::Missing => "not found".to_string(),
+                ReadError::Unreadable(m) => format!("could not be read: {m}"),
+                ReadError::Malformed(m) => format!("could not be parsed: {m}"),
+            };
+            println!(
+                "{} {} ({why})",
+                "rustic profile:".bold(),
+                profile_path.display()
+            );
+            println!("  `config --check` reports this as an error; nothing below could be read.");
+            return;
+        }
+    };
+
     println!(
-        "  profile file   {}",
-        config::paths::profile_toml(&config.rustic_config_dir, &job.profile).display()
+        "{} {}   (read-only)",
+        "rustic profile:".bold(),
+        profile_path.display()
     );
+
+    match &profile.repository {
+        Some(r) => println!("  repository     {r}"),
+        None => println!("  repository     (not set in this profile)"),
+    }
+
+    // Which mechanism, not which value. `password-command` is the recommended one precisely
+    // because the secret never enters this process (§4.1), so naming it is informative rather
+    // than a disclosure — and the file variant shows a path, which is not a secret either.
+    if profile.uses_password_command {
+        println!(
+            "  password       password-command (rustic runs it; the secret never reaches this tool)"
+        );
+    } else if let Some(f) = profile
+        .secret_files
+        .iter()
+        .find(|f| f.key == "password-file")
+    {
+        println!("  password       password-file {}", f.path.display());
+    } else {
+        println!("  password       (neither password-file nor password-command is set here)");
+    }
+
+    if let Some(host) = &profile.backup_host {
+        println!("  [backup] host  {host}   (pins the recorded name in the profile)");
+    }
+
+    match &profile.forget_group_by {
+        // The one setting that turns a correct policy into a destructive one. With `"host"`
+        // alone every named set lands in one group and only the last one written survives —
+        // measured, a 0-byte snapshot evicting a 6,256-file one.
+        Some(g) if g.contains("label") => println!("  group-by       {g}"),
+        Some(g) => {
+            println!("  group-by       {g}   <- no `label`: named sets share one retention slot")
+        }
+        None => println!("  group-by       (not set - rustic defaults to host,label,paths)"),
+    }
+
+    if profile.retention_rules.is_empty() {
+        println!(
+            "  retention      (no keep-* rule under [forget] - rustic refuses a forget without one)"
+        );
+    } else {
+        let rules: Vec<String> = profile
+            .retention_rules
+            .iter()
+            .map(|(k, v)| format!("{k} {v}"))
+            .collect();
+        println!("  retention      {}", rules.join(", "));
+    }
+
+    if profile.scoping_filters.is_empty() {
+        println!("  scoped by      (nothing in [snapshot-filter])");
+    } else {
+        println!("  scoped by      {}", profile.scoping_filters.join(", "));
+    }
+    if !profile.misplaced_forget_filters.is_empty() {
+        // rustic accepts these under `[forget]` and then ignores them, so a config can look
+        // scoped and filter nothing. `--check` refuses it; `--show` says why it looks fine.
+        println!(
+            "  {}         {} under [forget], where rustic accepts and IGNORES them",
+            "ignored:".yellow().bold(),
+            profile.misplaced_forget_filters.join(", ")
+        );
+    }
+
+    if profile.sets.is_empty() {
+        println!(
+            "  snapshot sets  (none declared - the profile backs up its own [backup] sources)"
+        );
+    } else {
+        println!("  snapshot sets");
+        for set in &profile.sets {
+            let name = set.name.as_deref().unwrap_or("<unnamed>");
+            let label = match &set.label {
+                Some(l) => format!("label {l}"),
+                // An unlabelled set shares the empty-label group with every other unlabelled
+                // snapshot in the repository, including another tool's — invariant 2's
+                // mechanism, so the absence is stated rather than left blank.
+                None => "no label - shares one group with every unlabelled snapshot".to_string(),
+            };
+            let plural = if set.sources == 1 { "" } else { "s" };
+            println!("    {name:<12} {label}, {} source{plural}", set.sources);
+        }
+    }
 }
 
 #[cfg(test)]

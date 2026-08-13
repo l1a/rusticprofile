@@ -25,6 +25,26 @@ const HUMAN: &str = "%a %Y-%m-%d %H:%M:%S %Z";
 /// The same layout, with a numeric offset where the zone's name is not knowable.
 const HUMAN_OFFSET: &str = "%a %Y-%m-%d %H:%M:%S %:z";
 
+/// The shape **rustic** writes a snapshot time in: `2026-08-13T09:01:09.283454653-07:00`.
+///
+/// **Deliberately a second format rather than a widening of [`RECORDED`], and the difference is
+/// one character that cost a release.** `%.f` is *optional* fractional seconds — a real
+/// `rustic backup` records the instant it ran, to the nanosecond, while this crate's own record
+/// is written to whole seconds. `RECORDED` therefore cannot read a rustic timestamp at all, and
+/// `retention` shipped in `0.2.27` reading every one of them as unparseable: against the live
+/// repository every slot printed `newest (no readable timestamp)`.
+///
+/// **It could not be found by the tests, because the fixture avoided it.** Snapshots made with
+/// `rustic backup --time "2026-08-13 09:00:00"` carry whole seconds, so every fixture timestamp
+/// parsed. `0.2.5`'s lesson in a new costume: a check is only worth what its oracle is worth, and
+/// the oracle was a repository built to make the test convenient.
+///
+/// **`RECORDED` is not widened to match**, even though `%.f` would parse both. `0.2.22`'s Windows
+/// path gates on [`is_recorded_stamp`] precisely to reject `.ToString('o')`, whose only defect is
+/// fractional seconds — so accepting them there would remove that guard. Two formats, because
+/// there are genuinely two formats.
+const RUSTIC: &str = "%Y-%m-%dT%H:%M:%S%.f%:z";
+
 /// Render a recorded timestamp the way the service manager reports `next run`.
 ///
 /// **This is presentation only.** The status file keeps RFC 3339, and so does
@@ -53,6 +73,38 @@ pub fn human_time(stamp: &str) -> String {
     human_time_in(stamp, jiff::tz::TimeZone::try_system().ok().as_ref())
 }
 
+/// Read `stamp` as the instant it names, with the offset it carries.
+///
+/// **One parser for every reader of this format.** `0.2.20` shipped a guard that rendered its
+/// own input with the constant it was verifying, so corrupting that constant corrupted both
+/// halves and the test stayed green; the fix was to delete the duplication rather than test for
+/// it. Everything that needs to *read* a recorded stamp — the renderer, the shape check, and
+/// retention's ordering of snapshots — comes through here, so none of them can drift from the
+/// writer or from each other.
+///
+/// `None` for anything that is not in [`RECORDED`]'s shape, or that carries no offset. An
+/// offset is required rather than assumed: without one there is no instant, only a wall clock,
+/// and guessing a zone is how a displayed time silently moves.
+#[must_use]
+pub fn recorded_instant(stamp: &str) -> Option<(jiff::Timestamp, jiff::tz::Offset)> {
+    instant_in(RECORDED, stamp)
+}
+
+/// Read a **rustic** snapshot time, with the offset it carries.
+///
+/// Used to order snapshots — "which one is the newest holder of this slot" — and to render them.
+/// See [`RUSTIC`] for why this is not the same parser as [`recorded_instant`].
+#[must_use]
+pub fn rustic_instant(stamp: &str) -> Option<(jiff::Timestamp, jiff::tz::Offset)> {
+    instant_in(RUSTIC, stamp)
+}
+
+fn instant_in(format: &str, stamp: &str) -> Option<(jiff::Timestamp, jiff::tz::Offset)> {
+    let parsed = jiff::fmt::strtime::BrokenDownTime::parse(format, stamp).ok()?;
+    let offset = parsed.offset()?;
+    Some((parsed.to_timestamp().ok()?, offset))
+}
+
 /// Whether `stamp` is in the shape the record is written in.
 ///
 /// Used by a backend that has asked another tool for an instant, to establish that what came
@@ -61,8 +113,7 @@ pub fn human_time(stamp: &str) -> String {
 /// manager's own string — never a third thing.
 #[must_use]
 pub fn is_recorded_stamp(stamp: &str) -> bool {
-    jiff::fmt::strtime::BrokenDownTime::parse(RECORDED, stamp)
-        .is_ok_and(|p| p.offset().is_some() && p.to_timestamp().is_ok())
+    recorded_instant(stamp).is_some()
 }
 
 /// The `next run` value to print, and whether to qualify it with a spread window.
@@ -108,13 +159,56 @@ pub fn next_run_display(
 /// hand-edited, still prints — losing a timestamp to make one look tidier would be the wrong
 /// trade in a tool whose subject is not quietly doing less than it says.
 fn human_time_in(stamp: &str, tz: Option<&jiff::tz::TimeZone>) -> String {
-    let Ok(parsed) = jiff::fmt::strtime::BrokenDownTime::parse(RECORDED, stamp) else {
-        return stamp.to_string();
-    };
-    let Some(offset) = parsed.offset() else {
-        return stamp.to_string();
-    };
-    let Ok(ts) = parsed.to_timestamp() else {
+    render(recorded_instant(stamp), stamp, tz)
+}
+
+/// [`human_time`] for a **rustic** snapshot time.
+///
+/// Same layout, so `retention`'s times read as the same clock `status` prints; different parser,
+/// because rustic records fractional seconds and this crate's own record does not ([`RUSTIC`]).
+#[must_use]
+pub fn rustic_time(stamp: &str) -> String {
+    rustic_time_in(stamp, jiff::tz::TimeZone::try_system().ok().as_ref())
+}
+
+fn rustic_time_in(stamp: &str, tz: Option<&jiff::tz::TimeZone>) -> String {
+    render(rustic_instant(stamp), stamp, tz)
+}
+
+/// Render an instant this crate already holds, in the same layout as every other time on screen.
+///
+/// For values that were never a string — a `--near` target, say. Going through [`rustic_time`]
+/// with `Timestamp::to_string()` would **not** work and would fail quietly: that renders `…Z`,
+/// which [`RUSTIC`] correctly rejects (it requires a numeric offset), so the line would print a
+/// raw ISO string instead of a time.
+#[must_use]
+pub fn human_instant(ts: jiff::Timestamp) -> String {
+    human_instant_in(ts, jiff::tz::TimeZone::try_system().ok().as_ref())
+}
+
+fn human_instant_in(ts: jiff::Timestamp, tz: Option<&jiff::tz::TimeZone>) -> String {
+    match tz {
+        Some(tz) => ts.to_zoned(tz.clone()).strftime(HUMAN).to_string(),
+        // No zone database. UTC with its offset shown, rather than a local wall clock this
+        // machine cannot compute — the offset is what makes it unambiguous.
+        None => ts
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .strftime(HUMAN_OFFSET)
+            .to_string(),
+    }
+}
+
+/// One renderer for both formats, so the two can never disagree about layout.
+///
+/// **Anything unparsed is returned unchanged.** A stamp written by another version, or hand-edited,
+/// still prints — losing a timestamp to make a column look tidier would be this project's own
+/// failure class in its own output.
+fn render(
+    parsed: Option<(jiff::Timestamp, jiff::tz::Offset)>,
+    stamp: &str,
+    tz: Option<&jiff::tz::TimeZone>,
+) -> String {
+    let Some((ts, offset)) = parsed else {
         return stamp.to_string();
     };
 
@@ -254,6 +348,52 @@ mod tests {
             human_time_in("2026-08-11T20:28:57-07:00", None),
             "Tue 2026-08-11 20:28:57 -07:00"
         );
+    }
+
+    #[test]
+    fn a_rustic_timestamp_is_readable_and_the_record_parser_cannot_read_one() {
+        // **The two-parser split, asserted in both directions.** This is the defect `0.2.27`
+        // shipped: rustic stamps a snapshot with the instant it ran, to the nanosecond, and the
+        // status record's parser rejects a fractional second — so every retention slot reported
+        // that it could not tell which snapshot held it.
+        let real = "2026-08-13T09:01:09.283454653-07:00";
+        assert!(
+            rustic_instant(real).is_some(),
+            "a real backup's timestamp must be readable"
+        );
+        assert!(
+            recorded_instant(real).is_none(),
+            "if this ever parses, the two formats have been merged — and merging them removes \
+             `0.2.22`'s guard against `.ToString('o')` on the Windows next-run path"
+        );
+
+        // Whole seconds occur too (a `--time` snapshot), and both parsers read those.
+        let whole = "2026-08-13T09:00:00-07:00";
+        assert!(rustic_instant(whole).is_some());
+        assert!(recorded_instant(whole).is_some());
+
+        // The rendering is the same layout either way, so one clock is shown.
+        let tz = jiff::tz::TimeZone::UTC;
+        assert_eq!(
+            rustic_time_in(whole, Some(&tz)),
+            human_time_in(whole, Some(&tz))
+        );
+        // And the fraction is not printed — a slot summary wants a time, not a measurement.
+        assert_eq!(
+            rustic_time_in(real, Some(&tz)),
+            "Thu 2026-08-13 16:01:09 UTC"
+        );
+    }
+
+    #[test]
+    fn a_rustic_stamp_this_version_cannot_read_is_printed_rather_than_dropped() {
+        for odd in ["2026-08-13T09:00:00Z", "not a time", ""] {
+            assert_eq!(
+                rustic_time_in(odd, Some(&jiff::tz::TimeZone::UTC)),
+                odd,
+                "an unreadable stamp must survive to the screen"
+            );
+        }
     }
 
     #[test]

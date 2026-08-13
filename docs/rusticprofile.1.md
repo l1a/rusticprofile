@@ -20,6 +20,8 @@ rusticprofile - a local, per-machine scheduler and orchestrator for rustic backu
 
 **rusticprofile snapshots** **-n** *JOB* [**--config** *PATH*] [**--as-host** *HOST*] [**--rustic-binary** *PATH*] [**--** *RUSTIC ARGS*]
 
+**rusticprofile retention** **-n** *JOB* [**--near** *DATE*] [**--all**] [**--config** *PATH*] [**--as-host** *HOST*] [**--rustic-binary** *PATH*]
+
 **rusticprofile plan** **-n** *JOB* [**--format** *FORMAT*] [**--show-env** [**--show-secrets**]] [**--as-host** *HOST*] [**--config** *PATH*]
 
 **rusticprofile doctor** [**--repository**] [**--json**] [**-n** *JOB*] [**--as-host** *HOST*] [**--rustic-binary** *PATH*] [**--config** *PATH*]
@@ -53,7 +55,15 @@ The **run** subcommand executes a job, and **schedule** installs the systemd uni
 :   Validate the configuration. **Every problem is reported at once**, not one per run, and nothing is spawned before validation completes. Exits 0 if the configuration is usable, 2 otherwise. Also prints which jobs this host runs and which are excluded by **enabled-on-hosts** — a gate that cannot be seen is indistinguishable from a job that was never written.
 
 **--show** **-n** *JOB*
-:   Print the resolved form of one job: its operations, the snapshot sets that survive host gating, its schedule and its log path. If *JOB* exists but is gated off on this host, that is reported as such rather than as an unknown job.
+:   Print the **effective** configuration for one job, which is two files rather than one.
+
+    First the job itself: its operations, the snapshot sets that survive host gating, its schedule and its log path. If *JOB* exists but is gated off on this host, that is reported as such rather than as an unknown job.
+
+    Then the rustic profile it delegates to, read-only: the repository, which password mechanism is in use, `group-by`, the `keep-*` retention rules, which scoping filters are declared, and each snapshot set with its label and how many sources it lists. **The delegation boundary puts nearly everything that can silently lose data in that second file**, so printing only the first half told you about the half that cannot. A set with no `label` is called out, because an unlabelled set shares one retention group with every other unlabelled snapshot in the repository — including another tool's.
+
+    It does **not** echo the profile; **cat**(1) does that better, and a partial reprint of rustic's format would go stale the moment rustic adds a key. Only what rusticprofile already understands well enough to validate is reported. Nothing in the profile is written, and the secret-bearing keys are read as *paths*, never contents.
+
+    A profile that cannot be read is named as such rather than left blank — **config --check** is the command that refuses.
 
 **--example** *WHAT*
 :   Write an annotated starting-point configuration to stdout, where *WHAT* is **jobs** or **rustic**. Requires no existing configuration and reads nothing — it is what you ask for when you have neither file yet.
@@ -67,7 +77,7 @@ The **run** subcommand executes a job, and **schedule** installs the systemd uni
 **--as-host** *HOST*
 :   Evaluate as though running on *HOST* instead of the real hostname. This is the only way to check another machine's view of a per-host gate without logging into it.
 
-A configuration may set **defaults.default-job**, which is the job used by **run**, **plan**, **snapshots** and **config --show** when `-n` is omitted. It is validated at load time against the *declared* jobs, so a typo is an error on every machine rather than only where that job happens to run.
+A configuration may set **defaults.default-job**, which is the job used by **run**, **plan**, **snapshots**, **retention** and **config --show** when `-n` is omitted. It is validated at load time against the *declared* jobs, so a typo is an error on every machine rather than only where that job happens to run.
 
 Two commands deliberately ignore it. **unschedule** always requires an explicit name — removing a schedule because a configuration file named a default, rather than because someone typed it, is the one action that should never happen by default. **schedule** already treats a missing `-n` as "every job that declares a schedule", which is useful in its own right and would be lost.
 
@@ -210,6 +220,103 @@ The argv is the whole of what rusticprofile constructs:
 
     Read-only is what makes this defensible. There is deliberately no passthrough for **forget** or **prune**, which are destructive and whose scoping belongs in the rustic profile where a flag typed at a prompt cannot contradict it, nor for **restore** — putting a restore path behind a scheduler adds a layer between you and your data at the moment you least want one. `snapshots` is also **not** an operation a job may schedule; that set remains **backup**, **forget** and **prune**.
 
+    A snapshot listing cannot say which snapshot is the current *yearly* one, because retention is not something **rustic snapshots** knows about. See **RETENTION**.
+
+# RETENTION
+
+**retention -n** *JOB* [**--near** *DATE*] [**--all**]
+:   Show how far back each retention period still reaches, what a **forget** would remove, and — with **--near** — which snapshots sit either side of a date.
+
+    **This is a restore-hunting tool as much as a retention one.** Retention makes snapshot density non-uniform: the last day is available hour by hour, last week day by day, last year month by month. So the question *"I need a file from around then"* has a second half — *how close to then can I actually get?* — and that is what this reports.
+
+    **rustic computes this and nothing is recomputed here.** `rustic forget --dry-run` reports a *reason* per kept snapshot — `hourly`, `daily`, `weekly`, `monthly`, `yearly`, `last`, `tags`, `id` — and this command resolves the job's profile, asks for that in JSON, groups it per retention group and reports how far back each period reaches. The reason words are rustic's own, passed through unchanged: rustic offers 23 `keep-*` options including `quarter-yearly`, `half-yearly` and twelve `within-*` forms, and a fixed list here would silently drop whichever one you configure next.
+
+    ```
+    rusticprofile retention -n dot-files
+    rusticprofile retention -n dot-files --near 2026-05-15
+    rusticprofile retention -n dot-files --all
+    ```
+
+    Taken from a real run, with the paths and the hostname replaced by this page's placeholders:
+
+    ```
+    retention: dot-files
+      profile        /home/user/.config/rustic/dot-files.toml
+      group-by       host,label
+      policy         keep-daily 7, keep-hourly 24, keep-monthly 12, keep-weekly 4, keep-yearly 2
+      scoped to      --filter-host host-a
+      dry run        yes - nothing in the repository is changed by this command
+
+      host host-a / label (none)   38 snapshots, 38 kept, 0 would be removed
+        newest kept    0892a9f2  Mon 2026-08-03 10:00:43 PDT
+        resolution available, oldest snapshot holding each period
+          hourly          24 held   back to 8e843752  Tue 2026-07-28 20:00:08 PDT
+          daily            7 held   back to 31ca4661  Thu 2026-07-23 23:00:05 PDT
+          weekly           4 held   back to 885b2ae6  Tue 2026-07-14 06:00:21 PDT
+          monthly         12 held   back to fbe61648  Tue 2025-09-30 18:00:22 PDT
+          yearly           2 held   back to fb265bd8  Wed 2025-12-31 12:23:17 PST
+    ```
+
+    Read as: anything newer than 28 July can be targeted to the hour, back to 14 July to the week, and before that one snapshot a month — with 2025-09-30 the floor.
+
+    **The newest holder is printed once, not once per period, and that is deliberate.** The newest snapshot in a group is simultaneously its hourly, its daily, its monthly *and* its yearly holder, so a per-period "newest" column repeats one fact and answers nothing. What differs per period, and what is worth reading, is how far back it reaches. A period whose newest holder is *not* the group's newest kept snapshot is annotated on its own line, since the elision would then be hiding something.
+
+**--near** *DATE*
+:   Show the snapshots either side of *DATE*, how far off each is, and which periods hold them.
+
+    ```
+    $ rusticprofile retention --near 2026-05-15
+
+    retention: dot-files      near Fri 2026-05-15 00:00:00 PDT
+      ...
+      host host-a / label (none)   38 snapshots, 38 kept, 0 would be removed
+        nearest before   f93b52fc  Thu 2026-04-30 17:00:05 PDT      14d 6h earlier  (monthly)
+        nearest after    27d99f0d  Wed 2026-05-27 17:00:16 PDT     12d 17h later    (monthly)
+
+      host host-a / label core   29 snapshots, 29 kept, 0 would be removed
+        nearest before   (none - this group has no snapshot at or before that date)
+        nearest after    00ba75f9  Mon 2026-08-03 12:04:45 PDT     80d 12h later    (weekly monthly yearly)
+    ```
+
+    The reasons in brackets are the resolution tier you have landed in, which tells you whether looking for something closer is worth the effort. `(monthly)` either side means nothing nearer exists.
+
+    *DATE* may be `2026-05-15`, `"2026-05-15 14:30"`, `2026-05-15T14:30:00`, or a value carrying its own offset. A bare date or date-time is read in this machine's time zone — the one every time on screen is printed in. An unreadable *DATE* is refused **before** rustic is spawned, so a typo costs nothing.
+
+    **Snapshots the policy would remove are included**, labelled as such. A dry run has removed nothing, so they are still places a file can be recovered from, and excluding them would silently answer a narrower question.
+
+    A group with no snapshot on one side says so rather than substituting the nearest on the other. On a migrated label that absence *is* the finding: it marks the cutover.
+
+    For an exact query rather than a survey — "the single newest snapshot at or before this date" — rustic answers it directly through the read-only passthrough, and no part of it is reimplemented here:
+
+    ```
+    rusticprofile snapshots -n dot-files -- \
+        --group-by host,label --filter-before 2026-05-15 --filter-last 1
+    ```
+
+    **Pin `--group-by`.** rustic's default groups by `paths` as well, so the obvious form returns one answer per distinct source list — three rows where you expected one, all of them correct and none of them the answer.
+
+    **Which snapshot holds a slot is not something you pick.** rustic derives it from the `keep-*` rules in the profile's **[forget]** section — the ones printed on the `policy` line. For each period it keeps the **newest** snapshot falling in that period, for as many periods back as the rule allows, so `keep-monthly = 12` holds the newest snapshot of each of the last twelve months. Changing which snapshots are held therefore means changing that policy, in `rustic.toml`: **rusticprofile emits no retention flags of its own**, which is what makes the profile the single place this is decided.
+
+    To hold a *particular* snapshot regardless of period, rustic has two rules that name snapshots instead of periods, and both are ordinary `[forget]` keys:
+
+    **keep-tags**
+    :   Keep any snapshot carrying one of these tags — tagged at backup time with `rustic backup --tag`, or afterwards with `rustic tag`. It then appears here with the reason **tags**.
+
+    **keep-id**
+    :   Keep snapshots whose id starts with a given prefix, in the 8-character form this report prints. Appears with the reason **id**.
+
+    **keep-delete** is *not* one of these. It is prune's grace period, and rustic rejects a `[forget]` declaring only that.
+
+    **Anchors are reported per retention group, not per repository.** With the `group-by = "host,label"` that a job using named snapshot sets requires, each set is its own group with its own slots, so there is no single fleet-wide "yearly snapshot" to name.
+
+    **This is always a dry run, and not because a flag says so.** The command line is built from the same code path the scheduled **forget** uses, with `--dry-run` fixed in place and no parameter that could omit it — so the preview cannot describe a different operation than the one that runs, and the command cannot be turned into one that deletes. It carries `--filter-host` for the same reason: the scheduled **forget** does, and a preview showing the whole fleet's retention while the job only touches this host would be worse than no preview. Measured against rustic 0.11.3: a dry-run **forget** leaves every file in the repository byte-identical.
+
+    Snapshots that **would be removed** are always listed, however many there are. `--all` adds every snapshot with its reasons, **oldest first** so the table reads as a timeline — sparse monthly snapshots at the top, thickening into hourly at the bottom. It is off by default because a host backing up hourly for a month holds well over a hundred.
+
+    It needs the repository, a credential and a few seconds, like **snapshots** and unlike **config** and **plan**.
+
+    If the profile declares no `keep-*` rule under **[forget]**, rustic refuses the whole operation — *"Invalid keep options specified"* — and this command says which file is missing one. Note that **keep-delete** does not count: it is prune's grace period, not a retention rule, and rustic rejects a `[forget]` that declares only that. There is deliberately no **--json**; a schema is a promise, and nobody asked for a machine-readable retention feed. **plan** prints the command line if you want to parse rustic's own JSON directly.
+
 # DOCTOR
 
 **doctor**
@@ -268,7 +375,7 @@ The contract the implemented commands follow:
 :   Success, including a run that completed with warnings.
 
 **1**
-:   A run failed.
+:   A run failed — or, for the read-only commands that invoke rustic, the query could not be completed: rustic would not start, exited non-zero, or returned output that could not be read. **snapshots** passes rustic's own exit code through instead, since inventing a verdict there would be a second opinion nobody asked for.
 
 **2**
 :   The configuration is invalid. Reported before any process is spawned, with every violation listed at once, so a config error is never confused with a backup failure.
