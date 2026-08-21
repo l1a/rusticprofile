@@ -482,9 +482,10 @@ fn utf16le_with_bom(contents: &str) -> Vec<u8> {
 fn read_utf16(path: &Path) -> io::Result<String> {
     let bytes = fs::read(path)?;
     let body = bytes.strip_prefix(&[0xFF, 0xFE]).unwrap_or(&bytes);
-    let units: Vec<u16> = body
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+    let (chunks, _) = body.as_chunks::<2>();
+    let units: Vec<u16> = chunks
+        .iter()
+        .map(|&[b0, b1]| u16::from_le_bytes([b0, b1]))
         .collect();
     String::from_utf16(&units).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
