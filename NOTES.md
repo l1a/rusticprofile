@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.28)
+## Current State (v0.2.29)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -756,6 +756,20 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.29 — bump cargo and GitHub Actions dependencies
+
+**Dependency updates only.** Consolidates Dependabot updates for cargo packages and GitHub Actions workflow pins:
+
+- **Cargo dependencies**:
+  - `clap`: `4.6.5` → `4.6.6`
+  - `clap_builder`: `4.6.5` → `4.6.6`
+  - `clap_complete`: `4.6.8` → `4.6.9`
+  - `clap_complete_nushell`: `4.6.1` → `4.6.2`
+- **GitHub Actions workflows**:
+  - `anthropics/claude-code-action` pinned commit hash updated to `d40ddef4c030e508327d6e35a9c45f3368482c50` (`v1`, 1.0.195) in `.github/workflows/claude-code-review.yml` and `.github/workflows/claude.yml`.
+- **Clippy cleanup**:
+  - `src/schedule/install.rs`: use `as_chunks::<2>()` instead of `chunks_exact(2)` to satisfy `clippy::chunks_exact_to_as_chunks`.
 
 ### v0.2.28 — the AUR package tracks 0.2.27, and container egress was broken on the publishing host
 
