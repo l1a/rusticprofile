@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.30)
+## Current State (v0.2.31)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -584,6 +584,19 @@ Smaller items:
       unguarded:** `0.1.24` guards "a shared `jobs.yaml` is only as new as the oldest binary
       reading it" and nothing guards "…or as current as the most stale checkout". It wants an
       answer somewhere other than here.
+- [ ] **Every measurement in `PLAN.md` Parts 5 and 7 is against rustic 0.11.3, and the fleet has
+      moved to 0.11.4** (found 2026-08-24, `0.2.31`). Confirmed in two independent places rather than
+      one: the host the prune verification was run from reports `rustic 0.11.4`, and the
+      `archlinux:base-devel` container `aur-verify` builds in now reports `0.11.4` too, where every
+      previous packaging entry records `0.11.3`. **This is not yet a problem and is deliberately not
+      being treated as one**: the 63 integration tests include three that drive real rustic, and they
+      passed against 0.11.4 in that container, so the behaviours this project depends on are not
+      obviously broken. What is unguarded is narrower and worth stating — **nothing re-measures §5
+      and §7 when rustic changes underneath them**, and several of those measurements are the
+      evidence behind §3a's invariants. Fourth member of the set `0.2.23` names: the binary is only
+      as new as the last `cargo install`, the man page as new as the last `install-man`, the package
+      as new as the last `aur-bump`, and **a measurement is only as true as the version it was taken
+      against**.
 - [ ] **`PS_COMP` points somewhere PowerShell does not read on Windows — now measured** (`0.2.14`).
       `~/.config/powershell` is right for pwsh on Linux and macOS and is not the Windows profile
       directory. `$PROFILE` on the Windows host is
@@ -765,6 +778,94 @@ and were renumbered in place. No tags existed, so nothing had to be unwound — 
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
 
+### v0.2.31 — the AUR tracks 0.2.30, and rustic moved underneath every measurement
+
+**Packaging and documentation only; no code changed.** `packaging/aur/` moves `0.2.27` →
+**`0.2.30`**. `pkgver` tracks the **released** tag, which is why this release carries
+`pkgver=0.2.30` while calling itself `0.2.31` — the repository moves on after a release; the
+package does not. Same call `0.1.22`, `0.2.8`, `0.2.15`, `0.2.18`, `0.2.25` and `0.2.28` made.
+
+**PUBLISHED — <https://aur.archlinux.org/packages/rusticprofile>, `0.2.30-1`**, AUR git tip
+**`748c32d`** *"rusticprofile 0.2.30"*, pushed as `513b854..748c32d`.
+
+#### All three channels went out together, which has not happened before
+
+`v0.2.30` reached GitHub, crates.io **and** the AUR in one session. Every previous release left the
+AUR behind — `0.2.25` records why, and the cause is structural rather than an oversight: `.SRCINFO`
+generation needs **podman**, which the Windows host releases are usually cut from does not have, so
+the step needs a second machine, which means a second session, which means it is skipped by default
+rather than by decision. This release was cut from a Linux host that has podman *and* an SSH key the
+AUR accepts, so the gap simply did not open.
+
+**That is a fact about where the work happened, not a fix.** The next release cut from the Windows
+host will drift again, and `NOTES.md` §4's item — nothing reports that the AUR has fallen behind —
+is untouched and still open.
+
+#### rustic is 0.11.4 now, in two independent places
+
+`aur-verify` reported **`container has: rustic 0.11.4`**. Every previous packaging entry records
+`0.11.3`, and so does every measurement in `PLAN.md` Parts 5 and 7. Independently, the host this
+release was cut from also runs 0.11.4.
+
+**Two places rather than one is what makes it a finding.** A single host on a newer rustic is a
+local accident; Arch's repository *and* a fleet host both having moved is the version this project
+measures against having changed underneath it.
+
+**Deliberately not treated as a defect, because the evidence points the other way.** The container
+runs the full suite, including the three integration tests that drive real rustic — `aur-verify`
+installs rustic precisely so those do not skip themselves — and **440 tests passed against 0.11.4**.
+So the behaviours §3a's invariants rest on are not obviously broken.
+
+What *is* unguarded is narrower and is now a §4 item: **nothing re-measures §5 and §7 when rustic
+changes underneath them.** Those sections are the evidence behind the operating invariants — the
+`--name` silent-drop, the `~`/`$` non-expansion, the two-phase prune — and each was measured once,
+against a version that is no longer the one running. **Fourth member of the set `0.2.23` names:** the
+binary is only as new as the last `cargo install`, the man page as new as the last `install-man`, the
+package as new as the last `aur-bump`, and **a measurement is only as true as the version it was
+taken against**.
+
+*Stated rather than quietly corrected: this entry does not claim the package was "verified against
+rustic 0.11.3", which is what the previous six entries say and what a copy-paste would have
+produced. It was verified against 0.11.4, because that is what was in the container.*
+
+#### `0.2.28`'s missing publish record, folded in here
+
+That entry recorded the bump and the container verification but **not the push**, because the PR
+merged before `aur-publish` ran. `WIP.md` flagged it rather than spending a release cycle on one
+paragraph, to be folded into the next packaging change — this one. The line is added retroactively
+above, marked as such.
+
+**The gap is worth more than the fix.** An entry that records a bump and a green container run but
+no push reads exactly like a push that never happened, and nothing in the repository could settle
+it — only the AUR git repository could, which is the same oracle `0.2.25` had to reach for when the
+RPC lied.
+
+#### Container-verified before the push, not assumed
+
+`makepkg` completes, **440 tests pass, 0 failed** (372 unit + 5 doc + 63 integration). `namcap
+PKGBUILD` clean; the package warnings are the two expected ones (`gcc-libs`, `rustic`) plus the
+standard glibc/libgcc implicit-satisfaction notices. Payload: the binary, three shell completions,
+the gzipped man page, README and LICENSE.
+
+`aur-publish`'s guards all fired first — `.SRCINFO` agrees with `PKGBUILD`, the declared sha256 was
+re-derived from **the tarball that will actually be downloaded**, and the authenticated maintenance
+probe passed.
+
+#### The RPC lag, observed a fifth time
+
+| oracle | says |
+|---|---|
+| `git ls-remote` on the AUR repo | tip `748c32d` — **ours** |
+| a fresh clone's `PKGBUILD` **and** `.SRCINFO` | **byte-identical** to this repo's |
+| package page, against a 404 control | **200** vs 404 |
+| **RPC `info`** | **`0.2.27-1`** — the version *before* this push |
+
+`0.2.15` found `resultcount: 0` for a package that existed; `0.2.18`, `0.2.25` and `0.2.28` found
+the previous *version*. This is the fourth observation of that second shape and the fifth overall.
+**The rule is settled: after a push the RPC answers about the state before it.** The authoritative
+oracle is the git repository the AUR serves, and a fresh clone diffing byte-identical is a stronger
+form of that check than reading its `pkgver`, because it also proves nothing was mangled in transit.
+
 ### v0.2.30 — the gate lints test code, and the prune's deletion half is proven
 
 **Tooling, CI and documentation; no product code changed.** Two items bundled for the reason
@@ -901,6 +1002,14 @@ next person to quote a §5 or §7 measurement should know.*
 the **released** tag, which is why this release carries `pkgver=0.2.27` while calling itself
 `0.2.28` — the repository moves on after a release; the package does not. Same call `0.1.22`,
 `0.2.8`, `0.2.15`, `0.2.18` and `0.2.25` made.
+
+> **PUBLISHED — `0.2.27-1`, AUR git tip `513b854`.** *Added retroactively in `0.2.31`.* Every other
+> packaging entry carries this line and this one did not, because the PR merged before
+> `aur-publish` ran and adding a paragraph afterwards costs a whole release cycle — so `WIP.md`
+> flagged it to be folded into the next packaging change instead of spending one. This is that
+> change. **The gap is the point**: an entry that records a bump and a container run but not the
+> push reads exactly like a push that never happened, and the AUR git repository is the only thing
+> that could have settled it.
 
 Container-verified before pushing, not assumed: `makepkg` completes, **440 tests pass, 0 failed**
 (372 unit + 5 doc + 63 integration), and the container reports **`rustic 0.11.3`** — so the three
