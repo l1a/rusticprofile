@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.29)
+## Current State (v0.2.30)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -604,12 +604,16 @@ Smaller items:
       per-group slot summary rather than a re-serialisation of rustic's JSON, and the reason
       strings must stay rustic's own words — a closed set of period names would silently drop
       `quarter-yearly`, `half-yearly` or any of the twelve `within-*` forms.
-- [ ] **Verify that a `rustic prune` actually reclaimed packs.** Explicitly **not** one of
-      `doctor`'s checks, recorded because it was nearly assumed to be. Check 2 detects a
-      competing restic prune *schedule*; whether our own prune's deletion pass worked is pack
-      accounting against a stored baseline, and there is nowhere to keep the baseline. The
-      prune host's first run (2026-08-10) marked 1203 of 1602 packs and deleted none, which is
-      correct — `--keep-delete` defers removal by 23 h — so the deletion half is still unproven.
+- [x] **ANSWERED 2026-08-24 — a `rustic prune` does reclaim packs** (`0.2.30`). Still explicitly
+      **not** one of `doctor`'s checks, and for the unchanged reason: check 2 detects a competing
+      restic prune *schedule*, while whether our own prune's deletion pass worked is pack
+      accounting against a stored baseline, and `doctor` is stateless with nowhere to keep one. So
+      this was answered the way it had to be — by writing the baseline and the prediction down and
+      going back to look. The prune host's first run (2026-08-10) marked 1203 of 1602 packs and
+      deleted none, which is correct (`--keep-delete` defers removal by 23 h), leaving the deletion
+      half unproven. It is proven now: **600 packs and 2.3 GiB are gone**, and the live population
+      landed at **389 against a predicted ≈399**. See the `0.2.30` release entry for the table and
+      for the refinement the prediction needed.
 - [x] **"M4 blocks space reclamation" was WRONG, and is superseded.** Corrected in `0.1.3`
       and acted on in `0.1.11`: rustic is lock-free by design, so `rustic prune` is safe and
       is the only prune that may run here. Prune returned to the designated host on
@@ -732,10 +736,14 @@ Smaller items:
       current binary would generate needs no other tool. **Left unguarded and openly so** for
       now, rather than guarded by the wrong component; `PLAN.md` §7.11's reasoning for rejecting
       the stale-checkout check does *not* transfer, so this deserves its own decision.
-- [ ] **`just check` does not lint test code** — `cargo clippy` runs without `--all-targets`, so
-      every `#[cfg(test)]` module has been unlinted since the scaffold. Adding it found one real
-      lint (`0.2.0`). Not changed in that release because it may surface more across the
-      codebase, and a gate change deserves its own PR.
+- [x] **DONE in `0.2.30` — `just check` lints test code.** `cargo clippy` ran without
+      `--all-targets`, so every `#[cfg(test)]` module had been unlinted since the scaffold.
+      `0.2.0` found one real lint that way and deferred the change on the grounds that a gate
+      change deserves its own PR; this is that PR, and the codebase is clean under the stricter
+      form, so the deferred risk did not materialise. **Both CI clippy steps carry the flag too**
+      — a gate the local run enforces and CI does not is not a gate. `0.2.30` also fixes the
+      neighbouring defect the same lines carried: `full-test` ran `cargo fmt --check` second to
+      last, after a full `--release` build and the whole suite.
 - [x] **Decided and done in `0.1.32`.** The operating rules — `PLAN.md` §7.3, §7.5, §7.6,
       §7.7, §7.8 — are promoted to **§3a** above, which is now where they are maintained.
       `PLAN.md` keeps every section number, its full text and its measurements, and gains a
@@ -756,6 +764,122 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.30 — the gate lints test code, and the prune's deletion half is proven
+
+**Tooling, CI and documentation; no product code changed.** Two items bundled for the reason
+`0.2.19` gives: they touch the same lines in the same two files, so as sibling branches off `main`
+they would both bump the version and edit this file and would have conflicted on `Cargo.toml`,
+`Cargo.lock` and `NOTES.md`. Stacking stays rejected after what it did to #63.
+
+#### `just check` had never linted a single test module
+
+`cargo clippy` ran without `--all-targets`, so every `#[cfg(test)]` module in the crate was
+invisible to the gate — since the scaffold. `0.2.0` noticed, found one real lint that way, and
+deferred the change on the grounds that a gate change deserves its own PR. This is that PR.
+
+**Watched failing rather than assumed**, per `0.2.17`: a guard nobody has seen fail is a check that
+may not be able to. A `len_zero` was planted inside a `#[cfg(test)] mod` and both forms run against
+it:
+
+| form | exit |
+|---|---|
+| `cargo clippy -- -D warnings` — the old gate | **0**, blind to it |
+| `cargo clippy --all-targets -- -D warnings` | **101**, naming the line |
+
+The probe was reverted and the tree re-verified clean before anything else was written. **The
+codebase passes the stricter form as it stands**, so `0.2.0`'s stated risk — *"it may surface more
+across the codebase"* — did not materialise; its one lint had already been fixed on its own.
+
+**Both CI clippy steps carry the flag too.** A gate the local run enforces and CI does not is not a
+gate; it is something one contributor's machine happens to check. Note what a clean local run does
+**not** clear: `#[cfg(windows)]` and `#[cfg(unix)]` test modules are only linted on the platform
+that compiles them, so the macOS and Windows legs are the oracle for their own halves and this
+change could legitimately turn one of them red for something invisible here.
+
+#### `full-test` ran the cheapest check second to last
+
+The two jobs disagreed with each other, and the one that was wrong was the expensive one:
+
+| job | order before |
+|---|---|
+| `build` — pull requests, 4 legs | Format check → Clippy → Build → Test → Golden → Smoke |
+| **`full-test`** — merges, tags, weekly; 7 legs, containers | **Build (release) → Test → Clippy → Format check** → Golden → Smoke |
+
+`cargo fmt --check` compiles nothing and takes about a second, and on the release path it ran after
+a full `--release` build and the entire suite, on all seven legs — 73–123 s each, measured on the
+`8f9a12d` merge. A missing trailing newline paid all of that before anyone heard about it.
+
+**This saves time on failure, not on success**, and the entry says so rather than selling it as a
+speed-up: a green run does the same work either way, and what changes is how fast a red one reports
+and how much runner time a trivial mistake burns.
+
+Verified by comparing the *set* of step names before and after — identical, nothing added or
+dropped — and by parsing the file to confirm all four jobs survive, rather than by reading the
+diff. A reordered YAML block is exactly where a dropped step hides.
+
+#### And it falsified a present-tense claim in two other files, neither near the diff
+
+`0.2.26`'s finding arriving on schedule: **the cost of changing a thing is every claim already
+written about it**, and none of those claims is in the diff you are reading. Both were found by
+answering `just pr`'s own manual checklist honestly rather than by reviewing the change:
+
+| file | the claim |
+|---|---|
+| `README.md` | `just check    # cargo fmt --check + cargo clippy -D warnings` — the one line a contributor reads to learn what the gate does |
+| `PLAN.md` §5.10 | *"`just check` runs `cargo clippy` **without** `--all-targets`, so test code has never been linted"* |
+
+The README line is corrected outright. **`PLAN.md`'s is kept and annotated instead**, per that
+file's own convention: it is the historical record of a measurement, its present tense was true
+when written, and its section numbers are permanent anchors. It now carries a `FIXED in 0.2.30`
+pointer beneath the original rather than an edit through it.
+
+*The generalisable half is about the checklist rather than the claims.* `just pr` asks *"README.md
+reviewed and updated"* and *"PLAN.md updated if a design decision changed"*, and both of these
+surfaced only because those boxes were checked before they were ticked. `0.2.5` records the mirror
+image — an identifier item answered `y` **without** running the scan, which it calls the
+`0.2.1`/`0.2.2` failure appearing inside the checklist itself. Same checklist, opposite outcome.
+
+#### The prune's deletion half is proven
+
+§4 has carried since `0.2.13` that the prune host's first run **marked** 1203 of 1602 packs and
+deleted none — correct, since `--keep-delete` defers removal by 23 h — leaving the deletion half
+unproven. A `repoinfo` baseline and a **falsifiable prediction** were written down on 2026-08-10,
+with the falsifier stated outright: *if the pack count does not fall, the deletion half of prune is
+not working.* Measured 2026-08-24, read-only against the shared repository:
+
+| | baseline 2026-08-10 | predicted | **measured 2026-08-24** |
+|---|---|---|---|
+| **live packs** | 399 | **≈399** — 51 tree + 348 data | **389** — 47 tree + 342 data |
+| packs marked to delete | 1203 — 516 + 687 | — | 613 — 298 + 315 |
+| pack total | 1602 · 6.7 GiB | ≈399 · ≈3.9 GiB | 1002 · 4.4 GiB |
+| snapshots | 932 | — | 1024 |
+
+**600 packs and 2.3 GiB are gone**, and the live population landed within 2.5% of the prediction on
+both blob types. `PLAN.md` §7.6's two-phase description is confirmed end to end rather than in
+half.
+
+**The refinement is the transferable part.** The prediction said ≈399 packs *total*, and the total
+is 1002. That is not a miss: it assumed the marked set drains to zero, when under a *repeating*
+weekly prune it is continuously refilled — each run deletes the previous generation and marks a new
+one. **A two-phase prune has no steady state in which the marked set is empty**, so the figure is
+only meaningful against the *live* population, and read that way it is nearly exact. Whoever writes
+the next prediction of this shape should say which of the two numbers it is about.
+
+**Attribution was measured, not inferred.** A falling pack count proves *something* deleted packs,
+and §3a invariant 3 makes *which tool* the question that matters. The prune host's rusticprofile
+prune timer is enabled and last ran successfully; the predecessor's restic prune timer is still
+installed-and-**disabled**, exactly as that invariant requires. And **`rustic check` exits 0** — no
+errors, 1024 snapshots, 42 index files, 131 trees — which is the check that *failed*, with five
+data packs missing, in the experiment behind the invariant. It is **not** `--read-data`, which was
+deliberately not run against a production repository, so this is strong consistency evidence rather
+than a full verification, and the entry says which it is.
+
+*Turned up in passing and deliberately not acted on: the host the measurement was taken from runs
+**rustic 0.11.4**, while every measurement in `PLAN.md` Parts 5 and 7 is against 0.11.3 and the AUR
+verification container still reports 0.11.3. `repoinfo` reads the repository rather than the host,
+so the comparison holds — but the fleet now carries a version drift nobody had recorded, and the
+next person to quote a §5 or §7 measurement should know.*
 
 ### v0.2.29 — bump cargo and GitHub Actions dependencies
 

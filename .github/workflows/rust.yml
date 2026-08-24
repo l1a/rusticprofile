@@ -148,7 +148,11 @@ jobs:
     - name: Format check
       run: cargo fmt -- --check
     - name: Clippy
-      run: cargo clippy -- -D warnings
+      # `--all-targets` so `#[cfg(test)]` code is linted too. Without it clippy never sees a
+      # test module at all, which had been true since the scaffold. Watched failing rather than
+      # assumed: a `len_zero` planted inside a `#[cfg(test)] mod` exits 0 without the flag and
+      # 101 with it.
+      run: cargo clippy --all-targets -- -D warnings
     - name: Build
       run: cargo build --verbose
     - name: Run tests
@@ -277,17 +281,26 @@ jobs:
       if: ${{ !matrix.container }}
       uses: dtolnay/rust-toolchain@stable
 
+    # Cheapest first, and the order is deliberate rather than inherited. `cargo fmt --check`
+    # compiles nothing and takes about a second, and it used to run second to LAST here -- after
+    # a full `--release` build and the whole suite, on all seven legs (73-123 s each, measured on
+    # the `8f9a12d` merge). A missing trailing newline paid all of that before anyone heard
+    # about it. `build` has always had this order; the expensive job had it inverted.
+    #
+    # This saves time on FAILURE, not on success: a green run does the same work either way.
+    # What changes is how fast a red one reports, and how much runner time a trivial mistake
+    # burns.
+    - name: Format check
+      run: cargo fmt -- --check
+
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
+
     - name: Build (release)
       run: cargo build --release --verbose
 
     - name: Run tests (all features)
       run: cargo test --all-features --verbose
-
-    - name: Clippy
-      run: cargo clippy -- -D warnings
-
-    - name: Format check
-      run: cargo fmt -- --check
 
     # Duplicated from `build` rather than left there, and the duplication is the cheaper half of
     # the trade. `build` no longer runs on a merge and never ran on a tag, so these two checks
