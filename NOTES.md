@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.31)
+## Current State (v0.2.32)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -632,6 +632,13 @@ Smaller items:
       is the only prune that may run here. Prune returned to the designated host on
       2026-08-03 as a `rustic prune`; it first fires **Mon 2026-08-10**. M4 is defence in
       depth, not permission — invariant 3 in §3a.
+- [ ] **Template v3 is not yet in `retch` or `etr`** (`0.2.32`). `scripts/install_completions.py`
+      is vendored verbatim in all three, and the pre-fix copy will happily write a completion
+      script over a binary when handed a path. Each repo needs its own PR, and `WIP.md` records
+      that both siblings additionally require a **GitHub wiki update before the PR** — retch §4.8
+      (`Development-Setup.md`, explicitly "if `just` recipes changed") and etr §4.11
+      (`Development.md`). Until then the two of them carry a defect this repo has fixed, which is
+      exactly the state `0.2.23` found and named.
 - [ ] Add a Pre-PR Checklist section to `AGENTS.md` Part 2, mirroring retch's §4
 - [x] **A Task Scheduler backend — done in `0.2.0`**, verified end to end on a real machine.
       Found and fixed a §7.5 violation no unit test could have caught: a repeating trigger with a
@@ -777,6 +784,65 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.32 — the completions helper could overwrite the binary it was asked to read
+
+**Tooling only; no product code changed.** `scripts/install_completions.py` goes to **template v3**.
+Found by doing it: this helper destroyed a working `rusticprofile` on a fleet host that takes hourly
+backups, replacing a 3.6 MB binary with a 21 KB bash completion script.
+
+#### The mechanism, and why it fails in the worst available way
+
+```python
+binaries = [a for a in argv if not a.startswith("-")]   # a command NAME
+out = directory / pattern.format(bin=binary)            # pathlib
+```
+
+**`Path("/dest/dir") / "/abs/path"` discards the left operand.** So an absolute `binary` silently
+relocates every write out of the completion directory and onto the path itself — and under
+`--from-path` that path is the installed binary.
+
+Three things make it worse than an ordinary argument error:
+
+1. **`--from-path` runs `[binary]`**, so an absolute path *works for the read*. Generation succeeds
+   and then destroys its own input. Nothing fails until the next time the binary is run.
+2. **The flag is called `--from-path`**, which invites precisely the argument that breaks it. A
+   docstring would not have helped; the person passing a path has already read the flag name.
+3. **The damage is silent and delayed.** The victim reported `exit 0` and printed nothing; the
+   binary's absence surfaced later as *"`plan` produces no output"*, which reads as a regression in
+   the tool rather than as a clobbered file.
+
+#### Fixed by making it unexpressible, not by documenting it
+
+`reject_path_like()` refuses any argument containing a path separator or resolving absolute, before
+**any** file is written, and names the correct form in the error. Same call as refusing a
+snapshot-set name that begins with `-`: make the mistake impossible, then assert it.
+
+**Watched failing, and in both places it is enforced** (`0.2.17`): neutering the condition makes
+`--self-test` fail with *"rejects an absolute path — expected True, got False"*, and makes
+**`just standard-check` fail**, which `just check` depends on, so the pre-push hook and `just pr`
+both catch it. And the accident itself was re-run against a stand-in file: the helper now refuses
+and the file is **byte-identical afterwards**, where before it would have been overwritten.
+
+A fourth self-test case pins the property rather than the mechanism — that joining a directory with
+an absolute string yields the absolute string — so the check survives a rewrite of the guard.
+
+#### What this does not fix
+
+**`retch` and `etr` vendor the same helper and still carry the defect.** Template v3 must be
+propagated in each repo's own PR, and both need a GitHub wiki update first. Recorded in §4 rather
+than done here — a cross-repo change is not something to bundle into a patch release, and `0.2.23`
+already established that reading a sibling's release log before touching its files is what stops a
+"standardisation" from shipping a regression.
+
+*The process failure is worth more than the fix, and it was mine.* This host had used
+`just install-tag`, which calls the helper correctly. For the remote hosts I hand-rolled an
+equivalent — for a sound reason, to avoid running git inside a Syncthing-shared checkout — and then
+ran the hand-rolled form on a live machine without trying it on anything disposable first. **The
+remedy that actually generalises is the post-condition**, now in the rollout script: assert the
+binary is still larger than a megabyte and still reports the expected version, before and after
+every step. It would have caught this in one second, and it does not depend on anyone remembering
+which argument shape the helper wants.
 
 ### v0.2.31 — the AUR tracks 0.2.30, and rustic moved underneath every measurement
 
