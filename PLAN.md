@@ -1132,6 +1132,11 @@ is first on PATH.
 `--all-targets`, so test code has never been linted. Running it with `--all-targets` found one
 real lint in `exec`'s test module.*
 
+> **FIXED in `0.2.30`.** `just check` and both CI clippy steps now carry `--all-targets`, and the
+> gate was watched failing against a `len_zero` planted inside a `#[cfg(test)] mod` — exit 0 under
+> the old form, 101 under the new one. The paragraph above is kept as written, per this file's
+> convention: it records what was measured here, and the present tense was true when it was.
+
 ### `RestartOnFailure` cannot retry a failed backup — measured 2026-08-10
 
 Reported by Ken watching his own machine again, and the same shape as the console window: **every

@@ -298,7 +298,7 @@ had moved on is exactly the kind of individually-plausible mismatch this tool ex
 
 ```bash
 just setup    # install git hooks (pre-push runs fmt + clippy)
-just check    # cargo fmt --check + cargo clippy -D warnings
+just check    # cargo fmt --check + cargo clippy --all-targets -D warnings
 just test
 just open-pr  # runs the full pre-PR gate, then gh pr create
 ```

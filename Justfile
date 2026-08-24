@@ -165,12 +165,12 @@ fmt:
 
 # Run clippy lints
 lint:
-    cargo clippy -- -D warnings
+    cargo clippy --all-targets -- -D warnings
 
 # Run strict checks (formatting, linting, golden argv files) as done in CI
 check: golden-is-current standard-check
     cargo fmt -- --check
-    cargo clippy -- -D warnings
+    cargo clippy --all-targets -- -D warnings
 
 # Regenerate the golden argv files under tests/golden
 golden:
