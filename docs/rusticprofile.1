@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "August 2026" "rusticprofile 0.2.33" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "September 2026" "rusticprofile 0.2.34" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -144,7 +144,7 @@ Exit status is \fB0\fP for success or partial, \fB1\fP for failure, \fB130\fP fo
 .PP
 On \fBLinux\fP that means systemd units driven by `\f[CR]systemctl\fP`; on \fBmacOS\fP, a launchd agent driven by `\f[CR]launchctl\fP`\. On a platform with neither, \fBschedule\fP refuses and writes nothing \-\- files on disk plus a success message are indistinguishable from a working install, so refusing is the only honest answer\. \fBstatus\fP reports the backend it found, and `\f[CR]status \-\-json\fP` names it in a `\f[CR]backend\fP` field\.
 .PP
-On \fBWindows\fP it means one Task Scheduler task under `\f[CR]\rusticprofile\\fP`\fIJOB\fP, driven by `\f[CR]schtasks\fP`\. Where there is no backend at all, \fBstatus\fP still prints each job's `\f[CR]last run\fP` and `\f[CR]last success\fP`, because that record is written by \fBrun\fP and does not come from a service manager; it is the field to watch in any case, since a run that never happens reports nothing\.
+On \fBWindows\fP it means one Task Scheduler task under `\f[CR]\erusticprofile\e\fP`\fIJOB\fP, driven by `\f[CR]schtasks\fP`\. Where there is no backend at all, \fBstatus\fP still prints each job's `\f[CR]last run\fP` and `\f[CR]last success\fP`, because that record is written by \fBrun\fP and does not come from a service manager; it is the field to watch in any case, since a run that never happens reports nothing\.
 .PP
 \fBstatus\fP prints `\f[CR]last run\fP` and `\f[CR]last success\fP` in the same shape the service manager reports `\f[CR]next run\fP` \-\- `\f[CR]Tue 2026\-08\-11 20:28:57 PDT\fP` \-\- and in this machine's own time zone, so the three lines describe one clock and can be read against each other\. \fBThe record itself is unchanged\fP: the status file and `\f[CR]status \-\-json\fP` both keep RFC 3339, which is what a monitor parses\. Where no time\-zone database is available the zone cannot be named, so the offset the record carries is shown instead (`\f[CR]Tue 2026\-08\-11 20:28:57 \-07:00\fP`); a stamp this version cannot parse is printed exactly as it was stored rather than dropped\.
 .PP
@@ -174,7 +174,7 @@ The timer sets \fBPersistent=true\fP, so a run missed while the machine was asle
 
 .SS "Task Scheduler (Windows)"
 .PP
-A scheduled job is \fBone\fP task, registered at `\f[CR]\rusticprofile\\fP`\fIJOB\fP rather than written into a directory a service manager reads: `\f[CR]schtasks /Create /XML\fP` copies the definition into the service's own store\. rusticprofile keeps the definition it generated under `\f[CR]$XDG_STATE_HOME/rusticprofile/tasks\fP` as a record, and the service remains the authority on what is actually scheduled\. `\f[CR]permission: system\fP` registers the task under the LocalSystem account instead of your own\.
+A scheduled job is \fBone\fP task, registered at `\f[CR]\erusticprofile\e\fP`\fIJOB\fP rather than written into a directory a service manager reads: `\f[CR]schtasks /Create /XML\fP` copies the definition into the service's own store\. rusticprofile keeps the definition it generated under `\f[CR]$XDG_STATE_HOME/rusticprofile/tasks\fP` as a record, and the service remains the authority on what is actually scheduled\. `\f[CR]permission: system\fP` registers the task under the LocalSystem account instead of your own\.
 .PP
 Three things differ from the Unix backends, each measured rather than assumed:
 .PP
@@ -338,7 +338,7 @@ For an exact query rather than a survey \-\- "the single newest snapshot at or b
 .RS
 .PP
 .nf
-rusticprofile snapshots \-n dot\-files \-\- \
+rusticprofile snapshots \-n dot\-files \-\- \e
     \-\-group\-by host,label \-\-filter\-before 2026\-05\-15 \-\-filter\-last 1
 .fi
 .RE
@@ -473,7 +473,7 @@ The launchd agent on macOS, written by \fBschedule\fP and removed by \fBunschedu
 \fB$XDG_STATE_HOME/rusticprofile/tasks/\fBJOB\fP\.xml\fP
 .RS
 .PP
-On Windows, the task definition \fBschedule\fP generated\. Unlike the Unix backends this file is \fInot\fP the installation \-\- `\f[CR]schtasks\fP` copies the definition into the Task Scheduler service's own store, and the registration at `\f[CR]\rusticprofile\\fP`\fIJOB\fP is what actually runs\. This copy is a record of what was registered, and deleting it does not unschedule anything\.
+On Windows, the task definition \fBschedule\fP generated\. Unlike the Unix backends this file is \fInot\fP the installation \-\- `\f[CR]schtasks\fP` copies the definition into the Task Scheduler service's own store, and the registration at `\f[CR]\erusticprofile\e\fP`\fIJOB\fP is what actually runs\. This copy is a record of what was registered, and deleting it does not unschedule anything\.
 .RE
 \fB$XDG_STATE_HOME/rusticprofile/status/\fBJOB\fP\.json\fP
 .RS
