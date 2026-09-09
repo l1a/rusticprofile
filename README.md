@@ -251,6 +251,15 @@ It tracks the newest **released tag**, not `main`, so it can sit a release behin
 repository moves on — that is by design, not staleness. `pacman -Qi rusticprofile` against
 [the latest release](https://github.com/l1a/rusticprofile/releases/latest) is the check.
 
+**On Fedora Linux** — from the COPR repository:
+
+```bash
+sudo dnf copr enable kentobias/rusticprofile
+sudo dnf install rusticprofile
+```
+
+The package installs the binary, man page, and completions for bash, fish, and zsh. It tracks the newest **released tag** on Fedora 43 and 44 (x86_64 and aarch64). Note that `rustic` is recommended but not packaged in Fedora's base repositories, so install rustic separately (e.g. via `cargo install rustic-rs`) if not already present.
+
 **A prebuilt binary** — every release ships five targets plus the man page, from
 [the latest release](https://github.com/l1a/rusticprofile/releases/latest):
 

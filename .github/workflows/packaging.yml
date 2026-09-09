@@ -1,0 +1,71 @@
+name: Packaging Verification
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'packaging/**'
+      - '.copr/**'
+      - '.github/workflows/packaging.yml'
+      - 'Justfile'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  copr:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install system dependencies
+        run: dnf -y install git make rpm-build rpmdevtools python3
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Verify the spec has not drifted
+        run: python3 scripts/copr_check.py
+
+      - name: Build the SRPM exactly as COPR does
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/srpm-plain
+          make -f .copr/Makefile srpm outdir=/tmp/srpm-plain
+          ls -1 /tmp/srpm-plain
+
+      - name: Build the SRPM under mock's environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .copr-sources
+          mkdir -p /builddir /tmp/srpm-mock
+          echo "%_topdir /builddir/build" > /builddir/.rpmmacros
+          export HOME=/builddir
+          echo "HOME=$HOME  _topdir=$(rpmbuild --eval '%{_topdir}')"
+          make -f .copr/Makefile srpm outdir=/tmp/srpm-mock
+          ls -1 /tmp/srpm-mock
+
+      - name: Verify the SRPM matches the version the spec pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^Version:[[:space:]]*//p' packaging/copr/rusticprofile.spec | head -1)
+          srpm=$(find /tmp/srpm-mock -maxdepth 1 -name '*.src.rpm' -print -quit)
+          if [ -z "$srpm" ]; then
+            echo "::error::no .src.rpm was produced"
+            ls -la /tmp/srpm-mock || true
+            exit 1
+          fi
+          echo "spec Version: $version"
+          echo "built:        $(basename "$srpm")"
+          case "$(basename "$srpm")" in
+            rusticprofile-"$version"-*.src.rpm) ;;
+            *)
+              echo "::error::SRPM name does not carry the spec's Version ($version)"
+              exit 1
+              ;;
+          esac
+          echo "SRPM matches the pinned version"

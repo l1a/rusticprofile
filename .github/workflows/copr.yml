@@ -1,0 +1,78 @@
+name: COPR Rebuild
+
+# Triggers a rebuild of the COPR package after the spec changes.
+#
+# WHY NOT "on: release" OR A TAG TRIGGER, which is the obvious choice and is WRONG here:
+# packaging/copr/rusticprofile.spec pins Version: and a Source0 tarball checksum to the last
+# RELEASED tag, so it can only be bumped AFTER that tag exists. The sequence is
+#   1. push tag vX      -> spec still says the PREVIOUS version
+#   2. release workflow -> spec still says the PREVIOUS version
+#   3. commit the packaging bump to main -> spec now says vX
+# A release- or tag-triggered rebuild fires at step 1 or 2 and rebuilds the OLD version.
+# The event that means "there is something new to build" is the commit at step 3, which is
+# exactly what the paths filter below matches.
+#
+# .copr/** is watched as well as packaging/copr/**: the Makefile there is what GENERATES the
+# SRPM, so a change to it alters the build without touching the spec.
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'packaging/copr/**'
+      - '.copr/**'
+      - '.github/workflows/copr.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install copr-cli
+        run: dnf -y install copr-cli
+
+      - name: Report what the spec pins
+        run: |
+          set -euo pipefail
+          grep -E '^(Name|Version|Release):' packaging/copr/rusticprofile.spec
+
+      - name: Configure copr-cli
+        env:
+          COPR_LOGIN: ${{ secrets.COPR_LOGIN }}
+          COPR_USERNAME: ${{ secrets.COPR_USERNAME }}
+          COPR_TOKEN: ${{ secrets.COPR_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Guard rather than fail: a fork has no secrets, and a red check there would be
+          # noise about a credential the fork is not supposed to have.
+          if [ -z "${COPR_LOGIN:-}" ] || [ -z "${COPR_TOKEN:-}" ] || [ -z "${COPR_USERNAME:-}" ]; then
+            echo "::notice::COPR credentials not configured; skipping the rebuild"
+            echo "skip=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          mkdir -p ~/.config
+          # Written from env, never echoed. Actions masks the values in logs.
+          {
+            echo "[copr-cli]"
+            echo "login = $COPR_LOGIN"
+            echo "username = $COPR_USERNAME"
+            echo "token = $COPR_TOKEN"
+            echo "copr_url = https://copr.fedorainfracloud.org"
+          } > ~/.config/copr
+          chmod 600 ~/.config/copr
+          echo "skip=false" >> "$GITHUB_ENV"
+
+      - name: Rebuild the COPR package
+        if: env.skip != 'true'
+        run: |
+          set -euo pipefail
+          # build-package rebuilds from the package's stored SCM source config, which is
+          # configured with `make_srpm` method. It waits for the build and exits non-zero
+          # if any chroot fails.
+          copr-cli build-package --name rusticprofile kentobias/rusticprofile

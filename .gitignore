@@ -25,3 +25,6 @@ __pycache__/
 # It also blocked a release: `cargo publish` refuses on an unclean working directory,
 # and an untracked file counts, so `just publish` failed until it was deleted by hand.
 *.sync-conflict-*
+
+# COPR make_srpm local build artifacts
+.copr-sources/

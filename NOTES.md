@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.36)
+## Current State (v0.2.37)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -784,6 +784,19 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.37 — Fedora COPR packaging
+
+**Packaging infrastructure; no product code changed.** Adds Fedora COPR packaging mirroring `../retch`:
+
+- **COPR Project**: Created repository `https://copr.fedorainfracloud.org/coprs/kentobias/rusticprofile/` supporting Fedora 43 and 44 on x86_64 and aarch64, with internet access enabled for locked Cargo builds. SCM package configured for `https://github.com/l1a/rusticprofile.git` using method `make_srpm`.
+- **SRPM Generation**: `.copr/Makefile` implements `make -f .copr/Makefile srpm outdir=<dir>`, using explicit `--define '_sourcedir ...'` and `--define '_srcrpmdir ...'` to work reliably inside Mock's redefined `%_topdir` environment.
+- **Spec File**: `packaging/copr/rusticprofile.spec` pins released tag `0.2.35` (matching `packaging/aur/PKGBUILD`), with `--locked` cargo build, man page installation from `docs/rusticprofile.1`, shell completions generated via `--completions`, and `Recommends: rustic`.
+- **Anti-Drift Guard**: `scripts/copr_check.py` validates spec consistency offline (pinned version == AUR pkgver, version <= Cargo.toml, changelog sync, %{version} macro, and `--locked`).
+- **Justfile Recipes**: Added `copr-check` and `copr-bump <version>`, with `copr-check` wired into `just check`.
+- **CI Workflows**:
+  - `.github/workflows/copr.yml`: Automates COPR rebuild on push to `main` for packaging changes.
+  - `.github/workflows/packaging.yml`: PR-time verification for COPR (spec drift check and SRPM build under plain and mock environments).
 
 ### v0.2.36 — the AUR tracks 0.2.35
 
