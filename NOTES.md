@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.34)
+## Current State (v0.2.35)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -784,6 +784,16 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.35 — bump cargo and GitHub Actions dependencies
+
+**Dependency updates only.** Consolidates Dependabot updates for cargo packages and GitHub Actions workflow pins:
+
+- **Cargo dependencies**:
+  - `owo-colors`: `4.3.0` → `4.4.0`
+- **GitHub Actions workflows**:
+  - `anthropics/claude-code-action` pinned commit hash updated to `8251c103ac8c1d761882c86aba1412c7f583c844` (`v1`, 1.0.213) in `.github/workflows/claude-code-review.yml` and `.github/workflows/claude.yml`.
+  - `softprops/action-gh-release` pinned commit hash updated to `efb35369e0ad2afab669f228072c1b0d510eae64` (`v3`, 3.0.3) in `.github/workflows/rust.yml`.
 
 ### v0.2.34 — bump anthropics/claude-code-action to 1.0.206
 
