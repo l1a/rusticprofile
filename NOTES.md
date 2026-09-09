@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.35)
+## Current State (v0.2.36)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -784,6 +784,22 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.36 — the AUR tracks 0.2.35
+
+**Packaging only; no code changed.** `packaging/aur/` moves `0.2.32` → **`0.2.35`**. `pkgver` tracks
+the **released** tag, which is why this release carries `pkgver=0.2.35` while calling itself
+`0.2.36` — the repository moves on after a release; the package does not. Same call `0.1.22`,
+`0.2.8`, `0.2.15`, `0.2.18`, `0.2.25`, `0.2.28`, `0.2.31` and `0.2.33` made.
+
+**PUBLISHED — <https://aur.archlinux.org/packages/rusticprofile>, `0.2.35-1`**, AUR git tip **`0a6232a`**, pushed as `51d2157..0a6232a`.
+
+Container-verified before the push, not assumed: `makepkg` completes, the full suite passes,
+`namcap PKGBUILD` clean, and the package warnings are the two expected ones (`gcc-libs`, `rustic`)
+plus the standard glibc/libgcc implicit-satisfaction notices. Payload: the binary, three shell
+completions, the gzipped man page, README and LICENSE. `aur-publish`'s guards all fired first —
+`.SRCINFO` agrees with `PKGBUILD`, and the declared sha256 was re-derived from the tarball that will
+actually be downloaded.
 
 ### v0.2.35 — bump cargo and GitHub Actions dependencies
 
