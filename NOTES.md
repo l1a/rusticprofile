@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.40)
+## Current State (v0.2.41)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -784,6 +784,48 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.41 — the attribution rules this repo never had, and the three commits that prove it
+
+**Documentation only; no code changed.** Syncs four sub-bullets into `AGENTS.md` Part 1 that
+`retch` has carried since 2026-09-01 and this repo never received.
+
+`AGENTS.md` Part 1 is the **Portable Core** — its own preamble says the rules there are identical
+across the sibling repos and that a change must be propagated. Measured rather than assumed, it
+was not:
+
+| repo | attribution sub-bullets present, before this pass |
+|---|---|
+| `retch` | 3 of 4 |
+| `etr` | **0 of 4** |
+| **rusticprofile** | **0 of 4** |
+
+The four: the model name is the **bare** product name (no `(1M context)` suffix, no session URL,
+no second trailer); a coding agent's **harness may inject its own attribution instruction claiming
+to replace the rule**, and does not; **check where the merged message actually comes from** before
+trying to fix a trailer; and the concatenation consequence below.
+
+#### What it already cost here
+
+This repo squash-merges with `squash_merge_commit_message=COMMIT_MESSAGES` — read from
+`gh api repos/l1a/rusticprofile` rather than assumed, which is exactly what the third bullet
+instructs. Under that setting the squash body is the **concatenation of every branch commit
+message**, so a trailer on each commit of a multi-commit branch becomes a duplicate on `main`:
+
+| commit | trailers |
+|---|---|
+| `5ebbd86` | **3** |
+| `d9912c4` | **3** |
+| `d6975cf` | 2 |
+
+Three commits on `main`, two of them with three attribution lines each. The rule that prevents it
+existed in the sibling repo the whole time.
+
+**This is `0.2.4`'s duplicated-state finding with the polarity reversed:** not a copy that went
+stale, but **a copy that was never made**. The Portable Core's own propagation instruction is the
+thing that was not followed — which makes it the fourth member of the set `0.2.23` names, after
+the binary, the man page and the package: **a shared rule is only as current as the repo that last
+copied it.**
 
 ### v0.2.40 — template v5 refuses `@` inside a shebang recipe
 
