@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.37)
+## Current State (v0.2.38)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -784,6 +784,89 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.38 — a byte-level guard, and the corruption it was written for
+
+**Tooling and one repaired byte; no product code changed, so `plan --format lines` is
+byte-identical and the contract with rustic cannot have moved.**
+
+`templates/justfile-common.just` line 22 read `usr` + **0x08** + `in` where it should have read
+`usr{B}bin`. That is `~/AGENTS.md` §14's transport collapse: a double backslash in a command handed
+to an agent's shell arrives as a single one *before the shell sees it*, so `{B}b` becomes a
+backspace. A quoted heredoc does not prevent it.
+
+**The file it happened in is the point.** That template is the canonical reference three repositories
+vendor their common Justfile block from — its entire job is to be copied byte-for-byte — and it had
+been silently wrong for months. The repair restores byte-identity with `etr`; `retch` remains
+separately drifted in its `standard-check` body, which is a template change and belongs in its own
+PR across all three.
+
+**The corruption was in the template's prose header, not the canonical block.** Checked rather than
+assumed: the text after `---- BEGIN CANONICAL ----` is byte-identical to the block embedded between
+the `# >>> COMMON` markers in `Justfile`, before this change and after it. So no recipe ever ran
+wrong. That is the *smaller* claim and it is the true one.
+
+#### The guard: `scripts/text_check.py`, wired into `just check`
+
+`just text-check` refuses any C0 control byte except TAB and LF, plus DEL, in every tracked text
+file. Offline, no network, no rpm tooling — the same bargain `0.2.21` insisted on when it refused to
+put a registry call inside the gate.
+
+It closes **two** classes, and the second is the one worth reading:
+
+1. **A lone control byte**, as above. `{B}a` becomes BEL; `{B}n` becomes a real newline, which in the
+   sibling repos split a paragraph in half — so the file still rendered, just wrongly, which is why
+   nobody spotted it.
+2. **A carriage return.** `.gitattributes` pins `* text=auto eol=lf` here, and git then
+   **normalises a CRLF worktree copy out of its own view rather than reporting it**. Measured on
+   git 2.55.0 by planting CRLF in one tracked file, rather than reasoned about:
+
+   | asked | answer |
+   |---|---|
+   | `git status --short` | `` M scripts/copr_check.py`` |
+   | `git diff` | **nothing** — no hunk, no name, only a stderr warning |
+   | `git add <file>`, then `git status` | **clean**, with 365 CRs still on disk |
+
+   So the drift shows exactly once, as an ` M` with no diff behind it — which reads as noise — and
+   the first `git add` that touches the file erases the only signal while leaving every byte in
+   place. Thereafter chezmoi, python and every shell see the CRs and git sees nothing. This
+   repository has met it from the other side: `Set-Content` rewrote `Cargo.toml` CRLF while the
+   index stayed LF (`WIP.md`, 2026-08-12). The unambiguous oracle is `git ls-files --eol`, looking
+   for `i/lf w/crlf`.
+
+   > **A first draft of this entry said `git status` *structurally cannot* report it. That is
+   > wrong, and it was caught by running the control rather than by re-reading the sentence.**
+   > `git status` reports it fine — once. The real mechanism is worse and narrower than the
+   > overstatement: the signal is erased by the most ordinary command there is. Recorded rather
+   > than quietly corrected, because "a check that returns the expected answer for the wrong
+   > reason" is this file's most-repeated finding and an *argument* that returns the expected
+   > answer for the wrong reason is the same failure one level up.
+
+**CR is forbidden outright rather than exempted, and that is a measurement rather than a house
+rule:** `git ls-files --eol` reports `w/lf` for all 79 tracked files, so there is no
+deliberately-CRLF file to carve out. `retch` has one, and its copy of this guard needs an exemption
+this one must not grow to match.
+
+**Do not rebuild this out of `grep`.** `grep -c $'{B}r'` from an agent shell is `~/AGENTS.md` §17: the
+pattern collapses to empty, `grep` matches every line, and the answer is the file's **line count**
+wearing a carriage-return costume. Wrong in both directions, and the tell is that it equals
+`wc -l`. Count bytes in a language that has them.
+
+#### Two things done deliberately rather than incidentally
+
+**The self-test runs before the scan**, so a broken guard fails as a broken guard rather than as a
+clean tree — `0.2.13`'s third severity applied to the check itself. It asserts both directions: the
+repaired text must *pass* (a guard that blocks its own fix is worse than none), and the exact bytes
+that were in the file must *fail*.
+
+**Each half was watched failing**, per `0.2.17`, from a clean baseline asserted first rather than
+from the working tree — the control that proves the check can report red is worthless if the tree
+was already red when it ran.
+
+*Also found and deliberately not fixed here: `standard-check`'s doc comment is displaced in
+`just --list`, which is `0.1.2`'s finding recurring. It sits INSIDE the vendored block, so fixing it
+is a template v4 across all three repos rather than an edit to this one. The new `text-check` recipe
+keeps its prose in the body for exactly that reason.*
 
 ### v0.2.37 — Fedora COPR packaging
 
