@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.38)
+## Current State (v0.2.39)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -784,6 +784,62 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.39 — adopt template v4: `standard-check` has no shebang
+
+**Tooling only; no product code changed**, so `plan --format lines` is byte-identical and the
+contract with rustic cannot have moved. Propagates **template v4**, settled in `retch`.
+
+`standard-check` loses its `#!/usr/bin/env bash`, its `set -euo pipefail` and its explicit
+`PYTHON-NOT-FOUND` guard, and becomes four plain `@"{{PY}}"` lines. **`templates/justfile-common.just`
+in all three repos now hashes identically for the first time** — the claim the standard makes about
+itself is finally true.
+
+#### This repo was in the majority and the majority was wrong
+
+Three repos all declared `template v3` while this recipe's body differed. **Each repo agreed with
+itself** — template file and Justfile byte-identical within each — so nothing looked wrong from
+inside any of them, and the version marker, which is the one thing that makes a vendored copy safe,
+could not tell them apart.
+
+What decides it is not the head count but which recipes each repo's `check` actually depends on:
+
+| repo | `check` dependencies that are shell-free |
+|---|---|
+| `retch` | **7 of 7** |
+| `etr` | 2 of 6 |
+| **rusticprofile (this repo)** | **2 of 4** |
+
+retch is the only repo where `just check` still runs on a default Windows PATH, which is the whole
+property its `v0.6.16` bought. Reconciling toward the majority would have spent it in the one repo
+that still had it — template v1's mistake repeating, which the block's own header warns about.
+
+#### Dropping `set -euo pipefail` costs nothing, and it was measured here
+
+`just` aborts a plain recipe on the first failing line, propagates the exit code, and does not run
+the remaining lines — sabotaging the second helper of four gave
+`recipe standard-check failed on line 133 with exit code 7`, with `gate conformance ok` never
+printing. So `set -e` was redundant with just's own semantics and `set -o pipefail` was inert,
+because no line contains a pipe.
+
+**The control asserts its own sabotage applied before trusting the result.** A first attempt at
+this in `etr` used a `str.replace` that matched zero times, so the "sabotaged" run passed and read
+as evidence the recipe was fine. That is `0.2.13`'s third severity in a new place: a check that
+returned the expected answer for the wrong reason.
+
+The guard is not missed either. The sentinel is the literal string `PYTHON-NOT-FOUND`, so the
+unguarded failure reads `PYTHON-NOT-FOUND: command not found` and already names the problem.
+
+#### What this does NOT do
+
+**`just check` still needs bash here.** `golden-is-current` is a bash shebang recipe and is a `check`
+dependency, so this repo's gate is no more portable than it was. That is a gap in *this* repo, now
+stated rather than hidden, and it is not fixed by making the shared block worse.
+
+*Found and not fixed: the v4 header's "Known divergences" list says `etr` has no `install-hooks` and
+no `open-pr`. Both exist there now. The correction belongs in the canonical template, so it needs one
+coordinated bump across all three rather than a patch to one copy — which is the drift this release
+exists to end.*
 
 ### v0.2.38 — a byte-level guard, and the corruption it was written for
 
