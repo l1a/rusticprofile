@@ -167,8 +167,8 @@ fmt:
 lint:
     cargo clippy --all-targets -- -D warnings
 
-# Run strict checks (formatting, linting, golden argv files, packaging drift) as done in CI
-check: golden-is-current standard-check copr-check
+# Run strict checks (formatting, linting, golden argv files, packaging and byte drift) as done in CI
+check: golden-is-current standard-check copr-check text-check
     cargo fmt -- --check
     cargo clippy --all-targets -- -D warnings
 
@@ -487,6 +487,26 @@ aur-publish:
 copr-check:
     @{{PY}} scripts/copr_check.py --self-test
     @{{PY}} scripts/copr_check.py
+
+# Two defect classes this tree has actually carried, both invisible to review because the
+# damage is one byte: a backslash that collapsed in transport (`~/AGENTS.md` sec.14 --
+# `templates/justfile-common.just:22` held `usr` + 0x08 + `in` for months, in the file whose
+# whole purpose is to be vendored byte-identically into the sibling repos), and a CRLF
+# worktree copy, which git normalises out of its own view while `.gitattributes` pins
+# `eol=lf` -- `git diff` shows nothing, and one `git add` makes `git status` clean while
+# every CR stays on disk. Measured, not assumed; `git ls-files --eol` is the oracle.
+#
+# The self-test runs FIRST so a broken guard fails as a broken guard rather than as a clean
+# tree -- `0.2.13`'s third severity, applied to the check itself.
+#
+# The blank line below is load-bearing: `just` takes the LAST contiguous comment block as the
+# doc comment, so prose written straight above a recipe displaces its description in
+# `just --list`. That is `0.1.2`, and `standard-check` still shows it.
+
+# Refuse control bytes and carriage returns in tracked text (offline, no network)
+text-check:
+    @{{PY}} scripts/text_check.py --self-test
+    @{{PY}} scripts/text_check.py
 
 # Point the spec at a released tag: bump Version, reset Release, add a %changelog entry
 copr-bump VERSION:
