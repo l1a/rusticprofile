@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.39)
+## Current State (v0.2.40)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -784,6 +784,51 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.40 — template v5 refuses `@` inside a shebang recipe
+
+**Tooling only; no product code changed**, so `plan --format lines` is byte-identical and the
+contract with rustic cannot have moved. Propagates **template v5**, settled in `retch`.
+
+`scripts/gate_conformance.py` (`TEMPLATE_VERSION` 3 → 4) refuses an `@`-prefixed line inside a
+`#!` recipe body, in **any** recipe rather than only the triad. The block marker goes v4 → v5.
+
+#### The guard exists because THIS repo paid for it first
+
+`0.2.2` is the original: a global regex put `@` in front of lines in `pr`, `merge-pr` and
+`aur-publish`, and `just pr` / `just merge-pr` / `just aur-publish` all stopped working. It was
+found by using them and fixed by hand, and **nothing was left behind that could catch it again**.
+retch then made the identical mistake in `v0.17.13`, in a session where `0.2.2`'s write-up had
+already been read — and it broke the very merge that shipped it.
+
+**A documented trap is not a guard.** That is the whole argument, and this repo is where the
+evidence starts.
+
+**Validated against `0.2.2`'s own pre-fix commit**, rather than against a fixture: pointed at it,
+the guard names all three sites — `pr:543`, `merge-pr:462`, `aur-publish:370` — without being told
+where to look, and is clean on the fixed commit. A guard that rediscovers a defect this repo
+found by hand is a guard that would have saved the finding.
+
+#### Heredocs are skipped, and that is load-bearing
+
+A `cat <<'MSG'` block inside a shebang recipe is **data**; a line of it beginning with `@` is a
+literal `@`, not a command. The first detector flagged exactly that — caught by testing the
+false-positive case before vendoring it. *A guard that fires on correct code is deleted within a
+week, taking the real rule with it*, which is the same argument `0.2.13` made for its third
+severity.
+
+The self-test pins all four outcomes, three of which are ways the check could be **wrong**: fires
+on the defect; silent on a **plain** recipe, where `@` is correct and required (`copr-check` and
+`text-check` are both plain); silent inside a heredoc; and still fires on a defect *after* a
+heredoc.
+
+#### What this does not change
+
+`golden-is-current` is still a bash shebang recipe and a `check` dependency, so this repo's gate
+is no more portable than it was. Stated rather than hidden.
+
+*Two version numbers, deliberately not one: the block marker (v5) and each helper's
+`TEMPLATE_VERSION` move independently, because a helper can change without the block changing.*
 
 ### v0.2.39 — adopt template v4: `standard-check` has no shebang
 

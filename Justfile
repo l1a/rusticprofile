@@ -63,7 +63,7 @@ MAN_PAGES := "docs/rusticprofile.1"
 # version in the marker, and propagate to the sibling repos in their own PRs.
 # `just standard-check` fails if this block and that file disagree, and `just check`
 # depends on it — so drift is a build failure rather than a discovery years later.
-# >>> COMMON (template v4)
+# >>> COMMON (template v5)
 # The interpreter is resolved ONCE per line, and a missing one is a hard error. The
 # `python3 … 2>/dev/null || python …` idiom is deliberately NOT used: it retries on ANY
 # failure, so a real error inside the script gets re-run and reported as if the
