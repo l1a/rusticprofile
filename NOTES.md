@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.42)
+## Current State (v0.2.43)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -784,6 +784,41 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.43 — bump cargo and GitHub Actions dependencies
+
+**Dependency updates only; no product code changed**, so `plan --format lines` is byte-identical
+and every golden file is unchanged — the contract with rustic cannot have moved. Consolidates two
+Dependabot PRs, [#108](https://github.com/l1a/rusticprofile/pull/108) and
+[#109](https://github.com/l1a/rusticprofile/pull/109), the same call `0.2.42` made for #101/#102.
+
+- **Cargo dependencies** (lockfile only — every one is inside the caret range `Cargo.toml` already
+  declares, so no manifest line moves):
+  - `clap`, `clap_builder`: `4.6.6` → `4.6.7`
+  - `clap_derive`: `4.6.4` → `4.6.7`
+  - `clap_complete`: `4.6.9` → `4.6.10`
+  - `jiff`, `jiff-static`: `0.2.35` → `0.2.37`
+- **GitHub Actions workflows**:
+  - `anthropics/claude-code-action` pinned commit hash updated to
+    `7b0b255830a1fab6e602658672acad11c12d841d` (`v1`, 1.0.226) in
+    `.github/workflows/claude-code-review.yml` and `.github/workflows/claude.yml`.
+
+#### `jiff` is the one worth reading the test output for
+
+The other five are CLI plumbing. **`jiff` is what both timestamp parsers rest on** — `report`'s
+`RECORDED` and `RUSTIC` formats, and through the first of those the Windows next-run gate that
+`0.2.22` added specifically to *reject* a fractional second. `0.2.27` shipped a defect in exactly
+that area, and it reached the user because every fixture had been built with `backup --time`, which
+lands on a whole second.
+
+So the guard that matters here is the two-direction test `0.2.27` left behind: it asserts `RUSTIC`
+reads a nanosecond stamp **and** that `recorded_instant` still cannot. If a `jiff` bump ever
+silently widened one of them, that pair is what reports it. It passes on `0.2.37`.
+
+**Both workflow pins are outside the merge gate.** `claude-code-review.yml` has been
+`workflow_dispatch`-only since `0.1.8` and `claude.yml` answers `@claude` mentions, so neither can
+turn a pull request red — worth stating, because a pinned-SHA bump in a file named `*-review.yml`
+reads like it might.
 
 ### v0.2.42 — bump cargo and GitHub Actions dependencies
 
