@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.41)
+## Current State (v0.2.42)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -784,6 +784,16 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.42 — bump cargo and GitHub Actions dependencies
+
+**Dependency updates only.** Consolidates Dependabot updates for cargo packages and GitHub Actions workflow pins:
+
+- **Cargo dependencies**:
+  - `dirs`: `6.0.0` → `7.0.0`
+  - `toml`: `1.1.4` → `1.1.6`
+- **GitHub Actions workflows**:
+  - `anthropics/claude-code-action` pinned commit hash updated to `5ccc3a35a6367cdb8e6fbd0728287467540ecfe2` (`v1`, 1.0.219) in `.github/workflows/claude-code-review.yml` and `.github/workflows/claude.yml`.
 
 ### v0.2.41 — the attribution rules this repo never had, and the three commits that prove it
 
