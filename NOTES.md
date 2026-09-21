@@ -249,7 +249,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.43)
+## Current State (v0.2.44)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, which is worth
@@ -632,7 +632,9 @@ Smaller items:
       is the only prune that may run here. Prune returned to the designated host on
       2026-08-03 as a `rustic prune`; it first fires **Mon 2026-08-10**. M4 is defence in
       depth, not permission — invariant 3 in §3a.
-- [ ] **Template v3 is not yet in `retch` or `etr`** (`0.2.32`). `scripts/install_completions.py`
+- [x] **Done, and stale before it was ticked** (`0.2.44`): all three repos now vendor the same
+      block and helpers byte for byte, at template v6. Left as it was written:
+      **Template v3 is not yet in `retch` or `etr`** (`0.2.32`). `scripts/install_completions.py`
       is vendored verbatim in all three, and the pre-fix copy will happily write a completion
       script over a binary when handed a path. Each repo needs its own PR, and `WIP.md` records
       that both siblings additionally require a **GitHub wiki update before the PR** — retch §4.8
@@ -784,6 +786,41 @@ repository; the `0.1.x` entries between the two releases shipped together in `v0
 and were renumbered in place. No tags existed, so nothing had to be unwound — if you find an
 external reference to a rusticprofile `0.1.0` or `0.2.0` from July 2026, it predates the
 renumbering and means the versions below.*
+
+### v0.2.44 — adopt template v6: `just install` no longer needs mandown
+
+**Tooling only; no product code changed**, so `plan --format lines` is byte-identical and the
+contract with rustic cannot have moved. Propagates **template v6**, settled in `retch` (v0.17.18)
+and adopted by `etr` (v0.10.7) in the same pass.
+
+`install-man` no longer depends on `man`. Through v5, `just install` rebuilt the man page before
+installing it, so **mandown — a tool for writing the page — was a prerequisite for installing the
+program**. In a fresh `retch` clone without it, `just install` failed with
+`'mandown' executable not found` before `cargo install` had run. Where mandown was present it
+rewrote `docs/rusticprofile.1` in the user's checkout, a tracked file.
+
+The dependency was only ever needed while a page was not committed. `etr` built its pages into a
+gitignored `man/build/` until its #72; since then all three repos commit their pages. The gate
+refuses a stale one (`just pr` here), so **the committed page is the current page**, and
+installing it without rebuilding loses nothing. Edited `docs/rusticprofile.1.md`? Run `just man`
+first; the gate would refuse the stale page at PR time anyway.
+
+- `Justfile`: `# >>> COMMON (template v6)`. The block is **byte-identical** to `retch`'s and
+  `etr`'s, and so are `templates/justfile-common.just`, `scripts/install_man.py` (now
+  `TEMPLATE_VERSION = 3`), `scripts/install_completions.py` and `scripts/gate_conformance.py`,
+  compared with `cmp` rather than assumed.
+- The template's header gains a *why* section and corrects three stale claims: the helper
+  version list, the `MAN_PAGES` example (still pointing at etr's old `man/build/`), and the scope
+  note that said one repo gitignores its page.
+- `README.md`: the checkout route said it needed mandown "for the man page". It now needs `just`
+  and Python 3; mandown is for `just man` only. `CONTRIBUTING.md` still lists mandown, correctly —
+  it is about developing, and development regenerates the page.
+- §4's *"Template v3 is not yet in `retch` or `etr`"* is ticked. It had been stale for several
+  template versions: v4 made the three copies hash identically for the first time (`0.2.39`).
+
+**Verified by running it, with mandown off `PATH`**, into a throwaway `CARGO_INSTALL_ROOT` and XDG
+directories so no real install was touched: `just install` exits 0, and the installed page is
+byte-identical to `docs/rusticprofile.1`.
 
 ### v0.2.43 — bump cargo and GitHub Actions dependencies
 

@@ -63,7 +63,7 @@ MAN_PAGES := "docs/rusticprofile.1"
 # version in the marker, and propagate to the sibling repos in their own PRs.
 # `just standard-check` fails if this block and that file disagree, and `just check`
 # depends on it — so drift is a build failure rather than a discovery years later.
-# >>> COMMON (template v5)
+# >>> COMMON (template v6)
 # The interpreter is resolved ONCE per line, and a missing one is a hard error. The
 # `python3 … 2>/dev/null || python …` idiom is deliberately NOT used: it retries on ANY
 # failure, so a real error inside the script gets re-run and reported as if the
@@ -109,7 +109,13 @@ install-tag VERSION:
     "{{PY}}" scripts/install_completions.py {{BINS}} --from-path
 
 # Install the man page(s) to the XDG man directory.
-install-man: man
+#
+# Installs the COMMITTED page(s) and deliberately does NOT depend on `man` (v6). Every repo
+# using this block commits its pages and its gate refuses a stale one, so rebuilding here
+# only made `just install` require mandown -- a documentation build tool -- to install a
+# finished page, and rewrote a tracked file in the user's checkout. Edited the page source?
+# Run `just man` first; the gate would refuse the stale page at PR time anyway.
+install-man:
     @"{{PY}}" scripts/install_man.py {{MAN_PAGES}}
 
 # Generate and install shell completions for every binary.
