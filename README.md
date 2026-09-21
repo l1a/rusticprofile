@@ -283,7 +283,8 @@ just install               # this checkout: binary + man page + completions for 
 just install-tag 0.2.22    # a released tag instead, all three FROM that tag
 ```
 
-Requires [just](https://github.com/casey/just) and, for the man page, [mandown](https://crates.io/crates/mandown).
+Requires [just](https://github.com/casey/just) and Python 3. `just install` installs the **committed**
+man page, so [mandown](https://crates.io/crates/mandown) is needed only to regenerate it (`just man`).
 
 **`install-tag` is the one to use for an upgrade**, and the reason is that `cargo install` on its
 own replaces only the binary. A host in this project's own fleet was found running a current
