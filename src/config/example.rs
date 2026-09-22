@@ -3,7 +3,7 @@
 
 //! Annotated starting-point configurations, emitted by `config --example`.
 //!
-//! These are the findings in `PLAN.md` Part 5 and Part 7 shipped as something executable
+//! These are the findings in `NOTES.md` §6 shipped as something executable
 //! rather than something to be read and reimplemented. Almost everything that can silently
 //! destroy data in this design lives in *rustic's* config, not ours, so the `rustic`
 //! example carries considerably more weight than the `jobs` one.
@@ -220,7 +220,7 @@ jobs:
 ///
 /// This is the file that matters. Every entry with a "NOT a matter of taste" comment was
 /// measured against rustic 0.11.3 and a live repository, and getting it wrong is silent in
-/// each case — see `PLAN.md` §5.1, §5.5, §5.7, §7.2 and §7.3.
+/// each case — see `NOTES.md` §6.5, §6.6 and §6.7.
 const RUSTIC_TOML: &str = r##"# ~/.config/rustic/dot-files.toml
 #
 # rustic's own configuration. rusticprofile never writes this file and reads it for exactly

@@ -5,7 +5,7 @@
 //!
 //! This is a **backstop, not the primary control.** The primary control is that secrets
 //! never enter this process at all: rustic's `password-command` makes rustic spawn the
-//! lookup itself (`PLAN.md` §4.1), and rusticprofile constructs no credential-bearing
+//! lookup itself (`NOTES.md` §6.3), and rusticprofile constructs no credential-bearing
 //! flags. Redaction covers what is left — the environment inherited by the child, which
 //! genuinely can hold `RUSTIC_PASSWORD` or `OPENDAL_CREDENTIAL`, and any argv that is
 //! logged.

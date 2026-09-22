@@ -124,7 +124,7 @@ way to lose data.
 > It deleted 14 packs as unreferenced, and `restic check --read-data` afterwards reported
 > *"The repository is damaged and must be repaired."*
 >
-> If everything touching the repository is rustic, none of this applies. `PLAN.md` §7.6 has
+> If everything touching the repository is rustic, none of this applies. `NOTES.md` §6.8 has
 > the measurements.
 
 ## What it deliberately does not do
@@ -141,7 +141,7 @@ That is the whole contract. A wrapper that re-specified rustic's options would m
 
 Also out of scope for v1: reading resticprofile config, a `migrate` command, restic as a backend, cron, groups, hooks, metrics, and templating in any form — including a "just one small conditional" escape hatch.
 
-*Windows was on that list until 0.2.0 and is not any more: the machine this project is developed and released from now runs it. `PLAN.md` §7.9 records the reversal, and §5.10 what had to be measured to make it work. `cron` is still out.*
+*Windows was on that list until 0.2.0 and is not any more: the machine this project is developed and released from now runs it. `NOTES.md` §6.10 records the reversal and what had to be measured to make it work. `cron` is still out.*
 
 **Restore is not here either.** Use `rustic restore` directly. Putting a restore path behind a scheduler adds a layer between you and your data at the exact moment you least want one.
 
@@ -156,7 +156,7 @@ The design also carries hard-won opinions from operating its Go predecessor, whe
 - a job that would do nothing on this host is an error unless the config explicitly says it should do nothing here
 - no shell is ever involved — commands are built as an argv and spawned directly, which deletes an entire category of quoting and secret-leaking bugs
 
-`PLAN.md` has the full reasoning, every rejected alternative, and the measurements behind each decision.
+`NOTES.md` §6 has the full reasoning, every rejected alternative, and the measurements behind each decision.
 
 ## Getting a configuration
 
@@ -212,7 +212,7 @@ The XDG variables are honoured **on macOS and Windows too**, falling back to `~/
 > `jobs.yaml` is designed to be **byte-identical across a fleet**, which makes it only ever as new as the *oldest binary* reading it. Unknown keys and variables are hard errors by design, so a config using `${state_dir}` (0.1.15+) or `default-job` (0.1.20+) will not load on an older build — and that host stops backing up at its next scheduled run. **Upgrade the binaries before pushing the config.**
 
 > [!IMPORTANT]
-> **Re-run `schedule` after upgrading rusticprofile.** The installed unit, agent or task is generated once, when you arm it — nothing re-emits it when the binary changes, and `status` will keep reporting the schedule as active because it is. So an upgrade can leave you running a unit written by a much older version. This is not hypothetical: a host in this project's own fleet spent eight days failing the first run after every boot on a unit that predated 0.1.10, while every later run in the hour succeeded (`PLAN.md` §5.11). `schedule` is idempotent — it reports `unchanged` when there is nothing to do, and on systemd it does **not** trigger a run — so re-running it costs nothing.
+> **Re-run `schedule` after upgrading rusticprofile.** The installed unit, agent or task is generated once, when you arm it — nothing re-emits it when the binary changes, and `status` will keep reporting the schedule as active because it is. So an upgrade can leave you running a unit written by a much older version. This is not hypothetical: a host in this project's own fleet spent eight days failing the first run after every boot on a unit that predated 0.1.10, while every later run in the hour succeeded (`NOTES.md` §6.11). `schedule` is idempotent — it reports `unchanged` when there is nothing to do, and on systemd it does **not** trigger a run — so re-running it costs nothing.
 
 ## Installation
 

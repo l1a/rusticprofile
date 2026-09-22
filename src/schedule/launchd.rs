@@ -46,7 +46,7 @@
 //!
 //! - **`RunAtLoad`.** It defaults to false, and setting it true would make `schedule` take a
 //!   backup the instant it installed the agent. Adding a writer to a shared repository as a
-//!   side effect of scheduling one is precisely what `PLAN.md` §7.5 forbids.
+//!   side effect of scheduling one is precisely what `NOTES.md` §6.7 forbids.
 //! - **`KeepAlive`.** A backup is a one-shot. Restarting it on exit would turn a failing job
 //!   into a loop against the repository.
 //! - **`StandardOutPath` / `StandardErrorPath`.** launchd discards both, and macOS has no
@@ -229,7 +229,7 @@ pub fn agent_plist(job: &Job, schedule: &Schedule, offset: Offset, ctx: &UnitCon
 ///
 /// Parses only the shape [`agent_plist`] writes. That is deliberately narrow — this is not a
 /// plist parser, and treating it as one would invite exactly the structural-edit-by-string
-/// -matching mistake recorded in `PLAN.md` §7.4.
+/// -matching mistake recorded in `NOTES.md` §6.7.
 pub fn installed_offset(plist: &str, at: At) -> Option<Offset> {
     let minute = plist
         .split("<key>Minute</key>")
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn the_agent_neither_runs_at_load_nor_stays_alive() {
         // RunAtLoad would take a backup the moment `schedule` installed the agent, which is
-        // adding a writer to a shared repository as a side effect (PLAN.md 7.5). KeepAlive
+        // adding a writer to a shared repository as a side effect (NOTES.md §6.7). KeepAlive
         // would restart a one-shot backup on exit.
         let p = agent_plist(
             &job("j"),

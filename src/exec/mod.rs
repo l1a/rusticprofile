@@ -3,7 +3,7 @@
 
 //! Spawning rustic, and everything around not making a mess of it.
 //!
-//! **No shell, ever** (`PLAN.md` §2.3). The argv built by `rustic::invoke` goes straight
+//! **No shell, ever** (`NOTES.md` §6.1). The argv built by `rustic::invoke` goes straight
 //! to [`Command`] as a `Vec<OsString>`. A value containing spaces, quotes or glob
 //! characters reaches the child literally, which is why nothing in this crate has — or
 //! needs — a single line of quoting or escaping logic.
@@ -15,7 +15,7 @@
 //! ## stdout is captured, stderr is not
 //!
 //! rustic writes progress and diagnostics to **stderr**, and `--json` snapshot objects to
-//! **stdout** (measured, `PLAN.md` §5.8). Capturing stdout while letting stderr through
+//! **stdout** (measured, `NOTES.md` §6.5). Capturing stdout while letting stderr through
 //! therefore gives both things at once: the operator watches progress live, and step 5
 //! still gets the machine-readable output it needs to tell a partial backup from a failed
 //! one. That is why [`Stdout::Capture`] exists rather than capturing everything.
@@ -44,7 +44,7 @@
 //! passes a single command line that the child re-parses, so the round trip is a property of the
 //! child's parser rather than of the OS. rustic is a Rust program and uses the same MSVCRT rules
 //! [`Command`] quotes for, so it holds in practice — but it holds *for this child*, not
-//! structurally. `PLAN.md` §2.3 is amended in §5.10 rather than left to imply more than is true.
+//! structurally. `NOTES.md` §6.10 amends §6.1's no-shell claim rather than let it imply more than is true.
 
 pub mod env;
 pub mod outcome;
@@ -268,7 +268,7 @@ pub fn run(argv: &[OsString], stdout_mode: Stdout) -> io::Result<Outcome> {
 
     command.stdout(match (stdout_mode, detached) {
         // Capture is never about the console — `backup` needs the `--json` objects on stdout
-        // regardless of who is watching (§5.8).
+        // regardless of who is watching (§6.5).
         (Stdout::Capture, _) => Stdio::piped(),
         (Stdout::Inherit, true) => Stdio::null(),
         (Stdout::Inherit, false) => Stdio::inherit(),

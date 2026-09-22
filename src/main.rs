@@ -28,7 +28,7 @@ const EXIT_CONFIG_ERROR: u8 = 2;
 /// The `recorded as` line for `config --check` / `--show`.
 ///
 /// **A behaviour change that can strand snapshots must be visible without reading the
-/// source.** rusticprofile hands rustic a hostname (`PLAN.md` §5.9), and on macOS that name
+/// source.** rusticprofile hands rustic a hostname (`NOTES.md` §6.6), and on macOS that name
 /// differs from what the OS reports — so the difference is printed whenever there is one,
 /// rather than left to be discovered from a snapshot listing months later.
 fn recorded_host_line(config: &rusticprofile::config::Config) -> Option<String> {
@@ -90,9 +90,9 @@ fn main() -> ExitCode {
 
     // A detached run is a scheduled one, and both schedulers that emit this flag replay a missed
     // calendar time within seconds of a resume — before the network is back — so the run that
-    // replaces a missed hour is the one most likely to fail (`PLAN.md` §7.10, §7.12). Measured on
+    // replaces a missed hour is the one most likely to fail (`NOTES.md` §6.11). Measured on
     // both: Task Scheduler's `StartWhenAvailable`, and systemd's `Persistent=true`, whose catch-up
-    // fires in milliseconds and is *not* delayed by `RandomizedDelaySec` even at 3600s (§5.11).
+    // fires in milliseconds and is *not* delayed by `RandomizedDelaySec` even at 3600s (§6.11).
     //
     // Gating on the flag rather than on `cfg!(windows)` was already deliberate in `0.2.10`, and
     // extending it to a second backend is what that choice bought: `schedule` emits
@@ -942,8 +942,8 @@ fn show_status(args: &StatusArgs) -> ExitCode {
             );
         }
         // The spread window is stated only on Task Scheduler, because that is the only backend
-        // where the reported time is *measured* to be re-rolled between queries (`PLAN.md`
-        // §5.10). systemd is left unannotated deliberately: whether `NextElapseUSecRealtime`
+        // where the reported time is *measured* to be re-rolled between queries (`NOTES.md`
+        // §6.10). systemd is left unannotated deliberately: whether `NextElapseUSecRealtime`
         // moves has not been measured, and a window asserted without evidence is the
         // `network-online.target` failure — a claim in our own output that nothing checked.
         let spread = match (backend, job.schedule) {
@@ -1098,7 +1098,7 @@ fn write_run_log(
 ///
 /// **A read-only passthrough, and the only thing it contributes is the resolved profile
 /// path.** Everything the caller appended goes to rustic verbatim; rusticprofile constructs
-/// no flags here either. `PLAN.md` §7.8 records why this is acceptable where a `forget` or
+/// no flags here either. `NOTES.md` §6.9 records why this is acceptable where a `forget` or
 /// `restore` passthrough would not be — and states the line, so the next such request has an
 /// answer.
 ///
@@ -1149,7 +1149,7 @@ fn list_snapshots(args: &SnapshotsArgs) -> ExitCode {
 ///
 /// **Read-only by construction.** The argv comes from [`invoke::retention_argv`], which is the
 /// scheduled `forget`'s own code path with `--dry-run` hardcoded, so there is no path through
-/// this function that deletes a snapshot. `PLAN.md` §7.14 has the decision, §5.12 the
+/// this function that deletes a snapshot. `NOTES.md` §6.9 has the decision and the
 /// measurements — including that a dry-run `forget` leaves the repository byte-identical.
 fn show_retention(args: &RetentionArgs) -> ExitCode {
     let (config, path) = match load_config(
@@ -1198,7 +1198,7 @@ fn show_retention(args: &RetentionArgs) -> ExitCode {
     // Read for two things only: the policy to print above the table, and — if rustic refuses —
     // whether the absence of a keep rule is the reason. Never to decide whether to proceed:
     // pre-refusing on this crate's own classification of somebody else's keys would block a
-    // valid configuration, which is the worse direction (`PLAN.md` §7.14).
+    // valid configuration, which is the worse direction (`NOTES.md` §6.9).
     let profile = config::rustic_toml::read_profile(&profile_path).ok();
 
     let argv = invoke::retention_argv(
@@ -1694,7 +1694,7 @@ fn check_repository(
     };
 
     // `--json` only. No `--filter-host`: the check is *about* other hosts as well as this
-    // one, and §7.8 records that the flag unions rather than overrides, so injecting one
+    // one, and §6.9 records that the flag unions rather than overrides, so injecting one
     // would silently narrow what a profile's own `filter-hosts` already selects.
     let argv = invoke::query_argv(
         &config.rustic_binary,
@@ -1949,9 +1949,9 @@ fn print_job(config: &Config, job: &rusticprofile::config::job::Job) {
 /// printed only the half that cannot lose anything.
 ///
 /// **Read-only, and no new file is opened.** `config/rustic_toml` already parses this profile for
-/// the `--name` check (§7.2), the `sources` check (§5.9) and `doctor`'s credential check; these
+/// the `--name` check (§6.6), the `sources` check (§6.6) and `doctor`'s credential check; these
 /// fields come from that same parse. The secret keys stay what they have always been: **paths,
-/// never contents** (`PLAN.md` §4.1).
+/// never contents** (`NOTES.md` §6.3).
 ///
 /// It deliberately does **not** echo the profile. `cat` does that better, and a partial reprint
 /// of somebody else's format is a second copy that goes stale the moment rustic adds a key. Only
@@ -1993,7 +1993,7 @@ fn print_delegated_profile(profile_path: &std::path::Path) {
     }
 
     // Which mechanism, not which value. `password-command` is the recommended one precisely
-    // because the secret never enters this process (§4.1), so naming it is informative rather
+    // because the secret never enters this process (§6.3), so naming it is informative rather
     // than a disclosure — and the file variant shows a path, which is not a secret either.
     if profile.uses_password_command {
         println!(

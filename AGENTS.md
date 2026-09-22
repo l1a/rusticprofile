@@ -41,7 +41,7 @@ context, or state rather than being source/product code.
 3. **This step must complete, in full, before any other work.** Do not begin reviewing
    code, generating code, editing files, or running exploratory/state-changing commands
    until every applicable instruction file for this session has been read in full —
-   this includes reading `PLAN.md` per Part 2 §0 below.
+   this includes reading `NOTES.md` per Part 2 §0 below.
 4. **This mandate is agent-agnostic.** It applies identically regardless of which coding
    agent or tool is operating (Claude Code, Gemini CLI, or any other). Enforcement
    mechanisms for any *specific* rule in these files should likewise be built to work the
@@ -160,31 +160,23 @@ the same standing knowledge — an agent-specific memory entry does not satisfy 
 
 ## 0. Start of session — REQUIRED READING
 
-**Read `PLAN.md` *and* `NOTES.md` in full before anything else in this repository.** Neither
-is a summary and neither substitutes for the other:
+**Read `NOTES.md` in full before anything else in this repository.** It is the one project
+document, and it is not a summary:
 
-| file | what it is | read it for |
-|---|---|---|
-| `NOTES.md` | living state — **rewritten as the project moves** | what is built and next; **§3a, the operating invariants that can destroy data if broken**; §4 the backlog; §5 the hard-won lessons |
-| `PLAN.md` | the historical design record — **not rewritten** | *why* the design is shaped this way and what was rejected (Parts 1–3); the measurements against rustic 0.11.3 (Parts 5, 7) |
-
-**`PLAN.md` is not a status page.** Its own header has said so since `0.1.32`, and reading it
-as one is how the section below came to claim this project was pre-code for thirty-five
-releases. Re-deriving either file is expensive: `PLAN.md` took a long session including three
-parallel codebase explorations and live testing against a production backup repository, and
-`NOTES.md` §3a is a list of rules each of which was found the hard way, by losing something.
-
-`PLAN.md` is structured as:
-
-| Part | Contents |
+| section | read it for |
 |---|---|
-| 1 | How the design was reached — two pivots that changed the project's shape |
-| 2 | Discoveries worth keeping, with `file:line` references |
-| 3 | Decisions, and every rejected alternative with its reason |
-| 4 | The plan: schema, architecture, milestones, verification ladder |
-| 5 | Prerequisite **test results** against rustic 0.11.3 and the live GCS repo |
-| 7 | The absent-sources decision — **settled 2026-07-30 (option B)**, with the tests behind it |
-| 8 | Related state in other repositories |
+| §3a | **the operating invariants — the rules that can destroy data if broken** |
+| Current State, §4 | what is built, and the live backlog |
+| §5 | the hard-won lessons — the traps, and the checks that answered the wrong question |
+| §6 | the design record: *why* the tool is shaped this way, every rejected alternative, and the measurements against rustic behind §3a |
+
+Re-deriving it is expensive: §6 took a long session including three parallel codebase
+explorations and live testing against a production backup repository, and every rule in §3a was
+found the hard way, by losing something.
+
+*`PLAN.md` held the design record until `0.2.46`, when it was folded into `NOTES.md` §6; §6 opens
+with a table mapping its old section numbers, and the original is `git show 366a984:PLAN.md`.
+Anything that tells you to read or update `PLAN.md` is stale.*
 
 Companion document, for the Go tool this project descends from:
 `~/Sync/git/resticprofile/UPSTREAMING.md`.
@@ -201,27 +193,14 @@ launchd and Task Scheduler, and is released on GitHub and crates.io. **M4 — re
 coordination — is the only unbuilt milestone**, and it is deferred by decision: it is defence in
 depth, not a precondition for anything (`NOTES.md` §3a invariant 3).
 
-> *The text that stood here until 2026-08-07 read:* "**Pre-code.** Nothing is implemented. The
-> repository contains this file, `CLAUDE.md`, `.gitignore` and `PLAN.md`. Scaffolding is step 1 of
-> Milestone 1." *It was written on 2026-07-30, before the first commit, and survived roughly
-> thirty-five releases — in the first section of the first file every session is instructed to read
-> in full, so it was the opening claim of most of this project's history and false for nearly all of
-> it.*
->
-> *Recorded rather than quietly deleted, because `PLAN.md`'s header carries the identical
-> correction for the identical reason (`NOTES.md` `0.1.32`), and one of the two was fixed while the
-> other was not. **That is the finding:** duplicated state goes stale one copy at a time, and the
-> copy nobody re-reads is the one that survives. Hence the first paragraph above — this section now
-> points at `NOTES.md` instead of restating it.*
-
-**The Part 7 decision is settled** (2026-07-30): **option B**, named `[[backup.snapshots]]` sets
+**The absent-sources decision is settled** (2026-07-30, `NOTES.md` §6.6): **option B**, named `[[backup.snapshots]]` sets
 selected per host. rusticprofile owns *no* part of the backup source list — `rustic.toml` keeps
 every path, and jobs list which named sets run on which host.
 
 One consequence to know before touching `config/`: rustic **silently ignores an unknown `--name`**
 whenever at least one valid name is also given (exit 0, no diagnostic), so rusticprofile validates
 every name it emits against `rustic.toml` at load time, and a job whose sets all resolve away on a
-host is a load-time error rather than an empty run. `PLAN.md` §7.2 has the measurements.
+host is a load-time error rather than an empty run. `NOTES.md` §6.6 has the measurements.
 
 ## 2. What this project is
 
@@ -232,7 +211,7 @@ configuration itself is delegated to rustic's own TOML config.
 It is explicitly **not** a config wrapper: rustic already provides profiles, hooks, forget
 policies and Prometheus metrics natively. It is also not `rustic_scheduler`, which exists
 but is client/server with a central always-on server — the wrong architecture for a fleet
-of intermittently-online personal machines. See `PLAN.md` Part 1.
+of intermittently-online personal machines. See `NOTES.md` §6.1.
 
 ## 3. Safety rules — a live backup repository is involved
 
@@ -242,7 +221,7 @@ shared by 7 machines, and currently holds the only copy of several years of data
 * **Read-only operations against it are fine** (`snapshots`, `repoinfo`, `check`).
 * **Every write test goes to a throwaway local repository**, under a temp dir, deleted after.
 * **Never run `restic prune` against the GCS repository while any host backs up with
-  rustic.** Measured (`PLAN.md` §7.6): restic deletes packs immediately, which is safe only
+  rustic.** Measured (`NOTES.md` §6.8): restic deletes packs immediately, which is safe only
   because it holds an exclusive repository lock — and rustic neither takes nor honours that
   lock. A restic prune against a rustic writer deleted 14 packs mid-backup and left the
   repository failing `restic check`.
@@ -255,7 +234,7 @@ shared by 7 machines, and currently holds the only copy of several years of data
     cost real time: it disabled the fleet's prune schedule for no reason. M4 is defence in
     depth, not permission.
 * **Never delete snapshots** on any host without explicit per-step authorisation. Follow the
-  verification ladder in `PLAN.md` §4 in order; it is designed so each rung is provably safe
+  verification ladder in `NOTES.md` §6.4 in order; it is designed so each rung is provably safe
   and the first irreversible step has the smallest possible blast radius.
 * The control group is now **two** hosts: `host-c` and `host-g.local`. Leave them alone. They
   are the only hosts whose snapshot counts still mean anything as a baseline, because nothing
@@ -274,8 +253,8 @@ shared by 7 machines, and currently holds the only copy of several years of data
 
 ## 4. Conventions
 
-This project follows the same scaffolding conventions as `~/git/retch` and `~/git/etr`,
-documented in full in `PLAN.md` §2.5. In particular: `just` is the only task runner; the
+This project follows the same scaffolding conventions as `~/git/retch` and `~/git/etr`; the
+shared Justfile block and its reasoning are in `templates/justfile-common.just`. In particular: `just` is the only task runner; the
 `check`/`pr`/`open-pr`/`merge-pr` gate triad; `NOTES.md` is the living state and there is no
 `CHANGELOG.md` — `git log` is the changelog; a version bump on every PR; and the deliberate *absence* of
 `rustfmt.toml`, `clippy.toml`, `deny.toml`, `rust-toolchain.toml` and an MSRV is itself the

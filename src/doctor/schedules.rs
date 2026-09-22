@@ -10,8 +10,9 @@
 //!
 //! ## This is a per-host check, and the recorded intent was wider
 //!
-//! `PLAN.md` §7.6 asks for *"a restic prune schedule still existing **anywhere on the
-//! fleet**"*. **That is not implementable from one host and this does not attempt it.**
+//! The lock-authority finding (`NOTES.md` §6.8) originally asked for *"a restic prune schedule
+//! still existing **anywhere on the fleet**"*; §6.12 records why that was narrowed. **It is not
+//! implementable from one host and this does not attempt it.**
 //! rusticprofile has no fleet inventory and no remote access, deliberately — it is a
 //! *local, per-machine* scheduler (`AGENTS.md` §2), and giving it SSH to survey six other
 //! machines would be a different tool. What is implementable is *"on this host"*, with
@@ -19,7 +20,7 @@
 //!
 //! The narrowing is real and worth stating rather than quietly shipping the smaller thing:
 //! a host that never runs `doctor` is not covered, so this cannot prove the fleet-wide
-//! property §7.6 actually wants.
+//! property the original finding wanted.
 
 use super::{PredecessorSchedule, ScheduleState, looks_like_restic_prune};
 use crate::config::schedule::Permission;

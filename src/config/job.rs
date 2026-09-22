@@ -81,7 +81,7 @@ pub struct RawDefaults {
 /// **This exists because rustic asks the OS, and the OS disagrees with itself across
 /// platforms.** Linux reports `foo`; macOS reports `foo.local`. A fleet with both then
 /// carries two naming conventions in one repository's history forever, and every filter,
-/// query and census has to know which hosts are which. `PLAN.md` §5.9 has the full
+/// query and census has to know which hosts are which. `NOTES.md` §6.6 has the full
 /// reversal; the short version is that a user who writes no configuration at all should
 /// still get a sane, uniform name.
 ///
@@ -102,7 +102,7 @@ pub enum HostnameMode {
     ///
     /// The answer when short names **collide across domains**: `web1.prod` and
     /// `web1.staging` both shorten to `web1`, which would put two machines in one retention
-    /// group where they would forget each other's snapshots — the `PLAN.md` §7.5 rule
+    /// group where they would forget each other's snapshots — the `NOTES.md` §6.7 rule
     /// broken by default rather than by misconfiguration.
     Full,
     /// Emit neither flag. rustic decides, from the OS or from `[backup] host`.

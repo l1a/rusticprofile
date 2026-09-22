@@ -123,8 +123,8 @@ pub struct DoctorArgs {
 ///
 /// Deliberately *not* an [`crate::config::job::Operation`]: that enum is what a **job** may
 /// schedule, and a query is not schedulable work. Read-only is what makes a passthrough
-/// defensible here and would not make one defensible for `forget` or `prune`. `PLAN.md`
-/// §7.8 states the line so the next request for one can be answered.
+/// defensible here and would not make one defensible for `forget` or `prune`. `NOTES.md`
+/// §6.9 states the line so the next request for one can be answered.
 #[derive(Args, Debug)]
 pub struct SnapshotsArgs {
     /// Job whose profile to query. Omit to use `defaults.default-job`.
@@ -172,7 +172,7 @@ pub struct SnapshotsArgs {
 /// **`--dry-run` is not optional and there is no flag for it.** The argv is built by
 /// [`crate::rustic::invoke::retention_argv`], which is the scheduled `forget`'s own code path
 /// with the dry run hardcoded — so this command cannot be turned into one that deletes, and the
-/// preview cannot describe a different operation than the one that runs. `PLAN.md` §7.14.
+/// preview cannot describe a different operation than the one that runs. `NOTES.md` §6.9.
 ///
 /// Deliberately **no `--json`**: a `schema:` is a promise, and `0.2.22` refused to put
 /// unrequested schema surface inside a display change. `rusticprofile plan` prints the argv for
@@ -667,7 +667,7 @@ mod tests {
         };
         assert!(args.background);
         // Accepted on every platform, and it *acts* on every platform: the retry is gated on
-        // this flag rather than on `cfg!(windows)` (`PLAN.md` 7.12). The console detachment is
+        // this flag rather than on `cfg!(windows)` (`NOTES.md` §6.11). The console detachment is
         // the Windows-only half. `schedule` generates the same argv shape everywhere, and a
         // flag that parsed on one OS and not another would make a unit or task definition
         // untestable from the host that writes it.

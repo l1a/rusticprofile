@@ -17,7 +17,7 @@
 //!
 //! **Scheduling priority applied in-process.** `Nice=` and `IOSchedulingClass=` belong in
 //! the unit, which means no `nice`/`ionice` code is ever written in Rust. That is a
-//! deliberate trade recorded in `PLAN.md` M2: systemd already does this correctly, per
+//! deliberate trade recorded when M2 landed: systemd already does this correctly, per
 //! cgroup, without privileges we would otherwise have to reason about.
 
 use std::path::{Path, PathBuf};
@@ -80,7 +80,7 @@ pub fn service_unit(job: &Job, schedule: &Schedule, ctx: &UnitContext) -> String
          Documentation=man:rusticprofile(1)\n\
          # Ordering against the network. NOTE: `network-online.target` does not exist in the\n\
          # *user* manager, so on `permission: user` these two lines are inert — measured,\n\
-         # `PLAN.md` 5.11. They are kept because they are correct and load-bearing for a\n\
+         # `NOTES.md` §6.11. They are kept because they are correct and load-bearing for a\n\
          # `permission: system` unit, where the target does exist. The user-timer case is\n\
          # covered by the retry on --background below, not by this ordering.\n\
          After=network-online.target\n\
@@ -88,8 +88,8 @@ pub fn service_unit(job: &Job, schedule: &Schedule, ctx: &UnitContext) -> String
          \n\
          [Service]\n\
          Type=oneshot\n\
-         # --background marks the run as unattended, which enables the retry (PLAN.md 7.10,\n\
-         # 7.12). It cannot be inferred from the environment: INVOCATION_ID and JOURNAL_STREAM\n\
+         # --background marks the run as unattended, which enables the retry (NOTES.md\n\
+         # §6.11). It cannot be inferred from the environment: INVOCATION_ID and JOURNAL_STREAM\n\
          # are both set in an ordinary desktop terminal, so only an explicit flag put here by\n\
          # `schedule` can tell a scheduled run from a hand-typed one. On Unix the flag does not\n\
          # touch stdio, so rustic's diagnostics still reach the journal.\n\
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn the_unit_marks_the_run_as_unattended_so_the_retry_applies() {
-        // `PLAN.md` 5.11/7.12. A `Persistent=true` catch-up fires within milliseconds of the
+        // `NOTES.md` §6.11. A `Persistent=true` catch-up fires within milliseconds of the
         // timer starting — measured, and `RandomizedDelaySec` does not delay it even at 3600s
         // — so on a laptop the run replacing a missed hour lands seconds after a resume,
         // before the network is up. Measured on a real host: a catch-up fired in the same

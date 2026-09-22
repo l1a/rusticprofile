@@ -8,7 +8,7 @@
 //! mistake:
 //!
 //! 1. the `name` of each `[[backup.snapshots]]` entry — because an unknown `--name`
-//!    alongside a valid one is silently ignored, exit 0 (`PLAN.md` §7.2);
+//!    alongside a valid one is silently ignored, exit 0 (`NOTES.md` §6.6);
 //! 2. which scoping filters `[snapshot-filter]` declares — because an unscoped `forget`
 //!    against a repository shared by seven machines is irreversible;
 //! 3. whether `[forget]` sets `group-by`, and whether it contains filter keys that do
@@ -78,11 +78,11 @@ struct Repository {
     ///
     /// Reported verbatim and never parsed. rustic splits it on `:` and reads the first
     /// element as a backend type, which is why a bare Windows drive letter fails with
-    /// ``The backend type `C` is not supported`` (`PLAN.md` §5.10) — but interpreting it
+    /// ``The backend type `C` is not supported`` (`NOTES.md` §6.10) — but interpreting it
     /// here would be a second, drifting copy of rustic's own rule.
     repository: Option<String>,
     password_file: Option<String>,
-    /// Present instead of `password-file` on a host following `PLAN.md` §4.1's
+    /// Present instead of `password-file` on a host following `NOTES.md` §6.3's
     /// recommendation. There is no file to check in that case, which is a *better* state,
     /// not an unverifiable one.
     password_command: Option<String>,
@@ -245,7 +245,7 @@ pub struct Profile {
     /// Stated because "as written in the file" is the natural assumption and is wrong.
     ///
     /// Empty means rustic will **refuse** a `forget` against this profile — measured, and
-    /// the refusal is rustic's own guard rather than one this tool adds (`PLAN.md` §5.12).
+    /// the refusal is rustic's own guard rather than one this tool adds (`NOTES.md` §6.9).
     /// `keep-delete` and `keep-pack` are excluded; see [`NON_RETENTION_KEEP_KEYS`].
     pub retention_rules: Vec<(String, String)>,
     /// One entry per `[[backup.snapshots]]`, in declaration order.
@@ -275,7 +275,7 @@ pub struct SetSummary {
 /// **The contents are never read.** `doctor` stats the path and stops there: the failure
 /// being caught is "the file is not there", and reading a passphrase to prove it is
 /// readable would pull the secret into this process's memory for no gain — the exact
-/// property `PLAN.md` §4.1 chose `password-command` to preserve.
+/// property `NOTES.md` §6.3 chose `password-command` to preserve.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecretFile {
     /// The profile key that named it, e.g. `password-file`.
@@ -289,7 +289,7 @@ impl Profile {
     ///
     /// `[backup] host` when pinned, otherwise `os_hostname`. This is the value
     /// `filter-hosts` must contain, and getting it from anywhere else is how retention
-    /// silently stops matching anything (`PLAN.md` §2.1 bug #1).
+    /// silently stops matching anything (`NOTES.md` §6.1 bug #1).
     pub fn recorded_host<'a>(&'a self, os_hostname: &'a str) -> &'a str {
         self.backup_host.as_deref().unwrap_or(os_hostname)
     }
@@ -313,7 +313,7 @@ impl Profile {
 /// ```
 ///
 /// A 0-byte snapshot is not merely useless. Under the label grouping this project requires
-/// (`PLAN.md` §7.3) it competes for the same retention slot as the real one and, being
+/// (`NOTES.md` §6.7) it competes for the same retention slot as the real one and, being
 /// newer, wins — which is exactly how a 395 MiB snapshot was already lost once.
 ///
 /// So the rule is not "these paths are unlikely to work". It is: **a configuration that
@@ -331,7 +331,7 @@ pub struct UnexpandableSource {
 ///
 /// Checks for `~` and `$` anywhere, not just at the start: `$HOME/x`, `${HOME}/x`, `~/x`
 /// and the rarer `/mnt/$USER/x` all fail the same way. A path is only ever expanded by a
-/// shell, and this project never uses one — `PLAN.md` §2.3.
+/// shell, and this project never uses one — `NOTES.md` §6.1.
 fn unexpandable(source: &str) -> bool {
     source.contains('~') || source.contains('$')
 }

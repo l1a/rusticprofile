@@ -61,7 +61,7 @@ pub struct Config {
     /// Resolved once, here, rather than re-derived per call site — the `0.1.28` lesson: a
     /// value three code paths each work out for themselves is a value they can disagree
     /// about, and a reader disagreeing with a writer about a hostname means retention
-    /// silently selects nothing. `PLAN.md` §5.9.
+    /// silently selects nothing. `NOTES.md` §6.6.
     pub recorded_host: Option<String>,
     /// How [`Self::recorded_host`] was derived, kept so `config --check` can explain it.
     pub hostname_mode: HostnameMode,
@@ -104,7 +104,7 @@ impl Config {
 /// Note that an unrecognised key or variable may simply be newer than this binary.
 ///
 /// Unknown keys and variables are hard errors on purpose — that is what caught a config
-/// block in the predecessor which had silently never taken effect (`PLAN.md` §2.2), and the
+/// block in the predecessor which had silently never taken effect (`NOTES.md` §6.1), and the
 /// rule stays. But there is a second cause, and it is invisible from the message alone.
 ///
 /// `jobs.yaml` is designed to be **byte-identical across a fleet**, which makes it only ever
@@ -219,7 +219,7 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
     //
     // The check compares `filter-hosts` in *this* machine's `rustic.toml` against the host
     // that will run the job. Under `--as-host` those are, by construction, a profile from
-    // one disk and a hostname from another — and §5.9 requires that profile to differ per
+    // one disk and a hostname from another — and §6.6 requires that profile to differ per
     // host, so they will disagree whenever the simulation is doing its job. Running it
     // anyway reports a defect on every host but this one, which is a false alarm loud
     // enough to make `--as-host` useless for the gate inspection it exists for.

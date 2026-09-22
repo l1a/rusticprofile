@@ -9,13 +9,13 @@
 //! is what makes it safe to run anywhere, and it is also its ceiling. The failures that
 //! actually cost this project data were **configurations that were individually correct and
 //! wrong only in combination** — two tools sharing one repository, each fine alone
-//! (`PLAN.md` §3(d)). None of them is visible from inside a config file, so no validation
+//! (`NOTES.md` §6.7, §6.8). None of them is visible from inside a config file, so no validation
 //! rule can find them:
 //!
 //! | | where the evidence lives |
 //! |---|---|
-//! | a second **retention** authority (`PLAN.md` §7.5) | the repository's snapshots |
-//! | a second **lock** authority (`PLAN.md` §7.6) | this host's service manager |
+//! | a second **retention** authority (`NOTES.md` §6.7) | the repository's snapshots |
+//! | a second **lock** authority (`NOTES.md` §6.8) | this host's service manager |
 //! | a secret that does not exist (`NOTES.md` §4) | the filesystem |
 //!
 //! So `doctor` looks outward, and `--check` stays hermetic. That division is the whole
@@ -242,7 +242,7 @@ pub fn classify_lock_authority(found: &[PredecessorSchedule]) -> Finding {
                 .map(|s| format!("{} — enabled", s.name))
                 .chain(std::iter::once(
                     "restic prune deletes packs immediately and rustic takes no lock; measured to \
-                     leave the repository failing `restic check` (PLAN.md §7.6)"
+                     leave the repository failing `restic check` (NOTES.md §6.8)"
                         .to_string(),
                 ))
                 .collect(),
@@ -290,7 +290,7 @@ pub fn classify_lock_authority(found: &[PredecessorSchedule]) -> Finding {
 ///
 /// Both halves are required. `resticprofile` alone would match the predecessor's *backup*
 /// timer, which is safe to leave running — backups take a shared lock and are additive
-/// (`PLAN.md` §7.6) — and warning about it would make the check noise. `prune` alone would
+/// (`NOTES.md` §6.8) — and warning about it would make the check noise. `prune` alone would
 /// match this tool's own `rusticprofile-…-prune`, which is the correct authority.
 ///
 /// The substring test is deliberately narrow for the same reason `rustic backup --help`'s

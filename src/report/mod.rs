@@ -125,7 +125,7 @@ pub fn is_recorded_stamp(stamp: &str) -> bool {
 /// "annotate only what was measured" judgement visible at the call site rather than buried here.
 ///
 /// The window matters because on Task Scheduler `RandomDelay` is re-rolled on every query —
-/// three reads of one unchanged task gave three different times (`PLAN.md` §5.10) — so a
+/// three reads of one unchanged task gave three different times (`NOTES.md` §6.10) — so a
 /// to-the-second value overstates what is known. It is *not* applied to systemd, where whether
 /// `NextElapseUSecRealtime` is stable across queries has never been measured; asserting a window
 /// that may not exist is the `network-online.target` mistake, a comment describing a protection
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn a_locale_free_instant_is_rendered_and_a_locale_formatted_one_is_left_alone() {
-        // The two halves of `PLAN.md` §7.13. Where the backend could ask for the instant, the
+        // The two halves of `NOTES.md` §6.10. Where the backend could ask for the instant, the
         // line matches `last run`; where it could not, it degrades to exactly the string the
         // service manager printed rather than to a guess or a blank.
         let reported = "8/12/2026 11:02:28 AM";
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn the_spread_window_is_stated_only_when_the_caller_supplies_one() {
-        // Measured on Task Scheduler and nowhere else (`PLAN.md` §5.10), so the annotation is
+        // Measured on Task Scheduler and nowhere else (`NOTES.md` §6.10), so the annotation is
         // the caller's decision. A window printed on a backend where the value does not move
         // would be a claim in our own output that nothing checked.
         let iso = "2026-08-12T11:02:28-07:00";
@@ -502,7 +502,7 @@ mod tests {
     /// **The first version of this test could not fail**, and it took breaking the constant on
     /// purpose to notice: it rendered its own input with the very constant it was verifying, so
     /// a change broke both halves together and it stayed green. That is a check returning the
-    /// expected answer for the wrong reason — the failure `PLAN.md` §7.11 names as this
+    /// expected answer for the wrong reason — the failure `NOTES.md` §6.12 names as this
     /// project's most frequently rediscovered — inside a test written to prevent one.
     ///
     /// **Watched failing**, which `0.2.17` requires of a new guard: decoupling `RECORDED` from

@@ -47,8 +47,8 @@ permissions:
 jobs:
   # Windows is in every matrix here as of 0.1.36. The comment that stood in this place said it
   # was "absent on purpose: a declared non-goal for v1 … adding a Windows runner would only
-  # prove the crate compiles somewhere it is not meant to run." That is superseded — PLAN.md
-  # §7.9 reverses the non-goal, because the machine this project is developed and released from
+  # prove the crate compiles somewhere it is not meant to run." That is superseded — NOTES.md
+  # §6.10 reverses the non-goal, because the machine this project is developed and released from
   # now runs Windows.
   #
   # It is a *pull-request* leg, not only a tag-time one, and that is the point: the alternative
