@@ -7,7 +7,7 @@ Thank you for considering a contribution to `rusticprofile`.
 Two documents carry most of the context:
 
 - **`PLAN.md`** — the full design, the reasoning behind it, every rejected alternative with its reason, and the measurements taken against real repositories. It is the design record, not a summary.
-- **`NOTES.md`** — living project state, current milestone, and the release log. This project has no `CHANGELOG.md`; `NOTES.md` is it.
+- **`NOTES.md`** — living project state, the backlog, and the hard-won lessons. This project has no `CHANGELOG.md` and `NOTES.md` is not one: `git log` is the changelog.
 
 ## How Can I Contribute?
 

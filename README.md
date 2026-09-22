@@ -313,7 +313,7 @@ just test
 just open-pr  # runs the full pre-PR gate, then gh pr create
 ```
 
-See `CONTRIBUTING.md`, and `NOTES.md` for current state and the release log.
+See `CONTRIBUTING.md`, and `NOTES.md` for current state, the backlog and the lessons behind the design.
 
 ## License
 
