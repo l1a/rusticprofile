@@ -4,10 +4,9 @@ Thank you for considering a contribution to `rusticprofile`.
 
 ## Before you start
 
-Two documents carry most of the context:
+One document carries most of the context:
 
-- **`PLAN.md`** — the full design, the reasoning behind it, every rejected alternative with its reason, and the measurements taken against real repositories. It is the design record, not a summary.
-- **`NOTES.md`** — living project state, the backlog, and the hard-won lessons. This project has no `CHANGELOG.md` and `NOTES.md` is not one: `git log` is the changelog.
+- **`NOTES.md`** — living project state, the operating invariants (§3a), the backlog, the hard-won lessons, and the design record (§6): the reasoning behind the design, every rejected alternative with its reason, and the measurements taken against real repositories. This project has no `CHANGELOG.md` and `NOTES.md` is not one: `git log` is the changelog.
 
 ## How Can I Contribute?
 
@@ -62,7 +61,7 @@ Contributions are developed against real backup repositories, so these are not o
 
 - **Read-only operations against a production repository are fine** (`snapshots`, `repoinfo`, `check`).
 - **Every write test goes to a throwaway repository** under a temporary directory, deleted afterwards.
-- **Never run `prune` against a shared repository** until lock coordination lands (`PLAN.md` M4).
+- **Never run `restic prune` against a repository any rustic client writes to.** `rustic prune` is safe by design and is the only prune that may run (`NOTES.md` §3a invariant 3).
 - **Never delete snapshots** without explicit, per-step authorisation.
 
 ## Conventions worth knowing

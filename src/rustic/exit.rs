@@ -12,8 +12,8 @@
 //! ## Why the exit code is not enough
 //!
 //! rustic exits `1` for **everything** that is not a clean success — no warning tier, no
-//! restic-style 0/1/2/3 table (`PLAN.md` §5.3). Worse, a *partial* backup also exits `1`
-//! (§7.2). Measured against rustic 0.11.3 in a throwaway repository:
+//! restic-style 0/1/2/3 table (`NOTES.md` §6.5). Worse, a *partial* backup also exits `1`
+//! (§6.6). Measured against rustic 0.11.3 in a throwaway repository:
 //!
 //! | invocation | exit | `--json` objects on stdout |
 //! |---|---|---|
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn concatenated_objects_are_counted_correctly() {
-        // The trap from PLAN.md §5.8: these are not JSON Lines. A line-based count reads 1.
+        // The trap from NOTES.md §6.5: these are not JSON Lines. A line-based count reads 1.
         let two = concatenated(&["aaa", "bbb"]);
         assert!(two.contains("}{"), "fixture must reproduce the real shape");
         assert_eq!(two.lines().filter(|l| l.starts_with('{')).count(), 1);

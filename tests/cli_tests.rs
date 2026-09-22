@@ -1194,7 +1194,7 @@ jobs:
 
 /// A recording shim: logs its argv to a file and exits 0 without touching a repository.
 ///
-/// This is rung 2 of the verification ladder in `PLAN.md` — the rung that proves a job's
+/// This is rung 2 of the verification ladder in `NOTES.md` §6.4 — the rung that proves a job's
 /// argv end to end while rustic never runs.
 #[cfg(unix)]
 fn recording_shim(dir: &std::path::Path) -> String {
@@ -2010,7 +2010,7 @@ fn schedule_refuses_when_rustic_cannot_be_resolved() {
 
 #[test]
 fn as_host_does_not_check_a_profile_it_cannot_see() {
-    // `filter-hosts` lives in *this* machine's rustic profile, and §5.9 requires that file
+    // `filter-hosts` lives in *this* machine's rustic profile, and §6.6 requires that file
     // to differ per host. Under `--as-host` the check would compare a profile from one disk
     // against a hostname from another and report a defect on every host but this one —
     // making `--as-host` useless for the gate inspection it exists for.

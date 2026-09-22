@@ -556,7 +556,7 @@ pub fn delete_task(job_name: &str) -> io::Result<(bool, String)> {
 ///
 /// **`schtasks` cannot answer this.** It formats `Next Run Time` in the user's locale, and there
 /// is no locale-free output mode — `/FO CSV` is formatted the same way and `/XML` carries no
-/// computed next run at all, both measured (`PLAN.md` §5.10). Parsing what it does print is
+/// computed next run at all, both measured (`NOTES.md` §6.10). Parsing what it does print is
 /// rejected rather than merely avoided: `8/12/2026` parses *successfully* as 12 August under
 /// `M/d/yyyy` and as 8 December under `d/M/yyyy`, so a host in another locale would be shown a
 /// confident wrong date. That is a silent misparse, which is the one failure class this tool
@@ -631,7 +631,7 @@ pub fn query_task_xml(job_name: &str) -> Option<String> {
 /// That `next_elapse` row is the one place this backend is better than launchd rather than merely
 /// different, so `status` shows a genuine next fire time on Windows. The `_iso` row exists
 /// because the value `schtasks` prints is formatted in the user's locale and therefore cannot be
-/// re-rendered without risking a wrong date (`PLAN.md` §7.13).
+/// re-rendered without risking a wrong date (`NOTES.md` §6.10).
 pub fn task_status(job: &Job, _permission: Permission, dir: &Path) -> TimerStatus {
     let units_present = dir.join(schtasks::task_file_name(&job.name)).exists();
 
@@ -713,7 +713,7 @@ pub struct TimerStatus {
     ///
     /// Exists because Task Scheduler formats its answer in the user's locale, which cannot be
     /// re-rendered without risking a wrong date, while the platform will hand over the instant
-    /// directly if asked ([`task_next_run_iso`], `PLAN.md` §7.13). systemd already reports the
+    /// directly if asked ([`task_next_run_iso`], `NOTES.md` §6.10). systemd already reports the
     /// human shape `0.2.20` aligned everything else to, so `timer_status` leaves this `None` and
     /// nothing about Linux output changes.
     pub next_elapse_iso: Option<String>,

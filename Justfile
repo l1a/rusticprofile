@@ -695,7 +695,7 @@ pr:
     echo "  [ ] README.md reviewed and updated (new commands, flags, config keys)"
     echo "  [ ] NOTES.md: Current State, backlog (4), hard-won lessons (5) -- NOT a changelog"
     echo "  [ ] WIP.md reflects what is in flight (not a session log -- see its own header)"
-    echo "  [ ] PLAN.md updated if a design decision changed (it is the design record)"
+    echo "  [ ] NOTES.md §6 updated if a design decision changed (before the code, if it moves the boundary)"
     echo "  [ ] No live infrastructure identifiers in the diff, commit or PR body (NOTES.md 3, 5.6)"
     echo "  [ ] Safety rules observed: no prune against the shared repo, no snapshots deleted"
     echo ""

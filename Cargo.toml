@@ -1,6 +1,6 @@
 [package]
 name = "rusticprofile"
-version = "0.2.45"
+version = "0.2.46"
 edition = "2024"
 authors = ["Ken Tobias"]
 description = "A local, per-machine scheduler and orchestrator for rustic backups"
@@ -14,7 +14,6 @@ exclude = [
     "AGENTS.md",
     "CLAUDE.md",
     "NOTES.md",
-    "PLAN.md",
     "Justfile",
     "scripts/",
     "packaging/",
@@ -60,7 +59,7 @@ nix = { version = "0.31.3", features = [
 # `GetComputerNameExW`: `%COMPUTERNAME%` is the *NetBIOS* name, which Windows reports upper-cased.
 # Emitting `HOST-A` where every other host in a fleet records `host-a` would put one machine in its
 # own retention group under `group-by = "host,label"` and strand its history — invariant 1 in
-# `NOTES.md` §3a, breached by a value that looks merely cosmetic. See `PLAN.md` §5.10.
+# `NOTES.md` §3a, breached by a value that looks merely cosmetic. See `NOTES.md` §6.10.
 #
 # Job objects: Windows has no signal to forward, so the only way to guarantee rustic dies with
 # rusticprofile is `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Without it, a scheduled task that is

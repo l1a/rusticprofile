@@ -9,7 +9,7 @@
 //! and what lets `rusticprofile plan` be safe to run anywhere.
 //!
 //! The argv is a `Vec<OsString>` handed to [`std::process::Command`] directly. **No shell
-//! is ever involved** (`PLAN.md` §2.3): the predecessor routed everything through `sh -c`,
+//! is ever involved** (`NOTES.md` §6.1): the predecessor routed everything through `sh -c`,
 //! and that single decision is the entire reason it needs an eight-variant argument-type
 //! matrix, four separate quoting functions and ~1,364 lines of escaping logic — the
 //! highest-risk code in that project, where a mistake either corrupts the command or
@@ -26,7 +26,7 @@ use crate::config::job::{Job, Operation};
 ///
 /// rusticprofile emits none of them, ever. Secrets belong in rustic's own config, where
 /// `password-command` lets rustic spawn the lookup itself and the value never passes
-/// through this process at all (`PLAN.md` §4.1). rustic's own help warns that `--password`
+/// through this process at all (`NOTES.md` §6.3). rustic's own help warns that `--password`
 /// "can reveal the password in the process list", and a process list is world-readable.
 ///
 /// This list exists so the guarantee is *tested* rather than merely intended.
@@ -45,7 +45,7 @@ pub const SECRET_BEARING_FLAGS: &[&str] = &[
 pub struct Options {
     /// Ask rustic to report what it would do without doing it.
     ///
-    /// Supported on `backup`, `forget` and `prune` (`PLAN.md` §5.6), which is what makes
+    /// Supported on `backup`, `forget` and `prune` (`NOTES.md` §6.5), which is what makes
     /// the verification ladder viable end to end.
     pub dry_run: bool,
 }
@@ -102,7 +102,7 @@ impl Invocation {
 ///
 /// `hostname` is the name rustic should record and filter on, or `None` to let rustic
 /// decide (`defaults.hostname: rustic`). See [`HostnameMode`](crate::config::job::HostnameMode)
-/// and `PLAN.md` §5.9 for why this tool supplies it at all.
+/// and `NOTES.md` §6.6 for why this tool supplies it at all.
 pub fn build_argv(
     binary: &str,
     profile: &str,
@@ -122,7 +122,7 @@ pub fn build_argv(
         argv.push(OsString::from("--dry-run"));
     }
 
-    // The hostname rusticprofile owns (`PLAN.md` §5.9). Without this, rustic asks the OS
+    // The hostname rusticprofile owns (`NOTES.md` §6.6). Without this, rustic asks the OS
     // and macOS answers `foo.local` while Linux answers `foo`, so one repository ends up
     // with two naming conventions and every filter has to know which hosts are which.
     //
@@ -148,7 +148,7 @@ pub fn build_argv(
     if operation == Operation::Backup {
         // `--json` is not a backup *setting* — it changes rustic's output format, and it is
         // the only way to tell a partial backup from a failed one, since rustic exits 1 for
-        // both (`PLAN.md` §5.3, §7.2). Without it, exit classification would be reduced to
+        // both (`NOTES.md` §6.5, §6.6). Without it, exit classification would be reduced to
         // matching English text in a log. Progress is unaffected: rustic keeps writing it
         // to stderr, measured.
         argv.push(OsString::from("--json"));
@@ -172,7 +172,7 @@ pub fn build_argv(
 /// Separate from [`build_argv`] on purpose. That function serves scheduled work and is
 /// guarded by a test asserting the only flags it emits are `-P`, `--json` and `--name`;
 /// folding a passthrough into it would weaken exactly the guarantee worth keeping.
-/// `PLAN.md` §7.8 has the reasoning and the limits.
+/// `NOTES.md` §6.9 has the reasoning and the limits.
 #[must_use]
 pub fn query_argv(binary: &str, profile: &str, query: &str, extra: &[String]) -> Vec<OsString> {
     let mut argv: Vec<OsString> = vec![
@@ -198,13 +198,13 @@ pub fn query_argv(binary: &str, profile: &str, query: &str, extra: &[String]) ->
 /// 2. **The preview cannot drift from the operation it previews.** Whatever flags a real
 ///    `forget` gains, this gains too, because it is the same code path. A preview describing a
 ///    *different* operation than the one that runs would be worse than no preview at all —
-///    `PLAN.md` §7.13's rule in a new place.
+///    `NOTES.md` §6.10's rule in a new place.
 /// 3. **`--filter-host` is included**, because the scheduled `forget` has carried it since
 ///    `0.1.34`. Dropping it here would show retention across the whole fleet while the job that
 ///    runs only ever touches this host.
 ///
 /// `--json` is what makes the result readable rather than merely printable: rustic's own table
-/// is fine on a terminal, but the reasons have to be regrouped per slot, and `PLAN.md` §5.12
+/// is fine on a terminal, but the reasons have to be regrouped per slot, and `NOTES.md` §6.9
 /// records the shape. `forget --json` writes to stdout and diagnostics to stderr, measured.
 ///
 /// Not part of [`plan_job`]: this is a query, not schedulable work, so it does not appear in
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn no_argv_carries_a_secret_flag() {
-        // The guarantee from PLAN.md section 4.1, asserted rather than assumed. Secrets
+        // The guarantee from NOTES.md §6.3, asserted rather than assumed. Secrets
         // reach rustic through its own config; a process list is world-readable.
         //
         // The inputs here are ones config validation actually permits. Names that *look*
@@ -381,7 +381,7 @@ mod tests {
     #[test]
     fn a_query_adds_only_the_profile_and_the_operation() {
         // The passthrough's whole justification: rusticprofile supplies path resolution and
-        // nothing else. If this grows a flag, it has become a wrapper — see PLAN.md §7.8.
+        // nothing else. If this grows a flag, it has become a wrapper — see NOTES.md §6.9.
         let argv = query_argv("rustic", "/cfg/p.toml", "snapshots", &[]);
         let rendered: Vec<String> = argv
             .iter()
@@ -416,9 +416,9 @@ mod tests {
     fn the_only_flags_emitted_are_the_ones_this_tool_owns() {
         // A stronger statement than "no secrets": rusticprofile constructs no rustic flags
         // at all beyond these. If this test needs changing, the delegation boundary is
-        // moving and that belongs in PLAN.md first.
+        // moving and that belongs in NOTES.md §6 first.
         //
-        // It moved once, deliberately, and PLAN.md §5.9 records the reversal: `--host` and
+        // It moved once, deliberately, and NOTES.md §6.6 records the reversal: `--host` and
         // `--filter-host` joined the list in 0.1.34, because leaving the hostname to rustic
         // meant macOS recorded `foo.local` while Linux recorded `foo` — one repository,
         // two naming conventions, and no way for a user without chezmoi to get it right.

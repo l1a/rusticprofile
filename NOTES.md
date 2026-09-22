@@ -12,13 +12,13 @@ distilled into §5, and the log itself is one command away:
 git show 366a984:NOTES.md      # the last version carrying the per-release log, v0.0.1–v0.2.44
 ```
 
-**Citations of the form `0.2.13`**, in `PLAN.md`, `AGENTS.md` and source comments, name that
+**Citations of the form `0.2.13`**, in `AGENTS.md` and source comments, name that
 release's entry in the log above. They are left as they are: the version is a stable key, and
 the commit that holds the text is recorded here.
 
-`PLAN.md` is the design record: how the design was reached, every rejected alternative with its
-reason, and the measurements behind each decision. It does not get rewritten as the project
-moves; this file does.
+**§6 is the design record** — how the design was reached, every rejected alternative with its
+reason, and the measurements behind each decision. It replaces `PLAN.md` (folded in `0.2.46`); the
+table at the top of §6 maps that file's old section numbers to their new homes.
 
 ---
 
@@ -40,7 +40,7 @@ resolves to `rustic -P <profile> <operation> [--name <set>]...` plus the hostnam
 There is exactly one class of exception, and it is read-only: rusticprofile parses
 `rustic.toml` to enumerate `[[backup.snapshots]]` names, so it can reject a `--name` that does
 not exist, and to refuse a `sources` entry rustic would not expand. Both are bought and paid for
-in `PLAN.md` §7.2 and §5.9 — rustic fails silently in each case, so nobody else can catch it.
+in §6.6 — rustic fails silently in each case, so nobody else can catch it.
 
 ---
 
@@ -110,7 +110,7 @@ objects) and stderr inherited (rustic's progress), so an operator watches live w
 classification still gets its input. An interrupt is forwarded and then *waited on* — orphaning a
 running rustic would leave it writing to a repository shared by seven machines. The environment is
 inherited unmodified; `exec/env.rs` only selects what is worth showing. And redaction is a
-backstop, not the control: the control is that secrets never enter this process (`PLAN.md` §4.1).
+backstop, not the control: the control is that secrets never enter this process (§6.3).
 
 ---
 
@@ -165,8 +165,8 @@ backstop, not the control: the control is that secrets never enter this process 
   that needs a justified ignore).
 - **Backup safety**: read-only operations against a production repository are fine; every
   write test goes to a throwaway repository under a temp dir, deleted afterwards; never
-  **`restic` prune** against a shared repository any rustic client writes to (`PLAN.md`
-  §7.6 — `rustic prune` is safe by design and is the only prune that may run); never delete
+  **`restic` prune** against a shared repository any rustic client writes to (§6.8 —
+  `rustic prune` is safe by design and is the only prune that may run); never delete
   snapshots without explicit per-step authorisation. See `AGENTS.md` Part 2 §3.
 - **No live infrastructure identifiers in tracked files.** The repository is public, so this
   is now permanent rather than a pre-publication chore: no real hostnames, bucket names,
@@ -179,9 +179,8 @@ backstop, not the control: the control is that secrets never enter this process 
 ## 3a. Operating invariants — the rules that bite
 
 **These are the rules that can destroy data if broken, gathered in one place.** Every one was
-found the hard way and measured; every one is silent when violated. They were promoted here
-from `PLAN.md` Part 7 on 2026-08-04 — that file keeps the full finding and the measurements
-behind each, under the same section number, but **this is where they are maintained.**
+found the hard way and measured; every one is silent when violated. **This is where they are
+maintained**; §6 carries the finding and the measurements behind each.
 
 A single sentence connects all of them: *this project exists because a backup that quietly
 does less than it says is worse than one that fails loudly.* Each invariant closes one route
@@ -199,7 +198,7 @@ success. With `paths` in the key, a renamed source mints a fresh group with its 
 quota — that is how 2810 snapshots survived a policy capping ~49 per host.
 
 **Label, not paths:** a set's label is stable by construction, its path list is not.
-*Evidence: `PLAN.md` §7.3.*
+*Evidence: §6.7.*
 
 ### 2. Exactly ONE retention authority per (repository, host)
 
@@ -216,7 +215,7 @@ snapshots by the mirror-image mechanism.
 **Migration means moving that authority, not overlapping it.** The ordering is not optional:
 **disable the outgoing tool's retention BEFORE enabling the incoming tool's schedule**, and
 confirm from the repository rather than from either tool's own report.
-*Evidence: `PLAN.md` §7.5.*
+*Evidence: §6.7.*
 
 ### 3. Exactly ONE lock protocol per repository
 
@@ -245,7 +244,7 @@ them. The deletion half is proven on the live repository too (§5.3).
 > it cost a day of exposure plus a prune schedule disabled for no reason. M4 is defence in
 > depth, not permission.
 
-*Evidence: `PLAN.md` §7.6.*
+*Evidence: §6.8.*
 
 ### 4. The delegation boundary — what this tool may emit
 
@@ -253,7 +252,7 @@ A **job** invocation is `rustic -P <profile> <operation>`, plus `--json` on `bac
 `--name` per enabled snapshot set, plus `--host`/`--filter-host` unless `hostname: rustic`.
 **Those are the only flags rusticprofile ever emits**, and a test in `rustic/invoke.rs` asserts
 it against every built argv. That test carries the instruction: *if it needs changing, the
-delegation boundary is moving and that belongs in `PLAN.md` first.*
+delegation boundary is moving and that belongs in §6 first.*
 
 **A passthrough is acceptable only where it is read-only and adds no flags.** `snapshots`
 qualifies and exists; `check` would qualify. `forget` and `prune` do not — destructive, and
@@ -269,7 +268,7 @@ through, with `dry_run: true` hardcoded and no parameter that could switch it of
 preview provably differs from the real operation by exactly `--dry-run` and `--json`. Two tests
 assert that, one of them at ladder rung 2 against the argv actually spawned. **The bar for the
 next command of this shape is that same standard**: not "it is read-only in practice" but "the
-destructive form cannot be constructed". *Evidence: `PLAN.md` §7.14, §5.12.*
+destructive form cannot be constructed". *Evidence: §6.9.*
 
 Two deliberate exceptions, both **read-only**, both because nothing else in the chain can
 catch a silent failure: rusticprofile parses `rustic.toml` to validate every `--name` it
@@ -277,7 +276,7 @@ emits (rustic ignores an unknown one whenever a valid one is also given, exit 0,
 diagnostic), and to refuse a `sources` entry containing `~` or `$` (rustic expands neither,
 and the result is a successful 0-byte snapshot that then wins its retention slot under
 invariant 1).
-*Evidence: `PLAN.md` §7.2, §7.8, §5.9.*
+*Evidence: §6.6, §6.9.*
 
 ### 5. The dangerous decisions live in rustic's config, so the shipped example carries them
 
@@ -288,13 +287,13 @@ the validator.
 
 | the trap | |
 |---|---|
-| `opendal:gcs`, not restic's `gs:` — that scheme does not exist in rustic | §5.1 |
-| scoping filters go in `[snapshot-filter]`; under `[forget]` rustic **accepts and ignores** them | §5.5 |
-| `group-by = "host,label"` — invariant 1 | §7.3 |
-| exclusion globs need a leading `!`; a bare pattern is an *include* filter | §7.2 |
-| split sets by how reliably the path exists — rustic hard-fails a whole set on one missing source | §5.7 |
-| `filter-hosts` matches the recorded name exactly; a mismatch matches zero snapshots and retention silently never runs | §5.9 |
-| exclude the password file and cloud credentials, or the key goes inside the lock | §4.1 |
+| `opendal:gcs`, not restic's `gs:` — that scheme does not exist in rustic | §6.5 |
+| scoping filters go in `[snapshot-filter]`; under `[forget]` rustic **accepts and ignores** them | §6.7 |
+| `group-by = "host,label"` — invariant 1 | §6.7 |
+| exclusion globs need a leading `!`; a bare pattern is an *include* filter | §6.6 |
+| split sets by how reliably the path exists — rustic hard-fails a whole set on one missing source | §6.6 |
+| `filter-hosts` matches the recorded name exactly; a mismatch matches zero snapshots and retention silently never runs | §6.6 |
+| exclude the password file and cloud credentials, or the key goes inside the lock | §6.3 |
 
 ### 6. Corollaries worth stating once
 
@@ -310,11 +309,11 @@ the validator.
   restic prune schedule armed on this host is a second lock protocol. Note the first is an
   *ordering* test, not "mixes labelled and unlabelled" — a migrated host legitimately holds years
   of unlabelled history, and the naive form warns for two years. The second is **per-host**;
-  rusticprofile cannot see the fleet. `PLAN.md` §7.11.
+  rusticprofile cannot see the fleet. §6.12.
 
 ---
 
-## Current State (v0.2.45)
+## Current State (v0.2.46)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -346,7 +345,7 @@ crates.io, in the AUR and in Fedora COPR.
   when uncertain is failure, because the opposite error runs `forget` after a backup that saved
   nothing.
 - **A detached run (`--background`) retries a failed operation twice more, two minutes apart**
-  (`PLAN.md` §7.10, §7.12). `schedule` emits the flag on systemd and Task Scheduler, not launchd. A
+  (§6.11). `schedule` emits the flag on systemd and Task Scheduler, not launchd. A
   hand-typed run fails immediately.
 - **Every generated unit names rustic by absolute path**, and **a unit is generated once**: an
   upgraded binary changes no installed unit until `schedule` is re-run (§4).
@@ -376,14 +375,14 @@ goes in §5.
       failed for eight days while `status` said `active`. Squarely inside the delegation boundary —
       the unit is this tool's own artefact — so a `doctor` check comparing the installed unit with
       what the current binary would generate needs no other tool. The manual form already exists:
-      `schedule -n <job> --write-only --unit-dir <tmp>` and diff. `PLAN.md` §7.11's reasoning for
+      `schedule -n <job> --write-only --unit-dir <tmp>` and diff. §6.12's reasoning for
       rejecting the stale-checkout check does **not** transfer, so this wants its own decision.
 - [ ] **Nothing reports that the AUR has fallen behind**, and it is the only channel that drifts by
       construction: `.SRCINFO` needs podman, so the AUR step needs a Linux host, and it gets
       skipped by default rather than by decision. Not a `just check` item — that would put a
       third-party registry call inside an offline gate, which `0.2.21` refused. A `doctor`-style
       check or a release-procedure step is the likely shape.
-- [ ] **Nothing re-measures `PLAN.md` §5 and §7 when rustic moves.** Those measurements are the
+- [ ] **Nothing re-measures §6's rustic measurements when rustic moves.** Those measurements are the
       evidence behind §3a, all taken against rustic 0.11.3. They were re-measured by hand against
       **0.11.4** on 2026-08-24 and every load-bearing one held — but that was a person deciding to
       look. **A measurement is only as true as the version it was taken against.**
@@ -414,8 +413,8 @@ goes in §5.
 - **Decided, recorded so they stay decisions:** `retention` has no `--json` and `status --json`
   has no `next_run_iso` — both are schema promises nobody has asked for (`0.1.23`, `0.2.22`); a
   stale chezmoi checkout is unguarded here on purpose, because auditing another tool's checkout is
-  the dotfile tooling's job (`PLAN.md` §7.11); and the inert `network-online.target` directives on
-  a user unit stay, with a comment saying so, because §7.12 chose the retry over a wait-for-network.
+  the dotfile tooling's job (§6.12); and the inert `network-online.target` directives on
+  a user unit stay, with a comment saying so, because §6.11 chose the retry over a wait-for-network.
 
 ### 4.2 Tooling and process
 
@@ -528,7 +527,7 @@ The version in brackets names the release entry with the full story (`git show 3
   "successfully saved" confirmation to stdout under `--json`, so a stderr grep reported the
   reassuring "0.11.4 no longer saves the 0-byte snapshot" — false.
 - **Do not make structural edits to safety-critical files by pattern.** A scripted edit matched
-  `[forget]` inside a comment and deleted `[snapshot-filter]` (`PLAN.md` §7.4); a global regex put
+  `[forget]` inside a comment and deleted `[snapshot-filter]` (§6.7); a global regex put
   `@` into three shebang recipes (`0.2.2`). Delete by exact filename, never a glob, and run
   `config --check` after any edit to a rustic profile.
 - **Audit a Justfile by running its recipes, not by reading it.** Reading it three ways gave three
@@ -571,7 +570,7 @@ The version in brackets names the release entry with the full story (`git show 3
 
 ### 5.3 rustic, as measured
 
-Evidence in `PLAN.md` Parts 5 and 7. Measured against 0.11.3; the load-bearing ones re-measured
+Evidence in §6.5–§6.9. Measured against 0.11.3; the load-bearing ones re-measured
 against 0.11.4 on 2026-08-24 and unchanged.
 
 - **Everything that is not a clean success exits 1**, a partial backup included. Classify by
@@ -585,7 +584,7 @@ against 0.11.4 on 2026-08-24 and unchanged.
 - **Scoping filters under `[forget]` are accepted and ignored**; they work under `[snapshot-filter]`.
   `group-by` defaults to `host,label,paths`.
 - **For `--host` and `--filter-host`, the CLI overrides the config file** — contradicting the
-  "env > config > CLI" summary in `PLAN.md` Part 2.
+  "env > config > CLI" precedence rustic's docs summarise.
 - **`snapshots --json` is `[{group_key, snapshots}]`; `forget --json` is `[{group_key, items}]`.**
   One key apart; the wrong parser reads zero and reports a clean empty repository. `label` is
   omitted, not empty, when unset.
@@ -783,6 +782,436 @@ against 0.11.4 on 2026-08-24 and unchanged.
   `just pr`'s checklist is answered after checking, never before (`0.2.5`).
 - **A false claim in a safety section is worse than an absent one** (`0.2.17`), and a backup tool's
   README is a safety surface: an aspirational feature list is a way to lose data (`0.1.0`).
-- **`PLAN.md` corrects in place and keeps the superseded text**; its section numbers are permanent
-  anchors. This file does the opposite: it is rewritten as the project moves, and history is
-  `git log`.
+- **This file is rewritten as the project moves, and history is `git log`.** `PLAN.md` took the
+  opposite approach — correct in place, keep every superseded passage — and reached 2,659 lines;
+  its full text is `git show 366a984:PLAN.md`. Keep a correction only where the mistake is the
+  lesson, and then put the lesson in §5.
+
+---
+
+## 6. Design record — why it is shaped this way
+
+**Folded in from `PLAN.md` in `0.2.46`.** That file was the pre-code handoff, then the design
+record: the reasoning, every rejected alternative, and the measurements against rustic behind
+§3a. It is distilled here rather than kept alongside, because a second document holding the same
+facts is how one of them goes stale (§5.7) and the sibling repos keep this kind of material in
+`NOTES.md` too. The full original, with every superseded passage kept inline, is:
+
+```bash
+git show 366a984:PLAN.md
+```
+
+**Decisions that move the delegation boundary, reverse a non-goal or add a platform are written
+here before the code** — the precedent the hostname, Windows, retry, next-run and retention
+decisions set (§6.6, §6.10, §6.11, §6.9).
+
+Old citations map to this section as follows; anything else in `PLAN.md` (the scaffolding notes,
+the environment census, the original milestone specs) is history and lives only in git.
+
+| `PLAN.md` | here |
+|---|---|
+| Part 1, Part 3, §2.1–§2.4 | §6.1 |
+| Part 4 (schema and rules) | §6.2 |
+| §4.1 | §6.3 |
+| Part 4 (verification ladder) | §6.4 |
+| §5.1–§5.4, §5.6, §5.8 | §6.5 |
+| §5.7, §5.9, §7.1, §7.2 | §6.6 |
+| §5.5, §7.3–§7.5 | §6.7 |
+| §7.6 | §6.8 |
+| §5.12, §7.7, §7.8, §7.14 | §6.9 |
+| §5.10, §7.9, §7.13 | §6.10 |
+| §5.11, §7.10, §7.12 | §6.11 |
+| §7.11 | §6.12 |
+
+### 6.1 Why a scheduler, and not a port or a wrapper
+
+The request began as *"rewrite resticprofile in Rust"*. Two findings changed its shape.
+
+**A faithful port is neither tractable nor desirable.** resticprofile is ~30k lines plus ~27k of
+tests, and config compatibility would mean reimplementing three Go libraries before any backup
+logic: viper/mapstructure (whose untyped merge *is* profile inheritance), Go `text/template` (the
+whole file is rendered before parsing, per profile, with 22 custom functions), and HCL v1.
+
+**rustic already owns most of what a wrapper would provide** — profiles (`-P`), hooks at four
+levels, env, metrics and OpenTelemetry, snapshot filters, named snapshot sets. And
+`rustic_scheduler` exists but is client/server with an always-on central server, wrong for seven
+intermittently-online personal machines. **The unfilled gap is local, per-machine OS-level
+scheduling for rustic, with per-host variation and no central server.** Everything else is
+delegated.
+
+**The four silent bugs that motivated "validate loudly at load time"**, all in the predecessor's
+live setup:
+
+| symptom | root cause |
+|---|---|
+| retention matched **zero** snapshots for months | `backup.source` was copied into retention's `--path` filters, and restic requires a snapshot to contain **all** listed paths |
+| retention never ran; **2810 snapshots** under a policy capping ~49/host | two absent sources made restic exit 3, treated as failure, aborting before retention |
+| config failed with `missing value for if` | the file is templated before YAML parsing, so a `{{ if }}` in a `#` comment still compiles |
+| `.Env` scanning silently disabled | a raw-YAML pre-scan could not read structural template blocks |
+
+Plus a `gcs:` block with `connections: 10` that never took effect — maps were silently dropped
+from flag construction — which is the single best argument for **unknown keys being a hard error**.
+
+**No shell, ever.** resticprofile flattens every argument into one `sh -c` string, which is the
+entire reason for its 8-variant argument-type matrix and ~2,700 lines of quoting code and tests.
+Direct `std::process::Command` with an argv deletes that class of bug; what remains is masking
+secrets in *log output*. (The guarantee is weaker on Windows, which has no argv — §6.10.)
+
+**Rejected, and why:**
+
+| rejected | why |
+|---|---|
+| full resticprofile config compatibility | viper, `text/template` and HCL first — most of the project before any backup logic |
+| reading the existing `profiles.yaml` | inherits the implicit coupling behind three of the four bugs |
+| a `migrate` subcommand | rustic's config is small enough to hand-write once per fleet |
+| restic as a backend; vendoring `restic/commands.json` | needs a flag catalog generated by *their* Go tool — a dependency on resticprofile |
+| resticprofile's `--dry-run` as a golden oracle | the same independence leak; allowed only as a one-off cross-check |
+| `rustic_scheduler` | always-on central server; early-stage and stale |
+| contributing to `rustic-backup` | abandoned since 2020 |
+
+**Non-goals:** reading resticprofile config; `crond`; groups; **restore** (use rustic directly — a
+layer between the operator and their data at the moment they least want one); hooks and metrics
+(rustic has them); templating "in any form, including a 'just one small conditional' escape
+hatch". **No compatibility
+promises** with resticprofile; the name is a lineage marker. Windows was a non-goal until
+2026-08-06 (§6.10).
+
+### 6.2 The config schema's rules
+
+`jobs.yaml` is small and job-oriented because rustic holds the backup detail. Each rule closes an
+observed failure mode:
+
+- **`enabled-on-hosts` removes the job entirely** on other hosts rather than rendering a schedule
+  to the empty string, which is what the template gate it replaced did. Host matching accepts the
+  short form for a dotted host; exact-only would make a reasonable config silently never run.
+- **Parse first, interpolate second** (§2), and **interpolation is not a language**: a closed set
+  of variables, `$${` for a literal, no conditionals, functions or loops.
+- **Every emitted `--name` is checked against `rustic.toml`** (§6.6), and **a job whose sets all
+  resolve away on a host is an error**, never an empty run. Doing nothing must be something the
+  config *says*, not something it *becomes* — hence `enabled-on-hosts: []` is refused too.
+- **Names are validated as declared, not as resolved**, so a typo behind another machine's gate is
+  caught everywhere rather than only on the one host nobody runs `--check` on.
+- **A set name may not start with `-`**: each becomes its own argv element, so a set called
+  `--password` would be argument injection by config.
+- **Validation is batched**: every violation at once, exit 2, before anything spawns. Exit 2 keeps
+  "config is wrong" distinct from "backup failed" (1).
+
+### 6.3 Secrets
+
+**rusticprofile holds no secrets and has no secret configuration.** rustic offers three shapes for
+each — a value, a file, a command — and the command form is the one to prefer, because **rustic
+spawns it itself**: the secret never enters this process's memory, argv or environment, so there
+is nothing for redaction to get wrong. Verified 2026-07-31: a `password-command` in `[repository]`
+works, and a *wrong* password fails, so its output is genuinely used.
+
+Two hard rules: **never emit `--password`, `--key` or any secret-bearing value into an argv** (a
+process list is world-readable) — asserted over every built argv; and no shell.
+
+**On secret managers**, the question for this fleet is whether a store works **unattended**:
+
+- **gnome-keyring via `secret-tool`** — local, no network; fits a *user* timer once the keyring is
+  unlocked at login, not a system unit. Linux only; Windows' equivalent is Credential
+  Manager/DPAPI, whose master keys are themselves excluded from the backup — so a DPAPI-sealed
+  secret is unrecoverable from it by construction.
+- **Proton Pass `pass-cli` — rejected for the scheduled path.** The PAT has to live somewhere
+  machine-readable, which relocates the secret, and it puts a network round-trip and a session
+  expiry in front of every backup. Fine for interactive use and possibly for human recovery.
+- **The GCP key stays a plain `0600` file**, because opendal wants a *path*; sourcing it from a
+  manager would materialise plaintext JSON to a temp file every run. Whether rustic accepts
+  opendal's inline `credential` option through `[repository.options]` is **unverified**.
+
+A per-platform answer costs nothing architecturally: `password-command` lives in `rustic.toml`,
+which is generated per host anyway (§6.6).
+
+### 6.4 The verification ladder
+
+Strictly ordered against the live shared repository; each rung provably safe before the next:
+
+| # | action | risk |
+|---|---|---|
+| 1 | `plan --format lines` — inspect the argv | none |
+| 2 | `--rustic-binary <shim>` — a recording stand-in, exits 0 | none; rustic never runs |
+| 3 | read-only rustic: `snapshots`, `repoinfo`, `check` | none |
+| 4 | `run --dry-run` | none; writes nothing |
+| 5 | `forget --dry-run` scoped to this host, diffed against the predecessor's | none |
+| 6 | the full write path against a throwaway local repository | isolated |
+| 7 | a real backup — additive | one extra snapshot |
+| 8 | a real `forget`, prune disabled, from the smallest active host | first irreversible step |
+| 9 | fleet rollout | as documented |
+
+Rung 5 found that the predecessor's hand-run `forget` was **not host-scoped**: it would have
+removed 337 snapshots belonging to other machines. Rungs 7 and 8 were verified from the
+repository (counts +3 and −3 exactly, pack count unchanged, every other host untouched). Rung 9
+stands at five of seven; the remaining two are the control group (§4.3).
+
+### 6.5 rustic: repository access, exit codes and output
+
+Measured 2026-07-30 against rustic 0.11.3.
+
+- **`opendal:gcs`, not `gs:…`.** Only four schemes exist — `local`, `rclone`, `rest`, `opendal` —
+  with no restic aliases. Service parameters come only from `[repository.options]` or `OPENDAL_*`
+  variables; **there is no `-o` flag**. So repository access has to be rustic's own config, which
+  validates the delegation model. rustic reads the restic-written repository fine.
+- **Exit codes are coarse:** 0 for success, **1 for everything else** — a nonexistent source, all
+  sources missing, a wrong password, a missing repository. No warning tier, unlike restic.
+- **`backup` does not chain `forget`** (only `forget --prune` chains prune), so sequencing is ours.
+  `--dry-run` exists on `backup`, `forget` and `prune`, which is what makes the ladder viable.
+- **`backup --json` puts snapshot objects on stdout and diagnostics on stderr**, so *requested-name
+  count vs. objects on stdout* is the classification input — the exit code only says "not
+  everything worked". Two traps: the objects are **concatenated pretty-printed JSON with no
+  separator** (a `grep -c '^{'` returns 1 for two snapshots — measured), and `program_version`
+  inside them does not report the binary (`0.12.0` from a 0.11.3 binary).
+
+| backup with `--name` … | exit | snapshot objects |
+|---|---|---|
+| one good set | 0 | 1 |
+| one good, one broken | **1** | **1** — partial |
+| only broken | 1 | 0 |
+| wrong password | 1 | 0 |
+
+### 6.6 Missing sources, unknown names, unexpanded paths
+
+**rustic is stricter than restic on a missing source.** restic warns, backs up the rest and exits
+3; rustic creates **no snapshot at all** for that set and exits 1, with no option to tolerate it.
+The fleet has paths present on some hosts and absent on others, so this decided whether
+rusticprofile owns any part of the source list.
+
+**Settled 2026-07-30: option B, named snapshot sets selected per host.** `rustic.toml` keeps every
+source; rusticprofile only chooses which named `[[backup.snapshots]]` sets run here. Option A
+(per-host `rustic.toml` listing only present paths) scattered the source list across seven files;
+option C (rusticprofile passing paths on the CLI) would have had it own sources while rustic owns
+excludes and policy — a split with no justification once B worked. Measured, B's isolation holds:
+one broken set does not abort the others (`1 of 2` saved, exit 1).
+
+| invocation | exit | result |
+|---|---|---|
+| `--name core` | 0 | only that set |
+| `--name core --name extra` | 0 | both — the flag is repeatable |
+| `--name nosuch` alone | 1 | `no backup source given` |
+| **`--name core --name nosuch`** | **0** | **`core` ran; the unknown name silently ignored** |
+
+The last row is why **every emitted `--name` is validated against `rustic.toml` at load time**:
+otherwise a renamed set backs up less than intended, forever, with a green run. Also carried by
+the shipped example: **an exclusion glob needs its leading `!`** — a bare pattern is an *include*
+filter, so `--glob .cache` produces a snapshot containing only the cache (`config --example
+rustic` has the full note).
+
+**rustic expands nothing in paths (2026-08-02).** `~/…`, `$HOME/…` and `${HOME}/…` in `sources`
+are not expanded, `filter-hosts = ["$HOSTNAME"]` is a literal matching zero snapshots, and no
+`RUSTIC_FILTER_*` variable is read. Worse, an unexpanded path is *relative* to rustic, so it
+**skips** the missing-source hard failure:
+
+```text
+$HOME/Sync            -> [WARN] ignoring error … processed 0 files, snapshot saved, exit 0
+/definitely/not/here  -> [ERROR] error sanitizing source … exit 1
+```
+
+A "portable" config therefore produces a real, successful **0-byte snapshot**, which then wins its
+retention slot (§6.7). Hence `check_sources_are_expanded`. Consequences: **one `rustic.toml`
+cannot be shared across hosts** and must be generated per host; **`jobs.yaml` needs no templating
+at all**; and rusticprofile's own paths must not vary by OS either — hence XDG everywhere
+(`0.1.25`).
+
+**Reversed 2026-08-04: rusticprofile owns the recorded hostname (`0.1.34`).** Left to itself rustic
+records the OS hostname — `foo` on Linux, **`foo.local`** on macOS — so one repository carried two
+naming conventions forever. An earlier opt-in pin was rejected because a new macOS user still got
+`.local`. **Measured: for `--host` and `--filter-host` the CLI overrides the config file**, so the
+answer stops depending on any file. `backup` gets `--host`, `forget`/`prune` get `--filter-host`,
+and the `snapshots` passthrough gets nothing, because `--filter-host` is repeatable and *unions* —
+an injected one would widen a caller's own filter. `defaults.hostname` is `short` (default),
+`full`, or `rustic`; the escape hatch exists for two data-integrity cases, not taste — **changing
+the recorded name splits an existing repository's retention groups**, and **short names collide
+across domains** (`web1.prod`/`web1.staging`). `config --check` shows the recorded name whenever it
+differs from the OS's. The earlier rejection ("the home path needs templating regardless, so it
+buys nothing") measured the change against saving a template, when what mattered was what a user
+gets with no configuration at all.
+
+### 6.7 Retention grouping, and the second authority
+
+**Scoping filters under `[forget]` are accepted and ignored**, and `[forget]` rejects no unknown
+keys, so a config can look scoped and filter nothing; they work under `[snapshot-filter]`.
+`--group-by` defaults to `host,label,paths` — the fragmentation that let 2810 snapshots survive —
+and `--filter-paths` matches supersets, the same "must contain all these paths" trap.
+
+**Named sets need label-based grouping (2026-08-01, §3a invariant 1).** With `group-by = "host"`,
+a dry run kept this:
+
+| snapshot | written | verdict |
+|---|---|---|
+| `nushell` — **0 bytes** | 13:16:24 | **keep** |
+| `gnupg` | 13:16:23 | remove |
+| `core` — **6,256 files** | 13:16:22 | remove |
+
+The empty set won because it finished last. `group-by = "host,label"` with a stable `label` per
+set fixes it; label rather than paths, because a renamed source mints a new path group.
+
+**A near-miss (2026-08-01):** a scripted edit matched `[forget]` inside a comment and deleted
+`[snapshot-filter]`. It failed to parse, which was luck — but reconstructing it so it *does*
+parse makes `config --check` refuse, naming the missing filter, which was not luck.
+
+**A second tool's retention (§3a invariant 2).** The predecessor's `retention` block had
+`host: true` but `group-by: "host"` with `path`/`tag` off, so every snapshot on the host shared
+one group, and `keep-hourly: 24` kept the newest per hour. One pass removed a **395.591 MiB**
+`core` snapshot and kept a 0-byte one written a second later. It ran both ways: our correctly
+grouped `forget` deleted one of its 397.9 MiB snapshots, because an unlabelled foreign snapshot is
+just another member of the empty-label group. Both configurations were defensible alone.
+`rusticprofile` emits no retention flags, so it cannot see this from inside — hence `doctor`
+(§6.12) and the cutover ordering in §3a.
+
+### 6.8 Locks and prune (§3a invariant 3)
+
+**A restic lock is an object inside the repository**, under `locks/`, so every machine sharing an
+object-store repository sees it. `restic backup` takes a *shared* lock; only exclusive operations
+refuse. **rustic 0.11.3 writes no lock object and checks for none.** Measured with a backup frozen
+by `SIGSTOP`:
+
+| step | result |
+|---|---|
+| control: `restic prune` with a restic lock held | **refused**, naming the holder |
+| rustic backup frozen mid-write — locks in the repository | **0** |
+| `restic prune` meanwhile | **proceeded**: 14 packs, 487.780 MiB deleted |
+| rustic finishes; `restic check --read-data` | **repository damaged** — 5 data packs missing |
+
+The first control was wrong in a useful way: a second `restic backup` was expected to be refused,
+succeeded (shared lock), and briefly read as evidence restic does not lock either. **Test exclusion
+with an operation that actually excludes.**
+
+**Corrected the same day, and the correction is the lesson.** rustic is lock-free *by design* —
+its FAQ says so, and warns only against running prune with restic and rustic at the same time.
+Prune is **two-phase**: it marks packs and deletes them after `--keep-delete` (23 h). Verified: a
+default `rustic prune` reported `to delete: 3 packs` and removed none; `--instant-delete` removed
+all three. So the unsafe case is one row of the matrix in §3a, not a property of rustic, and
+**finishing the migration is the fix**. Prune returned to the prune host as a `rustic prune`; M4
+is defence in depth. **If M4 is ever built**, it must write restic's own `locks/` format, since
+coordinating only rusticprofile instances would leave the predecessor and hand-run `restic`
+outside it.
+
+### 6.9 What the tool may construct: examples, passthroughs, the retention view
+
+**`config --example <jobs|rustic>` ships the findings as a config** (§3a invariant 5). To stdout,
+never written — the file it would overwrite is what stands between a fleet and its backups. A flag
+on `config`, not an `init` verb. **Static placeholders** (`host-a`, `/home/user`): a config that
+runs as-is is one nobody reads, and nothing is substituted, so it stays outside the templating
+non-goal. Both examples are put through the real binary so they cannot drift from the validator.
+
+**`snapshots` is a read-only passthrough** (§3a invariant 4). The value added is profile
+resolution, not a capability: `rustic -P <resolved> snapshots` plus whatever the caller appends,
+exit code passed straight through, stdout inherited. It is not an `Operation`, because that enum
+is what a job may *schedule*. **The line: a passthrough is acceptable only where it is read-only
+and adds no flags** — `check` would qualify; `forget`, `prune` and `restore` never do.
+
+**`rustic forget --dry-run` already computes which snapshot holds each retention slot** — it
+carries restic's `Action`/`Reason` columns — so "which snapshot is my newest monthly" is a
+rendering problem, not a retention one: **rustic decides, rusticprofile displays.** Measured
+(2026-08-13):
+
+| measured | consequence |
+|---|---|
+| `forget --json` is `[{group_key, items: [{snapshot, keep, reasons}]}]` — **`items`**, while `snapshots --json` uses `snapshots` | a parser written from one shape reads zero from the other; hence a distinct `NoItems` error |
+| a dry-run `forget` leaves the repository **byte-identical**, hashed file by file | safe against production (ladder rung 5) |
+| rustic **refuses** a `forget` with no keep rule; **`keep-delete` alone does not count** | a profile with no policy cannot mass-delete; `keep-pack` not measured |
+| with `--json`, no human table is printed (it goes to stderr otherwise) | one rendering, not two |
+
+**`retention` is therefore a constructed command, not a passthrough** — it adds `--dry-run` and
+`--json` — and the one thing that must be impossible is a `forget` without `--dry-run`:
+`retention_argv` calls the scheduled `forget`'s own `build_argv` with `dry_run: true` hardcoded.
+It emits `--filter-host` because the real `forget` does. Reason strings pass through **verbatim**
+(23 `keep-*` options, including `quarter-yearly` and twelve `within-*`). The first design reported
+each period's *newest* holder, which is always the group's newest snapshot — twenty true lines
+naming four snapshots — and was redesigned before release around what the user actually needed:
+**restore-hunting**. It now shows how far back each resolution reaches, plus `--near DATE`.
+The exact "newest snapshot at or before D" query is **not** built, because rustic has it:
+`snapshots --filter-before`, pinned with `--group-by host,label` or it returns one row per source
+list. **`config --show` gained the delegated profile's block** rather than a new `show` verb,
+because a second command answering an overlapping question is how a copy goes stale.
+
+### 6.10 Windows (settled 2026-08-06)
+
+**The development machine was reinstalled to Windows**, so the platform with no support became the
+one the work was done on and released from. In scope: building and running there, and a **Task
+Scheduler** backend. Out: `crond`, restic as a backend, and **WSL as the answer** — a tool that
+protects only a Linux filesystem inside the machine is not protecting the machine.
+
+- **No `flock`**: a lock file opened with `share_mode(0)` — the open *is* the exclusion, released
+  by the kernel when the handle closes. `LockFileEx` locks byte ranges in a still-openable file.
+- **No signals**, and interactively none are needed: `Ctrl+C` reaches every process on the
+  console. A *scheduled* run needs a job object with `KILL_ON_JOB_CLOSE`, or ending the task
+  orphans rustic.
+- **`%COMPUTERNAME%` is a trap** (§5.4); `GetComputerNameExW` is why `windows-sys` is a dependency.
+- **XDG paths on Windows too**, for the same fleet-portability reason as macOS.
+- **§6.1's no-shell guarantee is weaker here**: Windows passes one command line that the child
+  re-parses, so byte-for-byte delivery holds *for this child*, not structurally. The honest place
+  to assert it is `tests/cli_tests.rs` (§4.1).
+- **`nix` compiles on Windows as an empty crate**, so every use site fails with `could not find
+  sys in nix`, which reads like a feature-flag mistake; it lives under `cfg(unix)` dependencies.
+
+The Task Scheduler findings (a past boundary runs on registration, the console window,
+`RestartOnFailure`, locale-formatted next run) are in §5.4.
+
+**`next run` is asked for locale-free (settled 2026-08-12).** Parsing `schtasks`'s string stays
+rejected — `8/12/2026` succeeds as two dates — and computing the next fire ourselves would invent a
+fact the scheduler may disagree with. So `status` asks `Get-ScheduledTaskInfo` through Windows
+PowerShell 5.1 (in-box, `-NoProfile -NonInteractive`, spawned only when `schtasks` reported a next
+run), renders it with the shared `human_time`, and falls back to `schtasks`'s verbatim string on
+any failure. The line carries `(±5 min)` because `RandomDelay` re-rolls per query, on this backend
+only. `status --json`'s `next_run` is untouched: fields may be added, never redefined (`0.1.23`).
+
+### 6.11 The resume race, and the retry
+
+**On Windows (2026-08-10)**, every run fired by a resume from Modern Standby failed within ~0.2 s —
+four of ten in a day — because `StartWhenAvailable` replays the missed hour seconds after wake,
+before the network is back. No backup was lost, but `forget` was skipped each time. Task
+Scheduler's own retry cannot help (§5.4), so **a detached run (`--background`) retries a failed
+operation twice more at two-minute intervals**. Four constraints shape it: **detached runs only**
+(a person watching a failure must not wait four minutes); **no new `jobs.yaml` key** (a shared
+config is only as new as its oldest reader); **`run_job`'s signature unchanged** (a process-global,
+not a public parameter); **only a plain `Failure`** is retried — never `Interrupted`, `Partial` or a
+dry run. It does not tell transient from permanent (rustic exits 1 for both), so a wrong password
+fails three times; the next scheduled run remains the backstop. This reversed the earlier "the
+next hourly run is the retry", whose premise — a failed run on an otherwise-awake machine — did not
+hold on a laptop asleep at most calendar times.
+
+**On systemd (2026-08-11)**, measured with probe timers and then real suspends:
+
+| | result |
+|---|---|
+| arm a timer with no stamp file | **never fires** — no run-on-registration bug here |
+| missed elapse, `RandomizedDelaySec` 0 / 300 s / **3600 s** | fires in 5 / 14 / **5 ms** — the spread does not apply |
+| two real resumes, no retry | catch-up in the **same second** as `PM: suspend exit`; network usable **11 s and 12 s** later; both failed on DNS, `forget` skipped |
+| a third resume, with the retry | failed at once, network up at +11 s, **the +2 min retry saved 3 of 3 sets and `forget` ran** |
+
+**Settled: the retry extends to systemd, gated on `--background`, which `schedule` emits.** A
+working wait-for-network would cost ~11 s instead of ~2 min, but it fixes only a network cause
+(not a slow mount or a locked keyring), there is no user-level `network-online.target` to build it
+from, and gating on connectivity adds a silent skip for a *local* repository — the reason
+`RunOnlyIfNetworkAvailable` was rejected on Windows. The gate is the flag because
+`INVOCATION_ID`/`JOURNAL_STREAM` are set in an ordinary terminal (§5.4). `--background` on Unix
+touches no stdio, so rustic's stderr still reaches the journal. **launchd is not included**:
+plausible, unmeasured. And no existing host gets any of this by upgrading — the unit must be
+re-generated (§4.1).
+
+### 6.12 `doctor` — what it checks, and what it refuses to
+
+Written after building it, because two decisions were forced by measuring the live repository.
+
+| # | check | outcome |
+|---|---|---|
+| 1 | retention authority | **built**, behind `--repository` — with a different predicate than first specified |
+| 2 | lock authority — a live restic prune schedule | **built**, always — narrower than first specified |
+| 4 | the profile's credential files exist | **built**, always |
+| 3 | a stale chezmoi checkout | **rejected** |
+
+- **Check 1:** the specified "mix of labelled and unlabelled" is true of *every* migrated host for
+  about two years (its restic-era history), so it would always be red. **Shipped predicate: an
+  unlabelled snapshot newer than the oldest labelled one** — after a clean cutover every
+  unlabelled snapshot precedes every labelled one; live writers interleave. A host with no
+  labelled snapshots is un-migrated, not in conflict.
+- **Check 2 is "on this host", not fleet-wide**: rusticprofile has no inventory and no remote
+  access, by design. An installed-but-disabled predecessor unit is `ok` and still listed, because
+  one `systemctl enable` re-arms the unsafe combination.
+- **Check 3 is rejected on layering**: it would shell out to `git` and `chezmoi` to audit another
+  tool's state, and no-op on any host without chezmoi. The risk is real and left openly unguarded.
+- **Also rejected:** pack accounting for our own prune (`doctor` is stateless, with nowhere to keep
+  a baseline), and secret-file *permissions* (no single meaning across platforms).
+- **The third severity:** `ok`, `warn`, **`unknown`**. A check that could not run must not say
+  `ok`; `unknown` does not set the exit code. Exit 3 means "something warned", distinct from 2.

@@ -7,7 +7,7 @@
 //! nothing about whether the backup succeeded. That distinction matters here more than
 //! usual, because rustic exits `1` for everything that is not a clean success — wrong
 //! password, missing repository, and a backup where some snapshots saved and some failed
-//! all look identical from the exit code alone (`PLAN.md` §5.3, §7.2).
+//! all look identical from the exit code alone (`NOTES.md` §6.5, §6.6).
 //!
 //! Turning this into a verdict is `rustic/exit.rs`'s job in M1 step 5, and it needs the
 //! captured stdout to do it.

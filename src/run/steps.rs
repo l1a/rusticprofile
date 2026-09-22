@@ -28,7 +28,7 @@ static RETRY_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
 /// How long to wait between attempts.
 ///
 /// Two minutes, twice, so a job gives up after about four. It is sized against what it exists to
-/// cover — a network that is not up yet in the seconds after a resume (`PLAN.md` §7.10) — not
+/// cover — a network that is not up yet in the seconds after a resume (`NOTES.md` §6.11) — not
 /// against a network that is genuinely down, which the next scheduled run remains the answer to.
 /// A fixed constant rather than a configurable one: `jobs.yaml` is shared fleet-wide and a new
 /// key stops every host still running an older binary (`NOTES.md` `0.1.24`).
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn the_wait_is_sized_for_a_resume_not_for_an_outage() {
         // Two attempts two minutes apart gives up after about four, well inside the hour the
-        // next scheduled run is still the backstop for (`PLAN.md` §7.10). A delay that grew past
+        // next scheduled run is still the backstop for (`NOTES.md` §6.11). A delay that grew past
         // the interval would let a retry collide with its own successor.
         assert_eq!(RETRY_DELAY, Duration::from_secs(120));
         assert!(RETRY_DELAY.as_secs() * 2 < 3600);

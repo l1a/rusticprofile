@@ -7,7 +7,7 @@
 //!
 //! rusticprofile writes a `label` on every snapshot set; the predecessor writes none. So
 //! *"which tool wrote this snapshot"* is a fact recorded in the repository rather than an
-//! inference from a timer — which is what makes this checkable at all (`PLAN.md` §7.5).
+//! inference from a timer — which is what makes this checkable at all (`NOTES.md` §6.7).
 //!
 //! The recorded specification said: **warn when one host's snapshots carry a mix of
 //! labelled and unlabelled entries.** Measured against the live repository, that is a false
@@ -48,7 +48,7 @@
 //! across seven machines, and `rustic snapshots --json` through this host's profile returns
 //! 122, for one host.
 //!
-//! That is the right behaviour, not a limitation to route around. `PLAN.md` §7.8 records
+//! That is the right behaviour, not a limitation to route around. `NOTES.md` §6.9 records
 //! that `--filter-host` **unions rather than overrides**, so injecting one here could only
 //! ever *widen* what the profile selects — silently discarding a scope the user configured,
 //! against a repository where an unscoped operation is the documented way to sweep up 337
@@ -215,7 +215,7 @@ pub fn classify(verdicts: &[HostVerdict]) -> Finding {
             })
             .chain(std::iter::once(
                 "two tools running `forget` on one host sweep each other's snapshots into one \
-                 bucket; measured to keep a 0-byte snapshot and delete a 395 MiB one (PLAN.md §7.5)"
+                 bucket; measured to keep a 0-byte snapshot and delete a 395 MiB one (NOTES.md §6.7)"
                     .to_string(),
             ))
             .collect(),

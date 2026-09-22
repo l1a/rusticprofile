@@ -28,7 +28,7 @@
 //!   job that resolves to no work on a host is an error unless it was explicitly gated
 //!   off for that host.
 //!
-//! Full design, and the reasoning and measurements behind it, in `PLAN.md`.
+//! Full design, and the reasoning and measurements behind it, in `NOTES.md` §6.
 //!
 //! ## Module index
 //!

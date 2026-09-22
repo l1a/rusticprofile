@@ -6,7 +6,7 @@
 //! **rusticprofile does not manage the environment.** The child inherits the parent's,
 //! unmodified — rusticprofile sets nothing, unsets nothing and rewrites nothing. Repository
 //! access is configured in rustic's own config and in `OPENDAL_*` / `RUSTIC_*` variables,
-//! and that is rustic's business (`PLAN.md` §4.1).
+//! and that is rustic's business (`NOTES.md` §6.3).
 //!
 //! This module exists purely so a human can *see* the subset that will affect the run.
 //! Printing the whole environment would bury the six variables that matter under a hundred

@@ -28,13 +28,13 @@
 //!
 //! **What is worse: there is no argv.** `<Arguments>` is a single string the target re-parses,
 //! so this is the one place in the crate that has to *compose* a command line — the thing
-//! `PLAN.md` §2.3 says never to do. It is unavoidable: the OS API takes a string. Two things
+//! `NOTES.md` §6.1 says never to do. It is unavoidable: the OS API takes a string. Two things
 //! make it safe rather than merely tolerable, and both are worth knowing before editing
 //! [`quote_argument`]:
 //!
 //! 1. **The child is our own binary.** The command line is parsed back by `rusticprofile.exe`,
 //!    a Rust program using the standard MSVCRT rules that [`quote_argument`] implements. The
-//!    §5.10 caveat about the round trip depending on the child's parser does not apply when we
+//!    §6.10 caveat about the round trip depending on the child's parser does not apply when we
 //!    are the child.
 //! 2. **No shell is involved.** `<Exec>` is `CreateProcess`, not `cmd /c`, so nothing expands
 //!    `%VAR%`, globs, or treats `&` as a separator.
@@ -64,15 +64,15 @@
 //!   failure perfectly well. Gating on the OS's idea of connectivity would add a silent skip.
 //! - **`RestartOnFailure`** — and this one is absent because it *cannot* do the job it appears to
 //!   offer, which is worth stating rather than leaving for the next person to rediscover.
-//!   Measured on Windows 11 (`PLAN.md` §5.10): it restarts a task that **failed to launch** — a
+//!   Measured on Windows 11 (`NOTES.md` §6.10): it restarts a task that **failed to launch** — a
 //!   probe whose command did not exist got its full `Count` of restarts, reporting `0x80070002` —
 //!   and does **nothing** for an action that ran and exited non-zero, whether the run was
 //!   trigger-fired or on demand. rustic exiting 1 because it cannot reach the repository is a
 //!   perfectly successful launch, so this setting would be inert for every failure this project
 //!   can have. Retrying such a run belongs in the runner, which is the only thing that knows it
-//!   failed; see `PLAN.md` §7.10 and [`crate::run::retry_failed_operations`].
+//!   failed; see `NOTES.md` §6.11 and [`crate::run::retry_failed_operations`].
 //! - **A start-on-register flag.** Nothing here runs the task at registration time: adding a
-//!   writer to a shared repository as a side effect of scheduling one is what `PLAN.md` §7.5
+//!   writer to a shared repository as a side effect of scheduling one is what `NOTES.md` §6.7
 //!   forbids, and it is why launchd's `RunAtLoad` is absent too.
 //! - **`<UserId>` for a user task.** It would bake this host's account name into the file for
 //!   no gain — `schtasks /Create` registers as the invoking user by default. The system task
@@ -225,7 +225,7 @@ fn start_boundary(hour: u8, offset: Offset) -> String {
 /// The obvious construction for "every hour" is a daily trigger with
 /// `<Repetition><Interval>PT1H</Interval></Repetition>`. **It runs the task the moment it is
 /// registered**, which for this tool means `schedule` takes a backup *and runs `forget`* as a
-/// side effect — precisely what `PLAN.md` §7.5 forbids and what the absence of launchd's
+/// side effect — precisely what `NOTES.md` §6.7 forbids and what the absence of launchd's
 /// `RunAtLoad` exists to prevent. It was caught by registering a real task and reading
 /// `Last Run Time` back, not by reasoning about the schema.
 ///
@@ -439,7 +439,7 @@ pub fn task_xml(job: &Job, schedule: &Schedule, offset: Offset, ctx: &UnitContex
 /// in which case a fresh offset is chosen and the task legitimately changes.
 ///
 /// Parses only the shape [`task_xml`] writes, deliberately: this is not an XML parser, and
-/// treating it as one invites the structural-edit-by-string-matching mistake in `PLAN.md` §7.4.
+/// treating it as one invites the structural-edit-by-string-matching mistake in `NOTES.md` §6.7.
 pub fn installed_offset(xml: &str, at: At) -> Option<Offset> {
     let boundary = xml
         .split("<StartBoundary>")
@@ -578,7 +578,7 @@ mod tests {
         // **The most important assertion in this file.** A repeating trigger with a boundary in
         // the past is treated as currently due and runs the moment the task is registered —
         // measured — which would make `schedule` take a backup and run `forget` as a side
-        // effect, the thing PLAN.md 7.5 forbids. 24 plain triggers do not.
+        // effect, the thing NOTES.md §6.7 forbids. 24 plain triggers do not.
         let t = triggers(At::Hourly, Offset::within(At::Hourly, 2));
         assert!(
             !t.contains("<Repetition>"),

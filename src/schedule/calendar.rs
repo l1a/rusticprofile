@@ -3,7 +3,7 @@
 
 //! Mapping the `at:` vocabulary onto systemd calendar expressions.
 //!
-//! The vocabulary is deliberately tiny — four values, not a cron dialect. `PLAN.md` lists
+//! The vocabulary is deliberately tiny — four values, not a cron dialect. `NOTES.md` §6.1 lists
 //! templating "in any form, including a 'just one small conditional' escape hatch" as a
 //! non-goal, and an arbitrary calendar expression is the same bargain in a different
 //! costume: it moves scheduling logic out of a validated enum and into a string nobody
