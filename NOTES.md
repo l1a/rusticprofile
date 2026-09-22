@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.47)
+## Current State (v0.2.48)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -348,7 +348,8 @@ crates.io, in the AUR and in Fedora COPR.
   (§6.11). `schedule` emits the flag on systemd and Task Scheduler, not launchd. A
   hand-typed run fails immediately.
 - **Every generated unit names rustic by absolute path**, and **a unit is generated once**: an
-  upgraded binary changes no installed unit until `schedule` is re-run (§4).
+  upgraded binary changes no installed unit until `schedule` is re-run. `doctor`'s
+  `units-current` check reports a stale one (§6.12).
 - **rusticprofile owns the recorded hostname** (`defaults.hostname`: `short` by default, `full`, or
   `rustic` to defer) and prints it under `config --check` whenever it differs from the OS's.
 - **Alert on `last_success`** from `status --json`. A timer can be armed, green and firing while
@@ -370,13 +371,6 @@ goes in §5.
 
 ### 4.1 Product
 
-- [ ] **Nothing re-emits a generated unit when the binary is upgraded, and nothing notices.**
-      `0.2.16` found a host whose units predated `v0.1.10`, so its first run after every boot had
-      failed for eight days while `status` said `active`. Squarely inside the delegation boundary —
-      the unit is this tool's own artefact — so a `doctor` check comparing the installed unit with
-      what the current binary would generate needs no other tool. The manual form already exists:
-      `schedule -n <job> --write-only --unit-dir <tmp>` and diff. §6.12's reasoning for
-      rejecting the stale-checkout check does **not** transfer, so this wants its own decision.
 - [ ] **Nothing reports that the AUR has fallen behind**, and it is the only channel that drifts by
       construction: `.SRCINFO` needs podman, so the AUR step needs a Linux host, and it gets
       skipped by default rather than by decision. Not a `just check` item — that would put a
@@ -495,7 +489,9 @@ The version in brackets names the release entry with the full story (`git show 3
   shape production produces.**
 - **Watch every guard fail before trusting it** (`0.2.17`), from a clean baseline asserted first
   (`0.2.38`), and **assert the sabotage applied**: a `str.replace` that matched nothing once made a
-  "sabotaged" run pass and read as evidence (`0.2.39`). A guard that rendered its own input with the
+  "sabotaged" run pass and read as evidence (`0.2.39`); another matched the *first* occurrence of
+  `--background` — inside a comment — so a test of a directive change made a comment-only change
+  and the check correctly passed it (`0.2.48`). A guard that rendered its own input with the
   very constant it verified could not fail at all; the fix was deleting the duplication — one
   `STAMP_FORMAT` — not a better test (`0.2.20`).
 - **Nothing is not green.** An empty CI rollup is not a pass (`0.2.1`); a check that could not run
@@ -1199,6 +1195,7 @@ Written after building it, because two decisions were forced by measuring the li
 | 1 | retention authority | **built**, behind `--repository` — with a different predicate than first specified |
 | 2 | lock authority — a live restic prune schedule | **built**, always — narrower than first specified |
 | 4 | the profile's credential files exist | **built**, always |
+| 5 | an installed unit is what this binary would write | **built**, always (`0.2.48`) |
 | 3 | a stale chezmoi checkout | **rejected** |
 
 - **Check 1:** the specified "mix of labelled and unlabelled" is true of *every* migrated host for
@@ -1211,6 +1208,19 @@ Written after building it, because two decisions were forced by measuring the li
   one `systemctl enable` re-arms the unsafe combination.
 - **Check 3 is rejected on layering**: it would shell out to `git` and `chezmoi` to audit another
   tool's state, and no-op on any host without chezmoi. The risk is real and left openly unguarded.
+- **Check 5, `units-current` (settled 2026-09-22, `0.2.48`):** a unit is generated once and
+  nothing re-emits it when the binary changes — the defect behind eight days of first-run-after-
+  boot failures (§5.4). Unlike check 3 this is squarely inside the boundary: the unit is this
+  tool's own artefact, and the answer needs no other tool. Decisions: **render through the
+  writers' own functions** (`install::render_*`, which `write_*` now call), so the check cannot
+  drift from what `schedule` produces; **reuse the installed offset** for launchd and Task
+  Scheduler exactly as the writers do, or every comparison would differ by the spread minute;
+  **comment-only differences are `ok` with a note**, because `0.2.46` changed two comment lines
+  in every unit and a check that puts exit 3 on every upgraded host for that gets switched off;
+  any other difference is `warn` and names the lines; **`unknown` under `--as-host` or
+  `--rustic-binary`**, which change what `schedule` would write, and when rustic cannot be
+  resolved. On Task Scheduler it compares the definition file, not the registration. Reads
+  files, writes nothing, spawns nothing on systemd or launchd.
 - **Also rejected:** pack accounting for our own prune (`doctor` is stateless, with nowhere to keep
   a baseline), and secret-file *permissions* (no single meaning across platforms).
 - **The third severity:** `ok`, `warn`, **`unknown`**. A check that could not run must not say

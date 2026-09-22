@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "September 2026" "rusticprofile 0.2.47" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "September 2026" "rusticprofile 0.2.48" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -386,7 +386,7 @@ rusticprofile doctor \-\-json
 .fi
 .RE
 .PP
-Two checks always run, and both are local:
+Three checks always run, and all three are local:
 \fBlock\-authority\fP
 .RS
 .PP
@@ -400,6 +400,13 @@ This is a \fBper\-host\fP check\. It cannot see other machines, and running it o
 Whether the credential files the rustic profile names actually exist and can be opened\. The contents are never read\. A profile using \fBpassword\-command\fP reports `\f[CR]ok\fP` with nothing to check, which is the recommended configuration rather than an unverifiable one\.
 .PP
 This is pre\-flight ergonomics, not a data\-safety fix: a missing passphrase already fails loudly when a backup runs\. What it does not do is fail while anyone is watching\.
+.RE
+\fBunits\-current\fP
+.RS
+.PP
+Whether each installed unit, agent or task definition is what \fIthis\fP binary would write\. A schedule is generated once, when \fBschedule\fP arms it, and nothing re\-emits it when the binary is upgraded \-\- so a host can keep running a unit written by a much older version while \fBstatus\fP reports it `\f[CR]active\fP`\. The comparison renders the unit exactly as \fBschedule\fP would, reusing the installed offset, and reads the installed file back; it writes nothing\.
+.PP
+A difference only in comments or blank lines is `\f[CR]ok\fP`, with a note to re\-run \fBschedule\fP when convenient\. Any other difference is `\f[CR]warn\fP`, and names the lines; re\-running \fBschedule \-n\fP \fIJOB\fP rewrites the unit without triggering a run\. On Task Scheduler the comparison is against the definition file rusticprofile registered from, not the registration itself\. The check reports `\f[CR]unknown\fP` under \fB\-\-as\-host\fP or \fB\-\-rustic\-binary\fP, since either changes what \fBschedule\fP would write, and when the configured rustic cannot be resolved\.
 .RE
 .PP
 One check is opt\-in, because it is the only one that needs the network, a credential and several seconds \-\- and the only one that can fail for reasons unrelated to what it asks:

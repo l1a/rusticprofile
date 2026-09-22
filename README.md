@@ -38,7 +38,7 @@ rusticprofile retention -n dot-files --near 2026-05-15   # ...and what sits eith
 rusticprofile retention -n dot-files --all           # ...and every snapshot with its reasons, oldest first
 rusticprofile unschedule -n dot-files                # remove the units
 
-rusticprofile doctor                                 # local checks: competing prune schedule, missing secrets
+rusticprofile doctor                                 # local checks: competing prune schedule, missing secrets, stale units
 rusticprofile doctor --repository                    # ...plus: is anything else writing retention here?
 ```
 
@@ -68,7 +68,8 @@ rusticprofile owns **when** backups run, **which** jobs exist, and **on which ho
   working, since a schedule can be armed and green while every run fails
 - **`doctor`**: whether a **restic** prune schedule is still armed here (the one combination
   measured to corrupt the repository), whether the credential files the profile names exist,
-  and — with `--repository` — whether anything else has been writing retention for a host
+  whether each installed unit is what this binary would write, and — with `--repository` —
+  whether anything else has been writing retention for a host
 - **`retention`**: how far back each retention period still reaches, what a `forget` would remove,
   and — with `--near <DATE>` — which snapshots sit either side of a date and how far off they are.
   It answers the question that sends you to a backup in the first place: *I need a file from around
@@ -212,7 +213,7 @@ The XDG variables are honoured **on macOS and Windows too**, falling back to `~/
 > `jobs.yaml` is designed to be **byte-identical across a fleet**, which makes it only ever as new as the *oldest binary* reading it. Unknown keys and variables are hard errors by design, so a config using `${state_dir}` (0.1.15+) or `default-job` (0.1.20+) will not load on an older build — and that host stops backing up at its next scheduled run. **Upgrade the binaries before pushing the config.**
 
 > [!IMPORTANT]
-> **Re-run `schedule` after upgrading rusticprofile.** The installed unit, agent or task is generated once, when you arm it — nothing re-emits it when the binary changes, and `status` will keep reporting the schedule as active because it is. So an upgrade can leave you running a unit written by a much older version. This is not hypothetical: a host in this project's own fleet spent eight days failing the first run after every boot on a unit that predated 0.1.10, while every later run in the hour succeeded (`NOTES.md` §6.11). `schedule` is idempotent — it reports `unchanged` when there is nothing to do, and on systemd it does **not** trigger a run — so re-running it costs nothing.
+> **Re-run `schedule` after upgrading rusticprofile.** The installed unit, agent or task is generated once, when you arm it — nothing re-emits it when the binary changes, and `status` will keep reporting the schedule as active because it is. So an upgrade can leave you running a unit written by a much older version. This is not hypothetical: a host in this project's own fleet spent eight days failing the first run after every boot on a unit that predated 0.1.10, while every later run in the hour succeeded (`NOTES.md` §6.11). `schedule` is idempotent — it reports `unchanged` when there is nothing to do, and on systemd it does **not** trigger a run — so re-running it costs nothing. `rusticprofile doctor` reports a stale unit as `units-current`, naming the lines that differ.
 
 ## Installation
 

@@ -330,7 +330,7 @@ The argv is the whole of what rusticprofile constructs:
     rusticprofile doctor --json
     ```
 
-    Two checks always run, and both are local:
+    Three checks always run, and all three are local:
 
     **lock-authority**
     :   Whether a **restic** prune schedule is registered on this host while rustic writes the repository. `restic prune` deletes packs immediately and rustic takes no lock, which is the one combination measured to leave a repository failing `restic check`. A predecessor unit that is installed but **disabled** reports `ok` and is still listed — it is one `systemctl enable` away from mattering.
@@ -341,6 +341,11 @@ The argv is the whole of what rusticprofile constructs:
     :   Whether the credential files the rustic profile names actually exist and can be opened. The contents are never read. A profile using **password-command** reports `ok` with nothing to check, which is the recommended configuration rather than an unverifiable one.
 
         This is pre-flight ergonomics, not a data-safety fix: a missing passphrase already fails loudly when a backup runs. What it does not do is fail while anyone is watching.
+
+    **units-current**
+    :   Whether each installed unit, agent or task definition is what *this* binary would write. A schedule is generated once, when **schedule** arms it, and nothing re-emits it when the binary is upgraded — so a host can keep running a unit written by a much older version while **status** reports it `active`. The comparison renders the unit exactly as **schedule** would, reusing the installed offset, and reads the installed file back; it writes nothing.
+
+        A difference only in comments or blank lines is `ok`, with a note to re-run **schedule** when convenient. Any other difference is `warn`, and names the lines; re-running **schedule -n** *JOB* rewrites the unit without triggering a run. On Task Scheduler the comparison is against the definition file rusticprofile registered from, not the registration itself. The check reports `unknown` under **--as-host** or **--rustic-binary**, since either changes what **schedule** would write, and when the configured rustic cannot be resolved.
 
     One check is opt-in, because it is the only one that needs the network, a credential and several seconds — and the only one that can fail for reasons unrelated to what it asks:
 

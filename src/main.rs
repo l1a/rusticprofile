@@ -462,6 +462,22 @@ fn no_path_fallback_reason() -> &'static str {
 /// Resolving here moves that failure to `schedule` time, where a person is watching and can
 /// act, instead of hourly at 03:00 where it is a red unit nobody reads.
 fn resolve_rustic_binary(name: &str) -> Result<std::path::PathBuf, ExitCode> {
+    find_rustic_binary(name).map_err(|message| {
+        for (i, line) in message.lines().enumerate() {
+            if i == 0 {
+                eprintln!("{} {line}", "error:".red().bold());
+            } else {
+                eprintln!("       {line}");
+            }
+        }
+        ExitCode::from(EXIT_CONFIG_ERROR)
+    })
+}
+
+/// [`resolve_rustic_binary`] without the printing, so `doctor` can ask the same question and
+/// report the answer as a finding. One resolver, so `doctor` renders the unit with exactly the
+/// path `schedule` would bake in.
+fn find_rustic_binary(name: &str) -> Result<std::path::PathBuf, String> {
     let candidate = std::path::Path::new(name);
 
     // An absolute path was configured deliberately; take it as given, but say so if it is
@@ -470,12 +486,10 @@ fn resolve_rustic_binary(name: &str) -> Result<std::path::PathBuf, ExitCode> {
         if candidate.is_file() {
             return Ok(candidate.to_path_buf());
         }
-        eprintln!(
-            "{} the configured rustic binary `{name}` does not exist. A unit cannot fall \
-             back to `PATH`, so this would fail on every scheduled run.",
-            "error:".red().bold()
-        );
-        return Err(ExitCode::from(EXIT_CONFIG_ERROR));
+        return Err(format!(
+            "the configured rustic binary `{name}` does not exist. A unit cannot fall back to \
+             `PATH`, so this would fail on every scheduled run."
+        ));
     }
 
     // A bare name is resolved against *this* process's PATH — the interactive one, which is
@@ -492,20 +506,13 @@ fn resolve_rustic_binary(name: &str) -> Result<std::path::PathBuf, ExitCode> {
         .find(|p| p.is_file())
     });
 
-    match found {
-        Some(path) => Ok(path),
-        None => {
-            eprintln!(
-                "{} could not find `{name}` on PATH, and {}.",
-                "error:".red().bold(),
-                no_path_fallback_reason()
-            );
-            eprintln!(
-                "       Install rustic, or set `defaults.rustic-binary` to an absolute path."
-            );
-            Err(ExitCode::from(EXIT_CONFIG_ERROR))
-        }
-    }
+    found.ok_or_else(|| {
+        format!(
+            "could not find `{name}` on PATH, and {}.\nInstall rustic, or set \
+             `defaults.rustic-binary` to an absolute path.",
+            no_path_fallback_reason()
+        )
+    })
 }
 
 fn schedule_jobs(args: &ScheduleArgs) -> ExitCode {
@@ -1627,7 +1634,6 @@ fn run_doctor(args: &DoctorArgs) -> ExitCode {
         },
         None => config.jobs.iter().collect(),
     };
-    let _ = &path;
 
     let mut findings = Vec::new();
 
@@ -1635,6 +1641,9 @@ fn run_doctor(args: &DoctorArgs) -> ExitCode {
     findings.push(doctor::classify_lock_authority(
         &doctor::schedules::find_predecessor_prune(),
     ));
+
+    // Check 5 — every installed schedule is what this binary would write. Local, always.
+    findings.push(check_units_current(&config, &path, &jobs, args));
 
     // Check 4 — the credential files exist. Local, always.
     let profiles: Vec<(String, std::path::PathBuf)> = jobs
@@ -1673,6 +1682,108 @@ fn run_doctor(args: &DoctorArgs) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// Check 5: compare every installed schedule with what `schedule` would write now.
+///
+/// Renders through the same `install::render_*` functions the writers use, with the same
+/// binary, config path and rustic path `schedule` would bake in — so a difference is a real
+/// difference, never an artefact of rendering the unit two ways. Reads files; writes nothing.
+fn check_units_current(
+    config: &Config,
+    path: &std::path::Path,
+    jobs: &[&rusticprofile::config::job::Job],
+    args: &DoctorArgs,
+) -> rusticprofile::doctor::Finding {
+    use rusticprofile::doctor::Finding;
+    use rusticprofile::doctor::units::{self, CHECK_UNITS_CURRENT, Comparison, Installed};
+
+    // Both overrides change the answer to "what would `schedule` write here", so comparing
+    // under either would report a difference `schedule` would never produce.
+    if let Some(host) = &args.as_host {
+        return Finding::unknown(
+            CHECK_UNITS_CURRENT,
+            format!("simulating `{host}`: the installed schedules belong to this machine"),
+        );
+    }
+    if args.rustic_binary.is_some() {
+        return Finding::unknown(
+            CHECK_UNITS_CURRENT,
+            "`--rustic-binary` changes the path a unit would name, so there is nothing to \
+             compare the installed one against",
+        );
+    }
+    let Some(backend) = schedule::current_backend() else {
+        return Finding::unknown(
+            CHECK_UNITS_CURRENT,
+            schedule::unsupported_platform_message(),
+        );
+    };
+    let binary = match std::env::current_exe() {
+        Ok(b) => b,
+        Err(e) => {
+            return Finding::unknown(
+                CHECK_UNITS_CURRENT,
+                format!("could not determine this executable's path: {e}"),
+            );
+        }
+    };
+
+    let scheduled: Vec<_> = jobs
+        .iter()
+        .filter_map(|j| j.schedule.map(|s| (*j, s)))
+        .collect();
+    if scheduled.is_empty() {
+        return units::classify(&[]);
+    }
+    // Only needed once something is scheduled: a host with no scheduled jobs and no rustic
+    // installed has nothing stale, and must not report `unknown` for it.
+    let rustic_binary = match find_rustic_binary(&config.rustic_binary) {
+        Ok(b) => b,
+        Err(why) => {
+            return Finding::unknown(
+                CHECK_UNITS_CURRENT,
+                format!("cannot render what `schedule` would write: {why}"),
+            );
+        }
+    };
+
+    let mut comparisons = Vec::new();
+    for (job, sched) in scheduled {
+        let dir = resolve_unit_dir(None, sched.permission, backend);
+        let ctx = schedule::UnitContext {
+            binary: &binary,
+            config: path,
+            rustic_binary: &rustic_binary,
+        };
+        // The seed only matters when no offset can be read back, i.e. when nothing usable is
+        // installed — and then the comparison is against a missing or unreadable file anyway.
+        let rendered: Vec<(std::path::PathBuf, String)> = match backend {
+            Backend::Systemd => install::render_units(job, &sched, &ctx, &dir).into(),
+            Backend::Launchd => {
+                let (p, text, _) = install::render_agent(job, &sched, &ctx, &dir, 0);
+                vec![(p, text)]
+            }
+            Backend::TaskScheduler => {
+                let (p, text, _) = install::render_task(job, &sched, &ctx, &dir, 0);
+                vec![(p, text)]
+            }
+        };
+        for (file, expected) in rendered {
+            let installed = match install::read_installed(&file) {
+                Ok(text) => Installed::Present(text),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Installed::Missing,
+                Err(e) => Installed::Unreadable(e.to_string()),
+            };
+            comparisons.push(Comparison {
+                job: job.name.clone(),
+                path: file,
+                installed,
+                expected,
+            });
+        }
+    }
+    units::classify(&comparisons)
 }
 
 /// Ask the repository who has been writing for each host.

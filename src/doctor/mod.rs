@@ -17,14 +17,15 @@
 //! | a second **retention** authority (`NOTES.md` §6.7) | the repository's snapshots |
 //! | a second **lock** authority (`NOTES.md` §6.8) | this host's service manager |
 //! | a secret that does not exist (`NOTES.md` §4) | the filesystem |
+//! | an installed unit older than the binary ([`units`]) | the unit directory |
 //!
 //! So `doctor` looks outward, and `--check` stays hermetic. That division is the whole
 //! reason both exist.
 //!
 //! ## What each check costs
 //!
-//! Checks 2 and 4 are local: a service-manager query and a few `stat` calls. They always
-//! run. **Check 1 needs the repository** — network, credentials, seconds — so it runs only
+//! Checks 2, 4 and 5 are local: a service-manager query, a few `stat` calls, and reading the
+//! installed units back. They always run. **Check 1 needs the repository** — network, credentials, seconds — so it runs only
 //! under `--repository`. A check that can fail for reasons unrelated to what it asks should
 //! not be on the default path of a command people run to find out whether things are fine.
 
@@ -34,6 +35,7 @@ use crate::config::rustic_toml::{self, SecretFile};
 
 pub mod repository;
 pub mod schedules;
+pub mod units;
 
 /// How bad a finding is.
 ///
