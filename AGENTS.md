@@ -165,7 +165,7 @@ is a summary and neither substitutes for the other:
 
 | file | what it is | read it for |
 |---|---|---|
-| `NOTES.md` | living state — **rewritten as the project moves** | what is built, released and next; the release log; **§3a, the operating invariants that can destroy data if broken** |
+| `NOTES.md` | living state — **rewritten as the project moves** | what is built and next; **§3a, the operating invariants that can destroy data if broken**; §4 the backlog; §5 the hard-won lessons |
 | `PLAN.md` | the historical design record — **not rewritten** | *why* the design is shaped this way and what was rejected (Parts 1–3); the measurements against rustic 0.11.3 (Parts 5, 7) |
 
 **`PLAN.md` is not a status page.** Its own header has said so since `0.1.32`, and reading it
@@ -192,7 +192,7 @@ Companion document, for the Go tool this project descends from:
 ## 1. Current state
 
 **`NOTES.md` is authoritative for this, and this section deliberately does not repeat it.**
-Read its "Current State" heading and the top of its release log. What belongs here is only the
+Read its "Current State" section, the §4 backlog and the §5 lessons. What belongs here is only the
 shape of the project, which changes rarely:
 
 **Milestones 1, 2, 3 and 5 are complete; M6 is effectively delivered; Windows and its Task
@@ -276,8 +276,8 @@ shared by 7 machines, and currently holds the only copy of several years of data
 
 This project follows the same scaffolding conventions as `~/git/retch` and `~/git/etr`,
 documented in full in `PLAN.md` §2.5. In particular: `just` is the only task runner; the
-`check`/`pr`/`open-pr`/`merge-pr` gate triad; `NOTES.md` is the changelog and living state,
-not a `CHANGELOG.md`; a version bump on every PR; and the deliberate *absence* of
+`check`/`pr`/`open-pr`/`merge-pr` gate triad; `NOTES.md` is the living state and there is no
+`CHANGELOG.md` — `git log` is the changelog; a version bump on every PR; and the deliberate *absence* of
 `rustfmt.toml`, `clippy.toml`, `deny.toml`, `rust-toolchain.toml` and an MSRV is itself the
 convention — do not add them.
 
@@ -292,6 +292,14 @@ patch bumps, because no public type moved.
 "`0.0.x` only until Milestone 1 ships a tool that can actually run a backup, since `v0.1.0` is
 reserved for that." *M1 shipped at `v0.0.7` and `v0.1.0` was released; that clause expired long
 ago and would now give the wrong answer.*
+
+> **`NOTES.md` is not a changelog.** It held a full per-release log until `0.2.44` — about 5,300
+> of its 6,080 lines, which buried everything load-bearing. Do not reintroduce one. If an entry
+> would only say what changed, write a good commit message instead; if the work leaves behind a
+> rule — a trap, a gotcha, a check that answered the wrong question — it goes in `NOTES.md` §5.
+> Finished backlog items are deleted, not struck through. The same applies to `WIP.md`: it
+> carries work **in flight**, not a session history, and its own header states its scope. The
+> old log is `git show 366a984:NOTES.md`, which is what a citation like "`0.2.13`" points at.
 
 **A Pre-PR Checklist section mirroring retch's §4 is still outstanding** — it is a live item in
 `NOTES.md` §4's backlog. Until it exists, `just pr` is the checklist, and it is the one that

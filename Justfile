@@ -171,7 +171,7 @@ lint:
     cargo clippy --all-targets -- -D warnings
 
 # Run strict checks (formatting, linting, golden argv files, packaging and byte drift) as done in CI
-check: golden-is-current standard-check copr-check text-check
+check: golden-is-current standard-check copr-check text-check wip-check
     cargo fmt -- --check
     cargo clippy --all-targets -- -D warnings
 
@@ -511,6 +511,18 @@ text-check:
     @{{PY}} scripts/text_check.py --self-test
     @{{PY}} scripts/text_check.py
 
+# `text-check` walks `git ls-files`, and git never offers a gitignored path -- so `WIP.md`, the
+# Syncthing-synced handoff file, is the one text file in this tree that nothing above protects.
+# LF is the base model everywhere (80 tracked text files, 0 carriage returns, measured by bytes
+# 2026-09-22), and this recipe extends that guarantee to it. An absent WIP.md passes: it is
+# per-machine and untracked, so CI and a fresh clone have none. Plain, not shebang, like
+# `text-check`, so it adds nothing to what `check` needs from the shell.
+
+# Refuse carriage returns in the gitignored WIP.md (offline; passes when it is absent)
+wip-check:
+    @{{PY}} scripts/wip_check.py --self-test
+    @{{PY}} scripts/wip_check.py
+
 # Point the spec at a released tag: bump Version, reset Release, add a %changelog entry
 copr-bump VERSION:
     #!/usr/bin/env bash
@@ -681,9 +693,10 @@ pr:
     echo -e "\n${BOLD}Automated checks passed.${NC}\n"
     echo -e "${BOLD}Manual checklist — confirm each before proceeding:${NC}"
     echo "  [ ] README.md reviewed and updated (new commands, flags, config keys)"
-    echo "  [ ] NOTES.md release log entry added under Release Log"
+    echo "  [ ] NOTES.md: Current State, backlog (4), hard-won lessons (5) -- NOT a changelog"
+    echo "  [ ] WIP.md reflects what is in flight (not a session log -- see its own header)"
     echo "  [ ] PLAN.md updated if a design decision changed (it is the design record)"
-    echo "  [ ] No live infrastructure identifiers added to tracked files (see WIP.md)"
+    echo "  [ ] No live infrastructure identifiers in the diff, commit or PR body (NOTES.md 3, 5.6)"
     echo "  [ ] Safety rules observed: no prune against the shared repo, no snapshots deleted"
     echo ""
 

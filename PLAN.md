@@ -6,7 +6,7 @@
 >
 > | you want | read |
 > |---|---|
-> | what is built, what is released, what is next | `NOTES.md` — "Current State" and the release log |
+> | what is built and what is next | `NOTES.md` — "Current State" and the §4 backlog (history is `git log`) |
 > | **the rules that will bite you** — retention, locking, prune, the delegation boundary | **`NOTES.md` §3a, "Operating invariants"** |
 > | *why* the design is shaped this way, and what was rejected | **this file**, Parts 1–3 |
 > | the measurements against rustic 0.11.3 | **this file**, Parts 5 and 7 |
