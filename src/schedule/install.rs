@@ -58,17 +58,40 @@ pub fn write_units(
 ) -> io::Result<Installed> {
     fs::create_dir_all(dir)?;
 
-    let service = dir.join(systemd::service_name(&job.name));
-    let timer = dir.join(systemd::timer_name(&job.name));
-
-    let a = write_if_changed(&service, &systemd::service_unit(job, schedule, ctx))?;
-    let b = write_if_changed(&timer, &systemd::timer_unit(job, schedule))?;
+    let [(service, service_text), (timer, timer_text)] = render_units(job, schedule, ctx, dir);
+    let a = write_if_changed(&service, &service_text)?;
+    let b = write_if_changed(&timer, &timer_text)?;
 
     Ok(Installed {
         service,
         timer,
         changed: a || b,
     })
+}
+
+/// Exactly what [`write_units`] would write for `job`, and where — without writing it.
+///
+/// **This is the one place unit content and placement are decided**, and both [`write_units`]
+/// and `doctor`'s `units-current` check go through it. A check that rendered the unit its own
+/// way could drift from the writer and then compare against something `schedule` never
+/// produces — the duplicated-format shape `0.2.20` fixed by deleting the second copy.
+#[must_use]
+pub fn render_units(
+    job: &Job,
+    schedule: &Schedule,
+    ctx: &UnitContext,
+    dir: &Path,
+) -> [(PathBuf, String); 2] {
+    [
+        (
+            dir.join(systemd::service_name(&job.name)),
+            systemd::service_unit(job, schedule, ctx),
+        ),
+        (
+            dir.join(systemd::timer_name(&job.name)),
+            systemd::timer_unit(job, schedule),
+        ),
+    ]
 }
 
 fn write_if_changed(path: &Path, contents: &str) -> io::Result<bool> {
@@ -218,19 +241,35 @@ pub fn write_agent(
     arbitrary: u64,
 ) -> io::Result<InstalledAgent> {
     fs::create_dir_all(dir)?;
-    let plist = dir.join(launchd::plist_name(&job.name));
-
-    let offset = fs::read_to_string(&plist)
-        .ok()
-        .and_then(|existing| launchd::installed_offset(&existing, schedule.at))
-        .unwrap_or_else(|| Offset::within(schedule.at, arbitrary));
-
-    let changed = write_if_changed(&plist, &launchd::agent_plist(job, schedule, offset, ctx))?;
+    let (plist, contents, offset) = render_agent(job, schedule, ctx, dir, arbitrary);
+    let changed = write_if_changed(&plist, &contents)?;
     Ok(InstalledAgent {
         plist,
         changed,
         offset,
     })
+}
+
+/// Exactly what [`write_agent`] would write for `job`, where, and with which offset.
+///
+/// The installed offset is reused on the same terms as the writer, which is what makes a
+/// comparison against the installed plist meaningful: a fresh offset would differ from it by
+/// the fleet-spread minute alone. See [`render_units`] for why this is the only renderer.
+#[must_use]
+pub fn render_agent(
+    job: &Job,
+    schedule: &Schedule,
+    ctx: &UnitContext,
+    dir: &Path,
+    arbitrary: u64,
+) -> (PathBuf, String, Offset) {
+    let plist = dir.join(launchd::plist_name(&job.name));
+    let offset = fs::read_to_string(&plist)
+        .ok()
+        .and_then(|existing| launchd::installed_offset(&existing, schedule.at))
+        .unwrap_or_else(|| Offset::within(schedule.at, arbitrary));
+    let contents = launchd::agent_plist(job, schedule, offset, ctx);
+    (plist, contents, offset)
 }
 
 /// Remove the agent for `job`. Returns the paths that existed and were deleted.
@@ -445,6 +484,28 @@ pub fn write_task(
     arbitrary: u64,
 ) -> io::Result<InstalledTask> {
     fs::create_dir_all(dir)?;
+    let (definition, xml, offset) = render_task(job, schedule, ctx, dir, arbitrary);
+    let changed = write_utf16_if_changed(&definition, &xml)?;
+
+    Ok(InstalledTask {
+        definition,
+        changed,
+        offset,
+    })
+}
+
+/// Exactly what [`write_task`] would write for `job`, where, and with which offset.
+///
+/// See [`render_units`] for why this is the only renderer, and [`render_agent`] for why the
+/// installed offset is reused.
+#[must_use]
+pub fn render_task(
+    job: &Job,
+    schedule: &Schedule,
+    ctx: &UnitContext,
+    dir: &Path,
+    arbitrary: u64,
+) -> (PathBuf, String, Offset) {
     let definition = dir.join(schtasks::task_file_name(&job.name));
 
     // The registered task is the authority on the current offset; the file on disk is only a
@@ -460,13 +521,20 @@ pub fn write_task(
         .unwrap_or_else(|| Offset::within(schedule.at, arbitrary));
 
     let xml = schtasks::task_xml(job, schedule, offset, ctx);
-    let changed = write_utf16_if_changed(&definition, &xml)?;
+    (definition, xml, offset)
+}
 
-    Ok(InstalledTask {
-        definition,
-        changed,
-        offset,
-    })
+/// Read an installed unit, agent or task definition back as text.
+///
+/// Task definitions are UTF-16LE with a BOM ([`write_task`]); units and agents are UTF-8. The
+/// BOM decides, so the caller need not know which backend wrote the file.
+pub fn read_installed(path: &Path) -> io::Result<String> {
+    let bytes = fs::read(path)?;
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        read_utf16(path)
+    } else {
+        String::from_utf8(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
 }
 
 /// Encode `contents` as UTF-16LE with a BOM.
