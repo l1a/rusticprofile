@@ -23,7 +23,9 @@ updates:
     commit-message:
       prefix: "ci"
       include: "scope"
+    # Patterns match dependency NAMES, not branches: this said "main" until 0.2.50, which
+    # matched no action at all, so the group was silently never used.
     groups:
       github-actions:
         patterns:
-          - "main"
+          - "*"
