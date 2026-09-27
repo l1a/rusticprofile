@@ -5,13 +5,13 @@ on:
     branches: [ "main" ]
     tags:
       - 'v*'
+  # No `paths:` filter, deliberately (removed in 0.2.50). The `build` legs are required status
+  # checks in the ruleset on `main`, and a required check whose workflow is filtered out never
+  # reports at all — GitHub then holds the PR at "Expected — waiting for status" forever. Every
+  # human PR bumps Cargo.toml, so the filter only ever skipped Dependabot's Actions bumps, and
+  # those are exactly the PRs it would have deadlocked. security.yml carries the same note.
   pull_request:
     branches: [ "main" ]
-    paths:
-      - '**/*.rs'
-      - '**/Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/rust.yml'
   # Weekly, so `full-test` runs BEFORE a release instead of only as part of one.
   #
   # This closes a real gap rather than adding routine noise. `full-test` is the only job that

@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.49)
+## Current State (v0.2.50)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -426,18 +426,14 @@ goes in §5.
 - [ ] **`just aur-verify` hides its own failure.** It sends `pacman` to `/dev/null`, so a broken
       container reports only `container verification failed` (`0.2.28`, §5.5). A visible failure
       path is a candidate change, deliberately not made inside a packaging-only release.
-- [ ] **A docs-only CI path — an idea with three shapes, not a plan.** The `pull_request` `paths:`
-      filter already exists and can never fire, because every PR bumps `Cargo.toml` and
-      `Cargo.lock`; the `push` trigger has no filter, so a docs-only merge runs all seven
-      `full-test` legs. Only a `changes` job that diffs against the base could shrink that. Whatever
-      shape, it must not drop the golden gate or the smoke test from the release path (`0.2.1`).
-      Also open in the same place: `build` runs `cargo build` then `cargo test`, compiling twice —
-      deliberate log separation, or vestigial?
-- [ ] **`main` has no branch protection.** Recommended ruleset: require a PR with 0 approvals;
-      require `build (fedora-x64)`, `build (macos)`, `build (ubuntu-arm)`, `build (windows)` and
-      `audit`; block force pushes and deletions; allow admin bypass. **Never require `full-test`,
-      `build-release` or `release`** — they report SKIPPED on a PR and would block it forever. Web
-      UI only: both tokens here get HTTP 403 from the protection API. Not authorised yet.
+- [ ] **A docs-only CI path — an idea with three shapes, not a plan.** Every PR runs the full
+      `build` matrix and `audit`, and the `push` trigger has no filter, so a docs-only merge runs
+      all seven `full-test` legs. A `pull_request` `paths:` filter is **not** an available shape:
+      it was removed in `0.2.50` because those jobs are required checks (§5.5). Only a `changes`
+      job that diffs against the base, and still reports every required check, could shrink it.
+      Whatever shape, it must not drop the golden gate or the smoke test from the release path
+      (`0.2.1`). Also open in the same place: `build` runs `cargo build` then `cargo test`,
+      compiling twice — deliberate log separation, or vestigial?
 
 ### 4.3 Fleet and operations
 
@@ -712,6 +708,17 @@ against 0.11.4 on 2026-08-24 and unchanged.
   `in_progress` with every step ✓ is unstuck by pushing the next *real* commit, never a manufactured
   one. A PR based on a non-`main` branch gets no CI, and a stacked PR is **closed, unrecoverably,**
   when its base branch is deleted on merge.
+- **`main` is protected by a repository ruleset, "Protect main"** (`0.2.50`): a PR is required
+  (0 approvals), force pushes and deletion are blocked, and `build (fedora-x64)`, `build (macos)`,
+  `build (ubuntu-arm)`, `build (windows)` and `audit` must pass. The admin bypass is in
+  `pull_request` mode, so it can merge a PR past a stuck check but cannot push to `main` directly.
+  Read it with `gh api repos/l1a/rusticprofile/rules/branches/main`; the rulesets API accepts
+  this account's token (the classic protection API was the one that returned 403). **Never
+  require `full-test`, `build-release` or `release`**: they report SKIPPED on a PR and would
+  block every one. **A required check must come from a workflow that runs on every PR.** A
+  `paths:` filter that skips the workflow means the check never reports, and GitHub holds the PR
+  at "Expected — waiting for status" forever. That is why `rust.yml` and `security.yml` lost
+  their filters in the same change. The filter had only ever skipped Dependabot's Actions bumps.
 - **Squash-merge bodies concatenate every branch commit** (`squash_merge_commit_message =
   COMMIT_MESSAGES`), so a trailer on each commit is a duplicate on `main` — trailer on the last
   commit only (`0.2.41`; `AGENTS.md` Part 1 §1).
