@@ -1,6 +1,6 @@
 [package]
 name = "rusticprofile"
-version = "0.2.50"
+version = "0.2.51"
 edition = "2024"
 authors = ["Ken Tobias"]
 description = "A local, per-machine scheduler and orchestrator for rustic backups"
