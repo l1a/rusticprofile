@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.51)
+## Current State (v0.2.52)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -692,7 +692,9 @@ against 0.11.4 on 2026-08-24 and unchanged.
 - **A redirect truncates its target before the command is looked up**: `podman … > .SRCINFO` on a
   podman-less host emptied the tracked file. Generate into a temp file **in the destination
   directory**, validate the *content*, then `mv` (`0.2.12`; `~/AGENTS.md` §12 for why `/tmp` is the
-  wrong place on a Syncthing tree).
+  wrong place on a Syncthing tree). `aur-srcinfo` still used a bare `mktemp` until `0.2.52`, so the
+  `mv` carried `user_tmp_t` and mode `0600` into the synced tree. `chcon -t container_file_t` and
+  `chmod 0644` repair that without root.
 - **Rootless podman egress follows route priority**: a stale `eth0` default route with no egress
   broke every container while the host itself worked. It is the host's fix, not the recipe's
   (`0.2.28`).
