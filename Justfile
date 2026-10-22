@@ -356,7 +356,12 @@ aur-srcinfo:
     # missing image, no network, a broken PKGBUILD — would destroy the committed file rather
     # than leave it alone. The AUR would then reject a 0-byte .SRCINFO on the user's machine
     # and nowhere else, which is the failure shape this repo exists to refuse.
-    TMP="$(mktemp)"
+    #
+    # The temp file is created in the destination directory, not /tmp. /tmp is tmpfs, so
+    # `mv` from there is a cross-filesystem copy that preserves `user_tmp_t` and mktemp's
+    # 0600. Syncthing's container cannot read that label, and one file wedges the folder
+    # (`~/AGENTS.md` §12). A same-directory rename keeps the directory's type.
+    TMP="$(mktemp "$(dirname "$OUT")/.SRCINFO.XXXXXX")"
     trap 'rm -f "$TMP"' EXIT
 
     # `z`, not `Z` — see the note in `aur-verify`.
@@ -370,6 +375,7 @@ aur-srcinfo:
     [ -s "$TMP" ] || fail ".SRCINFO came back empty — $OUT left untouched"
     grep -q '^pkgbase = ' "$TMP" || fail "output has no 'pkgbase =' line — $OUT left untouched"
 
+    chmod 0644 "$TMP"
     mv "$TMP" "$OUT"
     trap - EXIT
     echo "packaging/aur/.SRCINFO regenerated"
