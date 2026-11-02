@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.53)
+## Current State (v0.2.54)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -420,9 +420,6 @@ goes in §5.
       merge (`retch`'s `update_wip.py`, `etr`'s `reset_wip.py`); here the recipe only prints a
       reminder. The guard half of their change landed here (`just wip-check`, `0.2.45`); the
       updater did not, and would need the same byte-preserving, exactly-one-match discipline.
-- [ ] **`scripts/text_check.py` is vendored with three divergent bodies at `TEMPLATE_VERSION = 1`.**
-      This copy's docstring also cites a `WIP.md` entry (2026-08-12) that the `0.2.45` prune
-      removed. Patching one copy deepens the drift; it needs one coordinated bump across all three.
 - [ ] **`just aur-verify` hides its own failure.** It sends `pacman` to `/dev/null`, so a broken
       container reports only `container verification failed` (`0.2.28`, §5.5). A visible failure
       path is a candidate change, deliberately not made inside a packaging-only release.
