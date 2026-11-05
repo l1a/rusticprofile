@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.55)
+## Current State (v0.2.56)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -595,6 +595,24 @@ against 0.11.4 on 2026-08-24 and unchanged.
   bare `rustic` resolves only after a graphical login imports the session environment: the working
   runs are the accident. Every unit names rustic by absolute path, and `schedule` refuses rather
   than writing a unit that cannot run (`0.1.10`).
+- **`ExecStart=` is unit syntax, not an argv.** systemd splits unquoted whitespace, expands `%`
+  before it removes quotes, and a raw newline starts a new directive. `Type=oneshot` runs every
+  `ExecStart=`. Quote each argument, write a literal percent as `%%`, and refuse a control
+  character rather than encoding one. A literal dollar is `$$`, because `${FOO}` is
+  expanded inside a quoted word. A backtick is not command substitution on this line.
+  launchd and Task Scheduler already escaped; this backend did not.
+- **A system unit has no `XDG_RUNTIME_DIR`, so its lock falls back to the temp directory.** That
+  directory is shared. The lock directory must be a real directory owned by this user and mode
+  `0700`, and the lock file must not be a symlink — `create_dir_all` follows one that is already
+  there and then reports success.
+- **A snapshot-set name is one field of a line in the run log, and `log:` is opened as given.**
+  A newline in the name starts a new line in that file. `permission: system` runs as root, so
+  the name is refused at load time, and the log writer escapes control characters anyway. A
+  `${date:…}` format is checked the same way while it is still deferred: `%n` is a newline,
+  and `schedule` must refuse it rather than leave the failure for `run`. A new log is mode
+  `0600` and a symlink at the path is not followed. `doctor` treats a credential file with
+  group or other permission bits as a warning, not as present, and a missing file does not
+  drop that warning for another file of the same job.
 - **A `Persistent=true` catch-up fires within milliseconds of the timer starting, and
   `RandomizedDelaySec` does not delay it** — measured at 300 s and 3600 s. On a laptop that means
   the missed hour is spent in the same second as `PM: suspend exit`, ~11 s before the network is

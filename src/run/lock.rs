@@ -76,10 +76,77 @@ impl std::fmt::Display for LockError {
 /// make the Windows fallback (`%TEMP%`, a real directory that persists) unsafe. It is not: on
 /// both platforms the lock lives in the *open handle*, not in the file, so a leftover file is
 /// inert and the next run locks it again. See [`JobLock`].
+///
+/// The temp fallback is a shared directory. [`ensure_private_dir`] refuses a symlink and, on
+/// Unix, a directory owned by someone else or left group- or world-accessible. A system unit
+/// runs as root and would otherwise lock a file another user planted.
 pub fn lock_dir() -> PathBuf {
     dirs::runtime_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("rusticprofile")
+}
+
+/// Create `dir` and refuse to use it unless it is a real directory we control.
+///
+/// `create_dir_all` follows a symlink that is already there, so a check after the call is
+/// what matters: `symlink_metadata` sees the link itself. On Unix the directory must be
+/// owned by this effective uid and mode `0700`. If we own a looser directory we tighten it;
+/// if someone else owns it, this fails instead of locking inside their tree.
+fn ensure_private_dir(dir: &Path) -> io::Result<()> {
+    match std::fs::create_dir_all(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+
+    let meta = std::fs::symlink_metadata(dir)?;
+    if meta.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "lock directory {} is a symlink; refusing to follow it",
+                dir.display()
+            ),
+        ));
+    }
+    if !meta.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("lock directory {} is not a directory", dir.display()),
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let uid = nix::unistd::geteuid().as_raw();
+        if meta.uid() != uid {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "lock directory {} is owned by uid {}, not {uid}",
+                    dir.display(),
+                    meta.uid()
+                ),
+            ));
+        }
+        if meta.mode() & 0o077 != 0 {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+            let again = std::fs::symlink_metadata(dir)?;
+            if again.mode() & 0o077 != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "lock directory {} is group- or world-accessible and could not be made private",
+                        dir.display()
+                    ),
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Take the lock for `job`, or report why not.
@@ -91,7 +158,7 @@ pub fn acquire(job: &str) -> Result<JobLock, LockError> {
     let dir = lock_dir();
     let path = dir.join(format!("{job}.lock"));
 
-    if let Err(e) = std::fs::create_dir_all(&dir) {
+    if let Err(e) = ensure_private_dir(&dir) {
         return Err(LockError::Unavailable(path, e));
     }
 
@@ -157,8 +224,27 @@ fn take(path: &Path) -> Result<JobLock, TakeError> {
 /// `truncate(false)` is deliberate: the file's *contents* are irrelevant, and truncating one
 /// another process is holding would be a write to a file this code has no business writing.
 fn open_lock_file(path: &Path) -> io::Result<File> {
+    // A symlink here is not a lock. On a system unit the directory may be the shared temp
+    // dir, and following the link would create or open whatever path another user chose.
+    // Checked before open, and on Unix `O_NOFOLLOW` closes the gap between the check and it.
+    if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "lock path {} is a symlink; refusing to follow it",
+                path.display()
+            ),
+        ));
+    }
+
     let mut options = File::options();
     options.create(true).read(true).write(true).truncate(false);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(nix::libc::O_NOFOLLOW);
+    }
 
     #[cfg(windows)]
     {
@@ -233,6 +319,39 @@ mod tests {
         drop(b);
         let _ = std::fs::remove_file(pa);
         let _ = std::fs::remove_file(pb);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_lock_directory_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real");
+        std::fs::create_dir(&target).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = ensure_private_dir(&link).expect_err("a symlink is not a lock directory");
+        assert!(
+            err.to_string().contains("symlink"),
+            "the error must say why, got {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_not_used_as_the_lock_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("job.lock");
+        std::os::unix::fs::symlink("/etc/passwd", &link).unwrap();
+
+        match take(&link) {
+            Err(TakeError::Io(e)) => assert!(
+                e.to_string().contains("symlink"),
+                "expected a symlink refusal, got {e}"
+            ),
+            Err(TakeError::Busy) => panic!("a symlink must not look like a held lock"),
+            Ok(_) => panic!("opened a lock through a symlink"),
+        }
     }
 
     #[test]

@@ -31,7 +31,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::config::rustic_toml::{self, SecretFile};
+use crate::config::rustic_toml;
 
 pub mod repository;
 pub mod schedules;
@@ -117,7 +117,7 @@ pub const CHECK_SECRETS: &str = "secrets-present";
 /// surfaced it was a person noticing (`NOTES.md` §4). `config --check` reported `ok`
 /// throughout, because from inside the config nothing was wrong.
 ///
-/// **The contents are never read** — see [`SecretFile`]. Existence and readability are the
+/// **The contents are never read** — see [`rustic_toml::SecretFile`]. Existence and readability are the
 /// whole question; pulling a passphrase into this process to prove it is readable would
 /// give up the property `password-command` exists to preserve.
 pub fn check_secrets(profiles: &[(String, PathBuf)]) -> Vec<Finding> {
@@ -142,13 +142,21 @@ pub fn check_secrets(profiles: &[(String, PathBuf)]) -> Vec<Finding> {
             continue;
         }
 
-        let missing: Vec<&SecretFile> = profile
-            .secret_files
-            .iter()
-            .filter(|s| !is_readable_file(&s.path))
-            .collect();
+        let mut missing = Vec::new();
+        let mut exposed = Vec::new();
+        for secret in &profile.secret_files {
+            if !is_readable_file(&secret.path) {
+                missing.push(format!("{} = {}", secret.key, secret.path.display()));
+            } else if let Some(why) = loose_permissions(&secret.path) {
+                exposed.push(format!(
+                    "{} = {} ({why})",
+                    secret.key,
+                    secret.path.display()
+                ));
+            }
+        }
 
-        if missing.is_empty() {
+        if missing.is_empty() && exposed.is_empty() {
             findings.push(Finding::new(
                 CHECK_SECRETS,
                 Severity::Ok,
@@ -157,7 +165,12 @@ pub fn check_secrets(profiles: &[(String, PathBuf)]) -> Vec<Finding> {
                     profile.secret_files.len()
                 ),
             ));
-        } else {
+            continue;
+        }
+        // Both classes are reported. A missing file used to hide a loose mode on
+        // another file of the same job, so fixing the missing one was the first time
+        // the mode was mentioned.
+        if !missing.is_empty() {
             findings.push(
                 Finding::new(
                     CHECK_SECRETS,
@@ -167,12 +180,20 @@ pub fn check_secrets(profiles: &[(String, PathBuf)]) -> Vec<Finding> {
                         missing.len()
                     ),
                 )
-                .with_detail(
-                    missing
-                        .iter()
-                        .map(|s| format!("{} = {}", s.key, s.path.display()))
-                        .collect(),
-                ),
+                .with_detail(missing),
+            );
+        }
+        if !exposed.is_empty() {
+            findings.push(
+                Finding::new(
+                    CHECK_SECRETS,
+                    Severity::Warn,
+                    format!(
+                        "{job}: {} credential file(s) are readable by someone other than the owner",
+                        exposed.len()
+                    ),
+                )
+                .with_detail(exposed),
             );
         }
     }
@@ -187,6 +208,27 @@ pub fn check_secrets(profiles: &[(String, PathBuf)]) -> Vec<Finding> {
 /// and it is what a mis-restored backup or a `sudo cp` leaves behind.
 fn is_readable_file(path: &Path) -> bool {
     path.is_file() && std::fs::File::open(path).is_ok()
+}
+
+/// Group or other permission bits on a credential file.
+///
+/// Existence is not enough: a mode `0644` password file is present and readable, including
+/// by every account on the machine. Unix only — Windows reports access through ACLs, and a
+/// mode bit here would answer a question that platform does not ask.
+fn loose_permissions(path: &Path) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path).ok()?.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Some(format!(
+                "mode {mode:04o} is readable by someone other than the owner"
+            ));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +458,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let pw = dir.path().join("real.pw.txt");
         std::fs::write(&pw, "hunter2\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&pw, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
         let profile = dir.path().join("p.toml");
         std::fs::write(
             &profile,
@@ -428,6 +475,71 @@ mod tests {
 
         let f = check_secrets(&[("j".to_string(), profile)]);
         assert_eq!(f[0].severity, Severity::Ok);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_world_readable_secret_warns() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let pw = dir.path().join("real.pw.txt");
+        std::fs::write(&pw, "hunter2\n").unwrap();
+        std::fs::set_permissions(&pw, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let profile = dir.path().join("p.toml");
+        std::fs::write(
+            &profile,
+            format!(
+                "[repository]\npassword-file = \"{}\"\n",
+                pw.display().to_string().replace('\\', "/")
+            ),
+        )
+        .unwrap();
+
+        let f = check_secrets(&[("j".to_string(), profile)]);
+        assert_eq!(f[0].severity, Severity::Warn);
+        assert!(
+            f[0].detail[0].contains("0644"),
+            "the mode is the finding: {}",
+            f[0].detail[0]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_secret_does_not_hide_a_loose_one() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let loose = dir.path().join("loose.pw.txt");
+        std::fs::write(&loose, "hunter2\n").unwrap();
+        std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let absent = dir.path().join("gone.pw.txt");
+        let profile = dir.path().join("p.toml");
+        let loose_path = loose.display().to_string().replace('\\', "/");
+        let absent_path = absent.display().to_string().replace('\\', "/");
+        std::fs::write(
+            &profile,
+            format!(
+                "[repository]\npassword-file = \"{absent_path}\"\n\n\
+                 [repository.options]\ncredential_path = \"{loose_path}\"\n"
+            ),
+        )
+        .unwrap();
+
+        let f = check_secrets(&[("j".to_string(), profile)]);
+        assert_eq!(f.len(), 2, "both classes are findings: {f:?}");
+        assert!(f.iter().all(|finding| finding.severity == Severity::Warn));
+        assert!(
+            f.iter()
+                .any(|finding| finding.detail.iter().any(|d| d.contains("gone.pw.txt"))),
+            "{f:?}"
+        );
+        assert!(
+            f.iter()
+                .any(|finding| finding.detail.iter().any(|d| d.contains("0644"))),
+            "{f:?}"
+        );
     }
 
     #[test]

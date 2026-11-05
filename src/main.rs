@@ -1759,7 +1759,15 @@ fn check_units_current(
         // The seed only matters when no offset can be read back, i.e. when nothing usable is
         // installed — and then the comparison is against a missing or unreadable file anyway.
         let rendered: Vec<(std::path::PathBuf, String)> = match backend {
-            Backend::Systemd => install::render_units(job, &sched, &ctx, &dir).into(),
+            Backend::Systemd => match install::render_units(job, &sched, &ctx, &dir) {
+                Ok(units) => units.into(),
+                Err(e) => {
+                    return Finding::unknown(
+                        CHECK_UNITS_CURRENT,
+                        format!("cannot render what `schedule` would write: {e}"),
+                    );
+                }
+            },
             Backend::Launchd => {
                 let (p, text, _) = install::render_agent(job, &sched, &ctx, &dir, 0);
                 vec![(p, text)]

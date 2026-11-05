@@ -29,6 +29,7 @@ pub const REDACTED: &str = "<redacted>";
 const SECRET_NAME_MARKERS: &[&str] = &[
     "PASSWORD",
     "PASSWD",
+    "PASS",
     "SECRET",
     "TOKEN",
     "KEY",
@@ -135,6 +136,9 @@ mod tests {
             "AWS_ACCESS_KEY_ID",
             "GH_TOKEN",
             "SOME_AUTH",
+            // rclone's config encryption password. `PASS` is the marker: the name contains
+            // neither `PASSWORD` nor `PASSWD`, and `RCLONE_` is a prefix `config --show` prints.
+            "RCLONE_CONFIG_PASS",
         ] {
             assert!(is_secret_env_name(name), "`{name}` should be masked");
         }

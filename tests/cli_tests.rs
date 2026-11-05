@@ -2194,6 +2194,13 @@ fn doctor_fixture(pw_name: &str, create: bool) -> (tempfile::TempDir, String) {
     let pw = dir.path().join(pw_name);
     if create {
         std::fs::write(&pw, "correct horse\n").unwrap();
+        // A present secret is a private one. The process umask would otherwise leave
+        // this file readable by other users, and `doctor` treats that as a warning.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&pw, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
     }
     std::fs::write(
         dir.path().join("p.toml"),
@@ -2218,6 +2225,26 @@ fn doctor_reports_a_present_secret_and_exits_zero() {
     let (stdout, _stderr, success) = run(&["doctor", "--config", &config]);
     assert!(success, "a healthy host must exit 0:\n{stdout}");
     assert!(stdout.contains("present and readable"), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_warns_and_exits_three_when_a_secret_is_group_readable() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, config) = doctor_fixture("real.pw.txt", true);
+    std::fs::set_permissions(
+        dir.path().join("real.pw.txt"),
+        std::fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    let output = command()
+        .args(["doctor", "--config", &config])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("someone other than the owner"), "{stdout}");
+    assert!(stdout.contains("0644"), "{stdout}");
 }
 
 #[test]
