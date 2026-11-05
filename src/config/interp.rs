@@ -86,6 +86,12 @@ pub enum InterpError {
         format: String,
         reason: String,
     },
+    /// The format parses, and the text it produces contains a control character.
+    ///
+    /// `%n` is a newline and `%t` is a tab. Both are valid specifiers. Checked against the
+    /// reference instant even when [`Ctx::now`] is `None`, so `schedule` and `config --check`
+    /// refuse the format instead of leaving it for `run` to discover.
+    DateExpandsToControl(String),
     EmptyVariable,
     Unterminated,
     /// A valid variable used somewhere it has no value.
@@ -120,6 +126,10 @@ impl fmt::Display for InterpError {
                     "`${{date:{format}}}` is not a valid time format: {reason}"
                 )
             }
+            InterpError::DateExpandsToControl(format) => write!(
+                f,
+                "`${{date:{format}}}` expands to a newline or other control character"
+            ),
             InterpError::EmptyVariable => write!(f, "`${{}}` is missing a variable name"),
             InterpError::Unterminated => {
                 write!(
@@ -193,10 +203,15 @@ fn resolve(name: &str, ctx: &Ctx) -> Result<String, InterpError> {
         // now, so a malformed format is caught at load time rather than at 03:00 on the
         // night the backup runs.
         let reference = jiff::Timestamp::UNIX_EPOCH.to_zoned(jiff::tz::TimeZone::UTC);
-        jiff::fmt::strtime::format(format, &reference).map_err(|e| InterpError::BadDateFormat {
-            format: format.to_string(),
-            reason: e.to_string(),
+        let rendered = jiff::fmt::strtime::format(format, &reference).map_err(|e| {
+            InterpError::BadDateFormat {
+                format: format.to_string(),
+                reason: e.to_string(),
+            }
         })?;
+        if rendered.chars().any(char::is_control) {
+            return Err(InterpError::DateExpandsToControl(format.to_string()));
+        }
 
         return match ctx.now {
             Some(now) => Ok(jiff::fmt::strtime::format(format, now)
@@ -424,6 +439,29 @@ mod tests {
                 ),
                 "`{bad}` should be rejected"
             );
+        }
+    }
+
+    #[test]
+    fn a_date_format_that_expands_to_a_control_character_is_refused_while_deferred() {
+        // `%n` is a newline and `%t` is a tab. Both format successfully, so the malformed-
+        // format check does not see them. The expansion is what has to be refused, and it
+        // has to be refused with no clock: `schedule` and `config --check` leave the
+        // reference in place and would otherwise accept it.
+        let env = env_map(&[]);
+        let deferred = ctx(&env, None);
+        let now = jiff::Timestamp::UNIX_EPOCH.to_zoned(jiff::tz::TimeZone::UTC);
+        let resolved = ctx(&env, Some(&now));
+        for bad in ["%n", "%t"] {
+            for c in [&deferred, &resolved] {
+                assert!(
+                    matches!(
+                        interpolate(&format!("log-${{date:{bad}}}.txt"), c),
+                        Err(InterpError::DateExpandsToControl(_))
+                    ),
+                    "`{bad}` must be refused"
+                );
+            }
         }
     }
 

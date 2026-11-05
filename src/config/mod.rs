@@ -565,6 +565,30 @@ jobs:
     }
 
     #[test]
+    fn a_date_format_that_expands_to_a_newline_is_rejected_at_load() {
+        // No clock is supplied, which is how `schedule` and `config --check` load. The
+        // format stays written as `${date:…}` and still has to be refused.
+        let yaml = "
+schema: 1
+defaults:
+  rustic-config-dir: RUSTIC_DIR
+jobs:
+  j:
+    profile: p
+    operations: [backup]
+    log: /var/log/${date:%n}
+"
+        .replace("/var/log/", ABS_LOG_DIR);
+        let err = load_as(&yaml, "h").unwrap_err();
+        assert!(
+            err.0
+                .iter()
+                .any(|v| v.location.contains("log") && v.message.contains("control character")),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn a_date_reference_in_a_log_path_stays_deferred() {
         // It must survive to run time, so a unit file cannot freeze one day's date.
         let yaml = "

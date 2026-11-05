@@ -165,7 +165,12 @@ pub fn check_secrets(profiles: &[(String, PathBuf)]) -> Vec<Finding> {
                     profile.secret_files.len()
                 ),
             ));
-        } else if !missing.is_empty() {
+            continue;
+        }
+        // Both classes are reported. A missing file used to hide a loose mode on
+        // another file of the same job, so fixing the missing one was the first time
+        // the mode was mentioned.
+        if !missing.is_empty() {
             findings.push(
                 Finding::new(
                     CHECK_SECRETS,
@@ -177,7 +182,8 @@ pub fn check_secrets(profiles: &[(String, PathBuf)]) -> Vec<Finding> {
                 )
                 .with_detail(missing),
             );
-        } else {
+        }
+        if !exposed.is_empty() {
             findings.push(
                 Finding::new(
                     CHECK_SECRETS,
@@ -496,6 +502,43 @@ mod tests {
             f[0].detail[0].contains("0644"),
             "the mode is the finding: {}",
             f[0].detail[0]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_secret_does_not_hide_a_loose_one() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let loose = dir.path().join("loose.pw.txt");
+        std::fs::write(&loose, "hunter2\n").unwrap();
+        std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let absent = dir.path().join("gone.pw.txt");
+        let profile = dir.path().join("p.toml");
+        let loose_path = loose.display().to_string().replace('\\', "/");
+        let absent_path = absent.display().to_string().replace('\\', "/");
+        std::fs::write(
+            &profile,
+            format!(
+                "[repository]\npassword-file = \"{absent_path}\"\n\n\
+                 [repository.options]\ncredential_path = \"{loose_path}\"\n"
+            ),
+        )
+        .unwrap();
+
+        let f = check_secrets(&[("j".to_string(), profile)]);
+        assert_eq!(f.len(), 2, "both classes are findings: {f:?}");
+        assert!(f.iter().all(|finding| finding.severity == Severity::Warn));
+        assert!(
+            f.iter()
+                .any(|finding| finding.detail.iter().any(|d| d.contains("gone.pw.txt"))),
+            "{f:?}"
+        );
+        assert!(
+            f.iter()
+                .any(|finding| finding.detail.iter().any(|d| d.contains("0644"))),
+            "{f:?}"
         );
     }
 

@@ -68,7 +68,10 @@ fn priority_lines(priority: Priority) -> String {
 /// then runs every `ExecStart=`, so a newline in a path is a second command, not a character
 /// in a filename. Job names are filename-safe; the binary, config and rustic paths are not.
 ///
-/// `%` is written as `%%` because specifier expansion runs before quote removal. `\` and `"`
+/// `%` is written as `%%` because specifier expansion runs before quote removal. `$` is
+/// written as `$$` because `${FOO}` is expanded inside a quoted word, and `$$` is how a
+/// literal dollar is written. A backtick is not command substitution on an `ExecStart`
+/// line — systemd does not run a shell — so it stays a literal character. `\` and `"`
 /// are escaped because the line is then parsed with C-style unescaping. A control character
 /// is refused rather than encoded: a path that needs a newline does not belong in a unit.
 fn quote_exec_arg(value: &str) -> Result<String, String> {
@@ -87,6 +90,7 @@ fn quote_exec_arg(value: &str) -> Result<String, String> {
                 out.push(c);
             }
             '%' => out.push_str("%%"),
+            '$' => out.push_str("$$"),
             c => out.push(c),
         }
     }
@@ -394,6 +398,31 @@ mod tests {
             "a backslash must not escape the closing quote: {exec}"
         );
         assert_eq!(exec.matches("ExecStart=").count(), 1, "{exec}");
+    }
+
+    #[test]
+    fn a_dollar_stays_literal_and_a_backtick_is_not_shell() {
+        // systemd expands `${FOO}` inside a quoted word. `$$` is the literal dollar.
+        // A backtick is not command substitution here, so escaping it would change a
+        // legal filename into something else.
+        let ctx = UnitContext {
+            binary: Path::new("/usr/bin/rusticprofile"),
+            config: Path::new("/tmp/jobs${USER}`file`.yaml"),
+            rustic_binary: Path::new("/usr/bin/rustic"),
+        };
+        let text = unit(
+            &job("dot-files"),
+            &schedule(At::Hourly, Priority::Background),
+            &ctx,
+        );
+        let exec = text
+            .lines()
+            .find(|l| l.starts_with("ExecStart="))
+            .expect("ExecStart");
+        assert!(
+            exec.contains("\"/tmp/jobs$${USER}`file`.yaml\""),
+            "a dollar must be doubled and a backtick left as itself: {exec}"
+        );
     }
 
     #[test]
