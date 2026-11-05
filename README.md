@@ -67,7 +67,8 @@ rusticprofile owns **when** backups run, **which** jobs exist, and **on which ho
   survives a failed run — the one field that reveals a job which has quietly stopped
   working, since a schedule can be armed and green while every run fails
 - **`doctor`**: whether a **restic** prune schedule is still armed here (the one combination
-  measured to corrupt the repository), whether the credential files the profile names exist,
+  measured to corrupt the repository), whether the credential files the profile names exist
+  and, on Unix, are readable only by their owner,
   whether each installed unit is what this binary would write, and — with `--repository` —
   whether anything else has been writing retention for a host
 - **`retention`**: how far back each retention period still reaches, what a `forget` would remove,

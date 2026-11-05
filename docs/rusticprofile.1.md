@@ -338,7 +338,7 @@ The argv is the whole of what rusticprofile constructs:
         This is a **per-host** check. It cannot see other machines, and running it on one host says nothing about the rest of a fleet.
 
     **secrets-present**
-    :   Whether the credential files the rustic profile names actually exist and can be opened. The contents are never read. A profile using **password-command** reports `ok` with nothing to check, which is the recommended configuration rather than an unverifiable one.
+    :   Whether the credential files the rustic profile names actually exist and can be opened. On Unix, a mode that lets the group or anyone else read the file is a warning. The mode is what is checked, and the contents are never read. Windows has no equivalent mode bits, so only existence and readability are checked there. A profile using **password-command** reports `ok` with nothing to check, which is the recommended configuration rather than an unverifiable one.
 
         This is pre-flight ergonomics, not a data-safety fix: a missing passphrase already fails loudly when a backup runs. What it does not do is fail while anyone is watching.
 

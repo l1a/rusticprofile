@@ -1,4 +1,4 @@
-.TH "RUSTICPROFILE" "1" "November 2026" "rusticprofile 0.2.55" "Backup Scheduler"
+.TH "RUSTICPROFILE" "1" "November 2026" "rusticprofile 0.2.56" "Backup Scheduler"
 
 .SH "NAME"
 .PP
@@ -397,7 +397,7 @@ This is a \fBper\-host\fP check\. It cannot see other machines, and running it o
 \fBsecrets\-present\fP
 .RS
 .PP
-Whether the credential files the rustic profile names actually exist and can be opened\. The contents are never read\. A profile using \fBpassword\-command\fP reports `\f[CR]ok\fP` with nothing to check, which is the recommended configuration rather than an unverifiable one\.
+Whether the credential files the rustic profile names actually exist and can be opened\. On Unix, a mode that lets the group or anyone else read the file is a warning\. The mode is what is checked, and the contents are never read\. Windows has no equivalent mode bits, so only existence and readability are checked there\. A profile using \fBpassword\-command\fP reports `\f[CR]ok\fP` with nothing to check, which is the recommended configuration rather than an unverifiable one\.
 .PP
 This is pre\-flight ergonomics, not a data\-safety fix: a missing passphrase already fails loudly when a backup runs\. What it does not do is fail while anyone is watching\.
 .RE
