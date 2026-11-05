@@ -174,6 +174,19 @@ pub fn check_declared(raw: &RawConfig) -> Vec<Violation> {
 
             if set.name.is_empty() {
                 out.push(Violation::new(sat(".name"), "snapshot set name is empty"));
+            } else if set.name.chars().any(char::is_control) {
+                // The name is written into the run log and passed as its own argv element.
+                // A newline starts a new line in whatever file `log:` names. With
+                // `permission: system` that writer is root.
+                out.push(Violation::new(
+                    sat(".name"),
+                    format!(
+                        "`{}` contains a newline or other control character. The name is \
+                         written into the run log as its own field, and a newline there \
+                         starts a line in whatever file `log:` names",
+                        set.name.escape_default()
+                    ),
+                ));
             } else if set.name.starts_with('-') {
                 // The name is emitted as its own argv element after `--name`. A leading
                 // dash makes it indistinguishable from a flag, which is argument injection:
@@ -715,6 +728,32 @@ jobs:
         let locs = locations(&found);
         assert!(locs.contains(&"jobs.j.operations"));
         assert!(locs.contains(&"jobs.j.snapshot-sets[1].name"));
+    }
+
+    #[test]
+    fn a_snapshot_set_name_may_not_contain_a_control_character() {
+        let raw = parse(
+            "
+schema: 1
+jobs:
+  j:
+    profile: p
+    operations: [backup]
+    snapshot-sets:
+      - name: \"core\\nssh-ed25519 AAAA\"
+",
+        );
+        let found = check_declared(&raw);
+        assert!(
+            locations(&found).contains(&"jobs.j.snapshot-sets[0].name"),
+            "{found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .any(|v| v.message.contains("control character")),
+            "{found:?}"
+        );
     }
 
     #[test]

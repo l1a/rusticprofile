@@ -288,7 +288,17 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         let log = match &raw_job.log {
             Some(raw_log) => match interp::interpolate(raw_log, &job_ctx) {
                 Ok(resolved) => {
-                    if !Path::new(&resolved).is_absolute() {
+                    if resolved.chars().any(char::is_control) {
+                        violations.push(Violation::new(
+                            format!("jobs.{name}.log"),
+                            format!(
+                                "`{}` contains a newline or other control character. A log \
+                                 path is opened as given, and a newline would make it name \
+                                 more than one file",
+                                resolved.escape_default()
+                            ),
+                        ));
+                    } else if !Path::new(&resolved).is_absolute() {
                         violations.push(Violation::new(
                             format!("jobs.{name}.log"),
                             format!(
@@ -529,6 +539,29 @@ jobs:
         let relative = template.replace("/var/log/", "logs/");
         let err = load_as(&relative, "host-a.local").unwrap_err();
         assert!(err.0[0].message.contains("absolute"));
+    }
+
+    #[test]
+    fn a_log_path_with_a_newline_is_rejected() {
+        let yaml = format!(
+            "
+schema: 1
+defaults:
+  rustic-config-dir: RUSTIC_DIR
+jobs:
+  j:
+    profile: p
+    operations: [backup]
+    log: \"{ABS_LOG_DIR}j.log\\n/root/.ssh/authorized_keys\"
+"
+        );
+        let err = load_as(&yaml, "host-a").unwrap_err();
+        assert!(
+            err.0
+                .iter()
+                .any(|v| v.location.contains("log") && v.message.contains("control character")),
+            "{err}"
+        );
     }
 
     #[test]

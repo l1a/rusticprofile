@@ -58,7 +58,7 @@ pub fn write_units(
 ) -> io::Result<Installed> {
     fs::create_dir_all(dir)?;
 
-    let [(service, service_text), (timer, timer_text)] = render_units(job, schedule, ctx, dir);
+    let [(service, service_text), (timer, timer_text)] = render_units(job, schedule, ctx, dir)?;
     let a = write_if_changed(&service, &service_text)?;
     let b = write_if_changed(&timer, &timer_text)?;
 
@@ -75,23 +75,21 @@ pub fn write_units(
 /// and `doctor`'s `units-current` check go through it. A check that rendered the unit its own
 /// way could drift from the writer and then compare against something `schedule` never
 /// produces — the duplicated-format shape `0.2.20` fixed by deleting the second copy.
-#[must_use]
 pub fn render_units(
     job: &Job,
     schedule: &Schedule,
     ctx: &UnitContext,
     dir: &Path,
-) -> [(PathBuf, String); 2] {
-    [
-        (
-            dir.join(systemd::service_name(&job.name)),
-            systemd::service_unit(job, schedule, ctx),
-        ),
+) -> io::Result<[(PathBuf, String); 2]> {
+    let service_text = systemd::service_unit(job, schedule, ctx)
+        .map_err(|reason| io::Error::new(io::ErrorKind::InvalidInput, reason))?;
+    Ok([
+        (dir.join(systemd::service_name(&job.name)), service_text),
         (
             dir.join(systemd::timer_name(&job.name)),
             systemd::timer_unit(job, schedule),
         ),
-    ]
+    ])
 }
 
 fn write_if_changed(path: &Path, contents: &str) -> io::Result<bool> {
