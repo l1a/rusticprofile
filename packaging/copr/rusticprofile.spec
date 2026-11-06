@@ -13,7 +13,7 @@
 # at release time, not by releases.
 
 Name:           rusticprofile
-Version:        0.2.51
+Version:        0.2.56
 Release:        1%{?dist}
 Summary:        A local, per-machine scheduler and orchestrator for rustic backups
 
@@ -85,6 +85,9 @@ cargo test --release --locked
 %{fish_completions_dir}/rusticprofile.fish
 
 %changelog
+* Thu Nov 05 2026 Ken Tobias <634380+l1a@users.noreply.github.com> - 0.2.56-1
+- Update to 0.2.56
+
 * Thu Oct 22 2026 Ken Tobias <634380+l1a@users.noreply.github.com> - 0.2.51-1
 - Update to 0.2.51
 

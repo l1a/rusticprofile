@@ -1,6 +1,6 @@
 [package]
 name = "rusticprofile"
-version = "0.2.56"
+version = "0.2.57"
 edition = "2024"
 authors = ["Ken Tobias"]
 description = "A local, per-machine scheduler and orchestrator for rustic backups"
@@ -38,7 +38,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_yaml_ng = "0.10.0"
 toml = "1.1.4"
 dirs = "7.0.0"
-jiff = "0.2.35"
+jiff = "0.2.39"
 serde_json = "1.0.151"
 
 # `nix` is Unix-only, and moving it here rather than leaving it unconditional is documentation
