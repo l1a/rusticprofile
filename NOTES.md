@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.59)
+## Current State (v0.2.60)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -505,7 +505,12 @@ The version in brackets names the release entry with the full story (`git show 3
   script's output swallowed the error it existed to show; `| head -40` truncated a scan that was
   then read as complete (`0.2.2`); `ConvertFrom-Json` re-renders RFC 3339 in the locale (`0.2.22`);
   PowerShell rewrites backslashes in native arguments, so measure through `just --evaluate`, not a
-  `sh -c` probe (`0.2.14`); `grep -c $'\r'` from an agent shell counts lines (`~/AGENTS.md` §17).
+  `sh -c` probe (`0.2.14`); `grep -c $'\r'` from an agent shell counts lines (`~/AGENTS.md` §17);
+  and `if [ -n "$(git status --porcelain -- tests/golden)" ]` in a container job suppresses
+  `set -e` on the command substitution, so when `git status` exits 128 (`fatal: detected dubious
+  ownership` or `not a git repository`) with empty stdout, `-n ""` is false and the step passes on
+  every run without checking `tests/golden` (`0.2.60` — assign `status_out="$(git status ...)"` on
+  its own line first).
 - **Never let a `--json` run be the oracle for a message `--json` suppresses.** rustic moves its
   "successfully saved" confirmation to stdout under `--json`, so a stderr grep reported the
   reassuring "0.11.4 no longer saves the 0-byte snapshot" — false.
@@ -711,8 +716,12 @@ against 0.11.4 on 2026-08-24 and unchanged.
   (`ref_type == 'branch'` stops a tag matching twice); only drop a leg that is the intersection of
   two things each already covered (`0.1.30`). Fetch installers to a file and assert a post-condition
   by absolute path — `$GITHUB_PATH` affects only later steps (`0.2.19`). Matrix `fail-fast` reports
-  one environmental failure as several reds; a runner not acquired fails at exactly 15m02s; the bare
-  Fedora container has no git, so checkout falls back to an HTTPS archive download. **Read the job
+  one environmental failure as several reds; a runner not acquired fails at exactly 15m02s; container
+  jobs (`fedora:latest`, `ubuntu:latest`) have no `git` pre-installed and run as `root` against a
+  host-runner-owned workspace (`/__w/...`), so install `git` before `actions/checkout` (otherwise
+  checkout falls back to an HTTPS archive download with no `.git`) and set
+  `git config --global --add safe.directory "$GITHUB_WORKSPACE"` before calling `git` in later steps
+  (`0.2.60`). **Read the job
   list, never an exit code**: `gh pr checks --watch` exits 1 on an API 502 too, and `gh run list
   --commit` needs the full SHA or returns nothing.
 - **A red or stuck run needs a human here**: neither token can re-run a workflow. A job stuck

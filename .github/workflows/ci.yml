@@ -106,8 +106,10 @@ jobs:
       - name: Golden argv files are current
         shell: bash
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           RP_UPDATE_GOLDEN=1 cargo test --test cli_tests golden_ -q
-          if [ -n "$(git status --porcelain -- tests/golden)" ]; then
+          status_out="$(git status --porcelain -- tests/golden)"
+          if [ -n "$status_out" ]; then
             echo "::error::tests/golden is stale — run 'just golden' and commit the result"
             git --no-pager diff -- tests/golden
             git status --porcelain -- tests/golden
@@ -150,13 +152,21 @@ jobs:
             os: windows-11-arm
 
     steps:
+      - name: Install system dependencies (Ubuntu Container)
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          apt-get update
+          apt-get install -y git curl build-essential
+
+      - name: Install system dependencies (Fedora Container)
+        if: startsWith(matrix.platform, 'fedora')
+        run: dnf install -y git curl gcc make
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain (Ubuntu Container)
         if: startsWith(matrix.platform, 'ubuntu')
         run: |
-          apt-get update
-          apt-get install -y curl build-essential
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
           sh /tmp/rustup-init.sh -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -166,7 +176,6 @@ jobs:
       - name: Install Rust toolchain (Fedora Container)
         if: startsWith(matrix.platform, 'fedora')
         run: |
-          dnf install -y curl gcc make
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
           sh /tmp/rustup-init.sh -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -192,10 +201,13 @@ jobs:
       - name: Golden argv files are current
         shell: bash
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           RP_UPDATE_GOLDEN=1 cargo test --test cli_tests golden_ -q
-          if [ -n "$(git status --porcelain -- tests/golden)" ]; then
+          status_out="$(git status --porcelain -- tests/golden)"
+          if [ -n "$status_out" ]; then
             echo "::error::tests/golden is stale — run 'just golden' and commit the result"
             git --no-pager diff -- tests/golden
+            git status --porcelain -- tests/golden
             exit 1
           fi
 
