@@ -24,9 +24,12 @@ jobs:
     name: Offline Guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - name: Install mandown for man-page render verification
+        run: cargo install --locked mandown
 
       - name: Run standard, golden, packaging, and text self-tests & checks
         run: |
@@ -35,7 +38,9 @@ jobs:
           python3 scripts/gate_conformance.py --self-test
           python3 scripts/gate_conformance.py Justfile
           python3 scripts/golden_check.py --self-test
+          python3 scripts/golden_check.py
           python3 scripts/man_pages.py --self-test
+          python3 scripts/man_pages.py --check
           python3 scripts/render_packaging.py --self-test
           python3 scripts/aur_check.py --self-test
           python3 scripts/aur_check.py
@@ -84,7 +89,7 @@ jobs:
         if: ${{ !matrix.container }}
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Format check
         run: cargo fmt -- --check
@@ -145,7 +150,7 @@ jobs:
             os: windows-11-arm
 
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain (Ubuntu Container)
         if: startsWith(matrix.platform, 'ubuntu')
