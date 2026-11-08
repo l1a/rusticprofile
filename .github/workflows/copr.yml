@@ -1,27 +1,11 @@
 name: COPR Rebuild
 
-# Triggers a rebuild of the COPR package after the spec changes.
-#
-# WHY NOT "on: release" OR A TAG TRIGGER, which is the obvious choice and is WRONG here:
-# packaging/copr/rusticprofile.spec pins Version: and a Source0 tarball checksum to the last
-# RELEASED tag, so it can only be bumped AFTER that tag exists. The sequence is
-#   1. push tag vX      -> spec still says the PREVIOUS version
-#   2. release workflow -> spec still says the PREVIOUS version
-#   3. commit the packaging bump to main -> spec now says vX
-# A release- or tag-triggered rebuild fires at step 1 or 2 and rebuilds the OLD version.
-# The event that means "there is something new to build" is the commit at step 3, which is
-# exactly what the paths filter below matches.
-#
-# .copr/** is watched as well as packaging/copr/**: the Makefile there is what GENERATES the
-# SRPM, so a change to it alters the build without touching the spec.
+# Triggers a rebuild of the COPR package when a release is tagged, and pushes the COPR
+# project page's description and instructions from packaging/copr/project-*.md.
 
 on:
   push:
-    branches: [ "main" ]
-    paths:
-      - 'packaging/copr/**'
-      - '.copr/**'
-      - '.github/workflows/copr.yml'
+    tags: [ "v*" ]
   workflow_dispatch:
 
 permissions:
@@ -32,15 +16,31 @@ jobs:
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
       - name: Install copr-cli
-        run: dnf -y install copr-cli
+        run: dnf -y install copr-cli git
 
-      - name: Report what the spec pins
+      - name: Refuse unless Cargo.toml matches the released tag
         run: |
           set -euo pipefail
-          grep -E '^(Name|Version|Release):' packaging/copr/rusticprofile.spec
+          git config --global --add safe.directory "$PWD"
+          V=$(python3 scripts/render_packaging.py --print-version)
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG=$(git describe --tags --abbrev=0)
+            echo "manual run: comparing against the last tag, $TAG"
+          fi
+          echo "Cargo.toml: $V"
+          echo "tag:        $TAG"
+          if [ "v$V" != "$TAG" ]; then
+            echo "::error::Cargo.toml is $V but the tag is $TAG — refusing to build a version that was not released"
+            exit 1
+          fi
+          echo "will build rusticprofile $V"
 
       - name: Configure copr-cli
         env:
@@ -49,15 +49,20 @@ jobs:
           COPR_TOKEN: ${{ secrets.COPR_TOKEN }}
         run: |
           set -euo pipefail
-          # Guard rather than fail: a fork has no secrets, and a red check there would be
-          # noise about a credential the fork is not supposed to have.
+          # A fork has no secrets, and a red check there would be noise about a credential the
+          # fork is not supposed to have, so a fork skips. THIS repo must fail instead: a skip
+          # that exits 0 here reports a green rebuild that submitted nothing.
+          # scripts/copr_check.py --self-test runs this step to hold both halves.
           if [ -z "${COPR_LOGIN:-}" ] || [ -z "${COPR_TOKEN:-}" ] || [ -z "${COPR_USERNAME:-}" ]; then
-            echo "::notice::COPR credentials not configured; skipping the rebuild"
+            if [ "${GITHUB_REPOSITORY:-}" = "l1a/rusticprofile" ]; then
+              echo "::error::COPR credentials missing on l1a/rusticprofile; nothing would be rebuilt. Set COPR_LOGIN, COPR_USERNAME and COPR_TOKEN."
+              exit 1
+            fi
+            echo "::notice::COPR credentials not configured on this fork; skipping the rebuild"
             echo "skip=true" >> "$GITHUB_ENV"
             exit 0
           fi
           mkdir -p ~/.config
-          # Written from env, never echoed. Actions masks the values in logs.
           {
             echo "[copr-cli]"
             echo "login = $COPR_LOGIN"
@@ -68,11 +73,30 @@ jobs:
           chmod 600 ~/.config/copr
           echo "skip=false" >> "$GITHUB_ENV"
 
+      - name: Sync the COPR project description and instructions
+        if: env.skip != 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/metadata_check.py
+          copr-cli modify \
+            --description "$(cat packaging/copr/project-description.md)" \
+            --instructions "$(cat packaging/copr/project-instructions.md)" \
+            kentobias/rusticprofile
+          echo "COPR project description and instructions synced from packaging/copr/project-*.md"
+
       - name: Rebuild the COPR package
         if: env.skip != 'true'
         run: |
           set -euo pipefail
-          # build-package rebuilds from the package's stored SCM source config, which is
-          # configured with `make_srpm` method. It waits for the build and exits non-zero
-          # if any chroot fails.
-          copr-cli build-package --name rusticprofile kentobias/rusticprofile
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            REF="$GITHUB_REF_NAME"
+          else
+            REF=$(git describe --tags --abbrev=0)
+          fi
+
+          copr-cli buildscm \
+            --clone-url https://github.com/l1a/rusticprofile.git \
+            --commit "$REF" \
+            --method make_srpm \
+            --enable-net on \
+            kentobias/rusticprofile

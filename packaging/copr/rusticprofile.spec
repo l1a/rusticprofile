@@ -1,4 +1,6 @@
-# COPR spec for rusticprofile. See packaging/aur/PKGBUILD for the sibling packaging target.
+# COPR spec TEMPLATE for rusticprofile. See packaging/aur/PKGBUILD for the sibling
+# packaging target, and .copr/Makefile for how this template is rendered into a real spec
+# at SRPM build time.
 #
 # This spec is written for COPR with "Enable internet access during builds" ON, so
 # `cargo build` resolves crates.io at build time and there is no vendor tarball.
@@ -8,18 +10,19 @@
 #   2. This will NOT build in koji. Fedora proper requires offline builds, so shipping
 #      there would need a vendor tarball as Source1. COPR is the endpoint; see NOTES.md.
 #
-# Version tracks the last RELEASED tag, not Cargo.toml, because Source0 is a tag tarball
-# that must exist. This mirrors packaging/aur/PKGBUILD's pkgver and drifts by one command
-# at release time, not by releases.
+# Version is `@VERSION@` and Source0 is a local archive: `.copr/Makefile` renders the
+# version from Cargo.toml via scripts/render_packaging.py and packs the checkout into
+# %{name}-%{version}.tar.gz. Neither needs a published tag, so a PR can build its own SRPM
+# in CI and no post-release version bump is needed.
 
 Name:           rusticprofile
-Version:        0.2.56
+Version:        @VERSION@
 Release:        1%{?dist}
 Summary:        A local, per-machine scheduler and orchestrator for rustic backups
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/l1a/rusticprofile
-Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
+Source0:        %{name}-%{version}.tar.gz
 
 ExclusiveArch:  x86_64 aarch64
 

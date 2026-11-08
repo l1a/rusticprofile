@@ -9,13 +9,99 @@ on:
       - 'packaging/**'
       - '.copr/**'
       - '.github/workflows/packaging.yml'
+      - '.github/workflows/copr.yml'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'Justfile'
+      - 'scripts/*_check.py'
+      - 'scripts/render_packaging.py'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Verify channel descriptions and licences agree with metadata.toml
+        run: |
+          python3 scripts/metadata_check.py --self-test
+          python3 scripts/metadata_check.py
+
+  aur:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install system dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm git namcap rust rustic gcc-libs python
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Create non-root build user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Render the template for the last released tag and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/aur_check.py
+          python3 scripts/render_packaging.py --self-test
+
+          TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*')
+          V="${TAG#v}"
+          URL="https://github.com/l1a/rusticprofile/archive/refs/tags/${TAG}.tar.gz"
+          echo "rendering for last released tag: ${TAG}"
+          SHA=$(curl -sfL "$URL" | sha256sum | cut -d' ' -f1)
+
+          mkdir -p /tmp/aur-build
+          python3 scripts/render_packaging.py --target aur --version "$V" --sha256 "$SHA" \
+            --out /tmp/aur-build/PKGBUILD
+          chown -R builder:builder /tmp/aur-build
+
+          cd /tmp/aur-build
+          su builder -c "makepkg --printsrcinfo" > .SRCINFO
+          python3 "$GITHUB_WORKSPACE/scripts/aur_check.py" --dir /tmp/aur-build
+
+          su builder -c "makepkg --syncdeps --noconfirm --check"
+
+      - name: Lint with namcap and verify packaged man page
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/aur-build
+          namcap PKGBUILD
+          for pkg in *.pkg.tar.zst; do
+            echo "=== namcap $pkg ==="
+            namcap "$pkg"
+          done
+
+          PKG=$(find . -maxdepth 1 -name 'rusticprofile-[0-9]*.pkg.tar.zst' ! -name '*-debug-*' -print -quit)
+          echo "Verifying man page in $PKG..."
+          mkdir -p /tmp/pkg-extract
+          tar -xf "$PKG" -C /tmp/pkg-extract
+          MAN=/tmp/pkg-extract/usr/share/man/man1/rusticprofile.1.gz
+          test -f "$MAN"
+          HEADER=$(zcat "$MAN" | sed -n '1p')
+          echo "Packaged .TH header: $HEADER"
+          if echo "$HEADER" | grep -q '\$'; then
+            echo "::error::Man page contains literal unexpanded variable in .TH header: $HEADER"
+            exit 1
+          fi
+          if zcat "$MAN" | grep -qE '^[.](Bl|El|It)\b'; then
+            echo "::error::Man page contains raw mdoc macros (.Bl/.El/.It)"
+            exit 1
+          fi
+
   copr:
     runs-on: ubuntu-latest
     container: fedora:latest
@@ -23,12 +109,14 @@ jobs:
       - name: Install system dependencies
         run: dnf -y install git make rpm-build rpmdevtools python3
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Verify the spec has not drifted
-        run: python3 scripts/copr_check.py
+      - name: Verify the spec is still a template
+        run: |
+          python3 scripts/copr_check.py --self-test
+          python3 scripts/copr_check.py
 
-      - name: Build the SRPM exactly as COPR does
+      - name: Build the SRPM from this checkout (plain environment)
         shell: bash
         run: |
           set -euo pipefail
@@ -36,36 +124,37 @@ jobs:
           make -f .copr/Makefile srpm outdir=/tmp/srpm-plain
           ls -1 /tmp/srpm-plain
 
-      - name: Build the SRPM under mock's environment
+      - name: Build the SRPM under mock's environment (and without .git, to test the tar fallback)
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf .copr-sources
+          cp -a . /tmp/work-nogit
+          rm -rf /tmp/work-nogit/.git /tmp/work-nogit/.copr-build
           mkdir -p /builddir /tmp/srpm-mock
           echo "%_topdir /builddir/build" > /builddir/.rpmmacros
           export HOME=/builddir
           echo "HOME=$HOME  _topdir=$(rpmbuild --eval '%{_topdir}')"
-          make -f .copr/Makefile srpm outdir=/tmp/srpm-mock
+          make -C /tmp/work-nogit -f .copr/Makefile srpm outdir=/tmp/srpm-mock
           ls -1 /tmp/srpm-mock
 
-      - name: Verify the SRPM matches the version the spec pins
+      - name: Verify both SRPMs carry Cargo.toml's version and identical source trees
         shell: bash
         run: |
           set -euo pipefail
-          version=$(sed -n 's/^Version:[[:space:]]*//p' packaging/copr/rusticprofile.spec | head -1)
-          srpm=$(find /tmp/srpm-mock -maxdepth 1 -name '*.src.rpm' -print -quit)
-          if [ -z "$srpm" ]; then
-            echo "::error::no .src.rpm was produced"
-            ls -la /tmp/srpm-mock || true
-            exit 1
-          fi
-          echo "spec Version: $version"
-          echo "built:        $(basename "$srpm")"
-          case "$(basename "$srpm")" in
-            rusticprofile-"$version"-*.src.rpm) ;;
-            *)
-              echo "::error::SRPM name does not carry the spec's Version ($version)"
+          version=$(python3 scripts/render_packaging.py --print-version)
+          for dir in /tmp/srpm-plain /tmp/srpm-mock; do
+            srpm=$(find "$dir" -maxdepth 1 -name '*.src.rpm' -print -quit)
+            if [ -z "$srpm" ]; then
+              echo "::error::no .src.rpm was produced in $dir"
               exit 1
-              ;;
-          esac
-          echo "SRPM matches the pinned version"
+            fi
+            echo "$dir -> $(basename "$srpm")"
+            case "$(basename "$srpm")" in
+              rusticprofile-"$version"-*.src.rpm) ;;
+              *)
+                echo "::error::SRPM in $dir does not carry Cargo.toml's version ($version)"
+                exit 1
+                ;;
+            esac
+          done
+          echo "Both SRPMs match Cargo.toml ($version)"
