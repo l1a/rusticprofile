@@ -1,0 +1,41 @@
+# The one place rusticprofile's channel descriptions and licence are written.
+#
+# Most channels carry their text inside the artifact they publish: crates.io reads the
+# published Cargo.toml and README, the AUR the PKGBUILD, COPR's RPM the spec. Those files
+# keep their own readable copy -- Cargo.toml cannot be templated, and the rest are read by
+# people -- and `scripts/metadata_check.py`, run by `just check`, fails when any copy drifts
+# from what is written here.
+#
+# Two channels keep their text on the service instead, where no artifact reaches it: the COPR
+# project page and the GitHub repository's About box. Those are PUSHED from here at release
+# time -- COPR by .github/workflows/copr.yml on every tag, GitHub by `just github-metadata`.
+
+# Cargo.toml's `description`, the PKGBUILD `pkgdesc`, and the spec's `Summary:` must EQUAL this.
+summary = "A local, per-machine scheduler and orchestrator for rustic backups"
+
+# The SPDX identifier every channel must declare.
+license = "GPL-3.0-or-later"
+
+[github]
+# Shown in the repository's About box. GitHub caps it at 350 characters.
+description = "A local, per-machine scheduler and orchestrator for rustic backups"
+# At most 20; lowercase letters, digits and hyphens. Set as an exact list, so a topic removed
+# here is removed from the repository too.
+topics = [
+    "backup",
+    "cli",
+    "launchd",
+    "linux",
+    "macos",
+    "rust",
+    "rustic",
+    "scheduler",
+    "systemd",
+    "windows",
+]
+
+[copr]
+# The COPR project page's description and installation instructions, as Markdown. Every
+# paragraph line at column zero: COPR renders a line indented 4+ spaces as a code block.
+description = "packaging/copr/project-description.md"
+instructions = "packaging/copr/project-instructions.md"

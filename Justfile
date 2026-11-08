@@ -59,6 +59,10 @@ set positional-arguments := true
 BINS      := "rusticprofile"
 MAN_PAGES := "docs/rusticprofile.1"
 
+# Default recipe — list available commands (must precede the COMMON block so bare `just` does not run `install`)
+default:
+    @just --list
+
 # Do NOT edit inside the markers below. Edit templates/justfile-common.just, bump the
 # version in the marker, and propagate to the sibling repos in their own PRs.
 # `just standard-check` fails if this block and that file disagree, and `just check`
@@ -142,9 +146,6 @@ standard-check:
 # <<< COMMON
 
 # ===== PROJECT-SPECIFIC — everything below is this repo's own =====
-# Default recipe
-default:
-    @just --list
 
 # Build the project (debug mode)
 build:
@@ -166,14 +167,20 @@ clean:
 fmt:
     cargo fmt
 
+# Check code formatting without modifying files
+fmt-check:
+    cargo fmt -- --check
+
 # Run clippy lints
 lint:
     cargo clippy --all-targets -- -D warnings
 
-# Run strict checks (formatting, linting, golden argv files, packaging and byte drift) as done in CI
-check: golden-is-current standard-check copr-check text-check wip-check
-    cargo fmt -- --check
-    cargo clippy --all-targets -- -D warnings
+# Alias for lint (cross-repo standard)
+clippy: lint
+
+# Run strict checks (formatting, linting, golden argv files, man page, packaging and byte drift) as done in CI
+check: fmt-check lint standard-check golden-is-current man-check render-check aur-check copr-check metadata-check text-check wip-check
+    @echo "All checks passed."
 
 # Regenerate the golden argv files under tests/golden
 golden:
@@ -181,80 +188,22 @@ golden:
 
 # Fail if any golden argv file is stale or untracked (regenerate with `just golden`)
 golden-is-current:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    # Staleness is checked by content, not by git state: regenerate and compare hashes.
-    # Comparing against `git status` instead would fail on goldens that are staged but not
-    # yet committed, which is a normal mid-commit state and not a problem.
-    hashes() { find tests/golden -type f -name '*.txt' -exec sha256sum {} + 2>/dev/null | sort; }
-    before="$(hashes)"
-    RP_UPDATE_GOLDEN=1 cargo test --test cli_tests golden_ -q >/dev/null 2>&1
-    after="$(hashes)"
-
-    if [ "$before" != "$after" ]; then
-        echo "tests/golden is stale — the argv rusticprofile would run has changed." >&2
-        echo "Review the diff below; if the change is intended, commit it." >&2
-        git --no-pager diff -- tests/golden >&2
-        exit 1
-    fi
-
-    # A golden nobody added to git is as bad as a stale one: CI would regenerate it from
-    # scratch and never notice a change.
-    untracked="$(git ls-files --others --exclude-standard -- tests/golden)"
-    if [ -n "$untracked" ]; then
-        echo "untracked golden files — git add them:" >&2
-        echo "$untracked" >&2
-        exit 1
-    fi
+    @"{{PY}}" scripts/golden_check.py --self-test
+    @"{{PY}}" scripts/golden_check.py
 
 # Run security audit (requires cargo-audit)
 audit:
     @command -v cargo-audit >/dev/null || cargo install cargo-audit
     cargo audit
 
-# The version is read from Cargo.toml into the .TH footer, so the man page and the
-# package can never disagree about which release is being documented.
 # Generate the man page from Markdown using mandown
 man:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p docs
-    VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f2)
-    DATE=$(date +"%B %Y")
+    @"{{PY}}" scripts/man_pages.py --build
 
-    # mandown emits nested bold as `\fB\fB…\fP\fP`. Collapsing it is cosmetic — groff
-    # renders both forms byte-identically (measured) — but the two forms are not the same
-    # bytes, so whichever one this recipe produces is what `just pr` demands be committed.
-    # A host that collapses and a host that does not therefore fight over the file forever.
-    #
-    # `[\]fB` rather than `\\fB`, and the difference is the whole point. A doubled backslash
-    # only means "one literal backslash" if every layer between this line and sed preserves
-    # both; lose one level anywhere and sed reads `\f` as a FORM FEED, matches nothing, and
-    # silently emits the uncollapsed form. A bracket expression has no doubling to lose, so
-    # it cannot be misread that way by any shell, on any platform.
-    mandown docs/rusticprofile.1.md RUSTICPROFILE 1 \
-      | sed -e 's/[\]fB[\]fB/\\fB/g' -e 's/[\]fP[\]fP/\\fP/g' \
-            -e "s/^[.]TH \"RUSTICPROFILE\" 1/.TH \"RUSTICPROFILE\" \"1\" \"$DATE\" \"rusticprofile $VERSION\" \"Backup Scheduler\"/" \
-      > docs/rusticprofile.1
-
-    # The defect this guards was not that the collapse was wrong — it was that failing to
-    # collapse was SILENT. The page still built, still rendered identically, and only ever
-    # surfaced as `just pr` refusing to pass on a different host, weeks later, with nothing
-    # connecting the two. So assert the post-condition rather than trusting the pipeline:
-    # a step that can quietly do nothing is exactly what this project exists to refuse.
-    if grep -qF '\fB\fB' docs/rusticprofile.1 || grep -qF '\fP\fP' docs/rusticprofile.1; then
-        echo "error: docs/rusticprofile.1 still contains doubled \\fB\\fB / \\fP\\fP after the" >&2
-        echo "       collapse step, so that step did nothing on this platform. Do not commit" >&2
-        echo "       the file — the divergence is what makes 'just pr' fail on other hosts." >&2
-        echo "       Measure it here (NOTES.md 0.2.9 has the history) rather than working around it." >&2
-        exit 1
-    fi
-    if ! grep -q "rusticprofile $VERSION" docs/rusticprofile.1; then
-        echo "error: the .TH line does not carry 'rusticprofile $VERSION' — the version" >&2
-        echo "       substitution did nothing on this platform." >&2
-        exit 1
-    fi
+# Verify docs/rusticprofile.1 is current in the worktree and at HEAD (offline, shell-free)
+man-check:
+    @"{{PY}}" scripts/man_pages.py --self-test
+    @"{{PY}}" scripts/man_pages.py --check
 
 # Run criterion micro-benchmarks (none yet — see the NOTES.md backlog)
 bench:
@@ -262,7 +211,7 @@ bench:
 
 # Install git hooks (run once after cloning)
 install-hooks:
-    bash scripts/install_hooks.sh
+    @"{{PY}}" scripts/install_hooks.py
 
 # One-time repo setup: install git hooks and any other local tooling
 setup: install-hooks
@@ -276,12 +225,87 @@ dev: setup fmt lint test build
 publish-check:
     cargo publish --dry-run
 
-# Publish to crates.io
+# Publish to crates.io — refuses unless HEAD is the release tag
 publish:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
+    fail() { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
+    pass() { echo -e "${GREEN}[✓]${NC} $1"; }
+
+    VER=$("{{PY}}" scripts/render_packaging.py --print-version)
+    TAG="v${VER}"
+    if [ "${PUBLISH_ANY_REF:-0}" != "1" ]; then
+        TAG_COMMIT=$(git rev-list -n 1 "refs/tags/${TAG}" 2>/dev/null || true)
+        [ -n "$TAG_COMMIT" ] \
+            || fail "tag ${TAG} does not exist. Tag and push the release first (or set PUBLISH_ANY_REF=1 to override)."
+        HEAD_COMMIT=$(git rev-parse HEAD)
+        [ "$HEAD_COMMIT" = "$TAG_COMMIT" ] \
+            || fail "HEAD ($(git rev-parse --short HEAD)) is not ${TAG} ($(git rev-parse --short "$TAG_COMMIT")). Check out ${TAG} or main at the tag first."
+        pass "HEAD is ${TAG} ($(git rev-parse --short HEAD))"
+    fi
     cargo publish
 
-# Build and lint the AUR package in a container — no Arch install needed
-aur-verify:
+# Run all offline packaging guards
+packaging-check: render-check aur-check copr-check metadata-check
+
+# Verify scripts/render_packaging.py still substitutes and still refuses (offline)
+render-check:
+    @"{{PY}}" scripts/render_packaging.py --self-test
+
+# Verify packaging/aur/PKGBUILD is still a template recording no version (offline)
+aur-check:
+    @"{{PY}}" scripts/aur_check.py --self-test
+    @"{{PY}}" scripts/aur_check.py
+
+# Generate .SRCINFO beside a RENDERED PKGBUILD in DIR (needs podman)
+aur-srcinfo DIR:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RED='\033[0;31m'; NC='\033[0m'
+    fail() { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
+
+    DIR="$(cd "{{DIR}}" && pwd)"
+    [ -f "$DIR/PKGBUILD" ] || fail "$DIR/PKGBUILD not found — render it first with: just aur-render <version> <dir>"
+    OUT="$DIR/.SRCINFO"
+    command -v podman >/dev/null || fail "podman is required (or edit this recipe for docker)"
+
+    TMP="$(mktemp "$DIR/.SRCINFO.XXXXXX")"
+    trap 'rm -f "$TMP"' EXIT
+
+    podman run --rm -v "$DIR:/pkg:ro,z" archlinux:base-devel bash -c '
+        useradd -m builder; mkdir -p /home/builder/b && cp /pkg/PKGBUILD /home/builder/b/
+        chown -R builder /home/builder/b; cd /home/builder/b
+        su builder -c "makepkg --printsrcinfo"' > "$TMP"
+
+    [ -s "$TMP" ] || fail ".SRCINFO came back empty — $OUT left untouched"
+    grep -q '^pkgbase = ' "$TMP" || fail "output has no 'pkgbase =' line — $OUT left untouched"
+
+    chmod 0644 "$TMP"
+    mv "$TMP" "$OUT"
+    trap - EXIT
+    "{{PY}}" "{{justfile_directory()}}/scripts/aur_check.py" --dir "$DIR"
+
+# Render packaging/aur/{PKGBUILD,.SRCINFO} for a released tag into DIR (needs network + podman)
+aur-render VERSION DIR:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
+    fail() { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
+    V="{{VERSION}}"; V="${V#v}"
+    DIR="{{DIR}}"
+    URL="https://github.com/l1a/rusticprofile/archive/refs/tags/v${V}.tar.gz"
+
+    curl -sfIL -o /dev/null "$URL" || fail "no release tarball at $URL — tag and push v$V first"
+    SHA=$(curl -sfL "$URL" | sha256sum | cut -d' ' -f1)
+    mkdir -p "$DIR"
+    "{{PY}}" "{{justfile_directory()}}/scripts/render_packaging.py" \
+        --target aur --version "$V" --sha256 "$SHA" --out "$DIR/PKGBUILD"
+    just aur-srcinfo "$DIR"
+    echo -e "${GREEN}[✓]${NC} rendered PKGBUILD + .SRCINFO for v${V} (sha256 ${SHA}) in $DIR"
+
+# Render and build-verify the AUR package for a released tag in a container (default: latest tag)
+aur-verify VERSION="":
     #!/usr/bin/env bash
     set -euo pipefail
     BOLD='\033[1m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -290,20 +314,18 @@ aur-verify:
     info() { echo -e "${YELLOW}[→]${NC} $1"; }
 
     command -v podman >/dev/null || fail "podman is required (or edit this recipe for docker)"
+    V="{{VERSION}}"; V="${V#v}"
+    if [ -z "$V" ]; then
+        TAG=$(git describe --tags --abbrev=0 2>/dev/null || fail "no tags found; pass a version")
+        V="${TAG#v}"
+    fi
 
-    # `rustic` is installed in the container ON PURPOSE, and it is the whole reason this
-    # recipe exists rather than a one-line makepkg. Without it the build still succeeds,
-    # but the rustic-backed integration tests skip themselves with a printed notice — so a
-    # green makepkg proves considerably less than it looks like it does. That mistake was
-    # made once here already; encoding the fix in a recipe is how it stays fixed.
+    STAGE=$(mktemp -d)
+    trap 'rm -rf "$STAGE"' EXIT
+    just aur-render "$V" "$STAGE"
+
     info "Building the package in archlinux:base-devel (this compiles the crate)..."
-    # `z`, never `Z`. Uppercase assigns a fresh private MCS category pair per container run,
-    # which permanently relabels this directory to categories no *other* container holds. On a
-    # machine where the repo lives under a Syncthing folder, that is enough to make Syncthing's
-    # own container fail to scan it: `permission denied`, one unsyncable directory, forever.
-    # Lowercase `z` gives the shared `container_file_t:s0` label with no categories, which is
-    # what a read-only PKGBUILD mount wants and is portable to hosts with no fcontext rule.
-    podman run --rm -v "{{justfile_directory()}}/packaging/aur:/pkg:ro,z" archlinux:base-devel bash -c '
+    podman run --rm -v "$STAGE:/pkg:ro,z" archlinux:base-devel bash -c '
         set -e
         pacman -Syu --noconfirm --quiet >/dev/null 2>&1
         pacman -S --noconfirm --quiet --needed namcap rust rustic gcc-libs >/dev/null 2>&1
@@ -315,10 +337,6 @@ aur-verify:
         su builder -c "makepkg --noconfirm" > /tmp/mk.log 2>&1 || { echo "MAKEPKG FAILED"; tail -30 /tmp/mk.log; exit 1; }
         echo "--- tests run by check() ---"
         grep -E "^test result" /tmp/mk.log
-        # makepkg also emits a -debug package. Globbing both hands tar a second argument
-        # it reads as a member name ("Not found in archive"), and because that sits in a
-        # pipeline the failure is swallowed and the recipe reports success anyway. Select
-        # the real package explicitly, and check the payload listing outside a pipeline.
         PKGFILE=$(find . -maxdepth 1 -name "*.pkg.tar.zst" ! -name "*-debug-*" | head -1)
         [ -n "$PKGFILE" ] || { echo "no package was produced"; exit 1; }
         echo "--- package payload ($PKGFILE) ---"
@@ -330,79 +348,26 @@ aur-verify:
         namcap "$PKGFILE" || true
     ' || fail "container verification failed"
     pass "package builds, tests pass, payload and namcap shown above"
-    echo
-    echo -e "${BOLD}Two namcap package warnings are expected and correct:${NC}"
-    echo "  rustic    — namcap reads linked libraries; rusticprofile *spawns* rustic, so it cannot see this"
-    echo "  gcc-libs  — implicitly satisfied via libgcc_s, and the standard Rust dependency on Arch"
 
-# Regenerate packaging/aur/.SRCINFO from the PKGBUILD (never edit it by hand)
-aur-srcinfo:
+# Render and install locally with makepkg -si, without the AUR (Arch Linux only; default: latest tag)
+aur-local VERSION="":
     #!/usr/bin/env bash
     set -euo pipefail
-    RED='\033[0;31m'; NC='\033[0m'
-    fail() { echo -e "${RED}[✗]${NC} $1" >&2; exit 1; }
-
-    # The AUR rejects a .SRCINFO that disagrees with its PKGBUILD, and the file is pure
-    # derived data — so it is generated, never written.
-    OUT="{{justfile_directory()}}/packaging/aur/.SRCINFO"
-
-    # Guarded up front, as `aur-verify` already does. Without it the redirect below fired
-    # first and `podman: command not found` second, so the recipe TRUNCATED the tracked
-    # .SRCINFO to 0 bytes on any host without podman — measured 2026-08-10, 503 -> 0.
-    command -v podman >/dev/null || fail "podman is required (or edit this recipe for docker)"
-
-    # Generated to a temp file and moved into place, never redirected at the real file. A
-    # shell redirect truncates before the command runs, so a failure part-way through — a
-    # missing image, no network, a broken PKGBUILD — would destroy the committed file rather
-    # than leave it alone. The AUR would then reject a 0-byte .SRCINFO on the user's machine
-    # and nowhere else, which is the failure shape this repo exists to refuse.
-    #
-    # The temp file is created in the destination directory, not /tmp. /tmp is tmpfs, so
-    # `mv` from there is a cross-filesystem copy that preserves `user_tmp_t` and mktemp's
-    # 0600. Syncthing's container cannot read that label, and one file wedges the folder
-    # (`~/AGENTS.md` §12). A same-directory rename keeps the directory's type.
-    TMP="$(mktemp "$(dirname "$OUT")/.SRCINFO.XXXXXX")"
-    trap 'rm -f "$TMP"' EXIT
-
-    # `z`, not `Z` — see the note in `aur-verify`.
-    podman run --rm -v "{{justfile_directory()}}/packaging/aur:/pkg:ro,z" archlinux:base-devel bash -c '
-        useradd -m builder; mkdir -p /home/builder/b && cp /pkg/PKGBUILD /home/builder/b/
-        chown -R builder /home/builder/b; cd /home/builder/b
-        su builder -c "makepkg --printsrcinfo"' > "$TMP"
-
-    # `makepkg --printsrcinfo` can exit 0 having printed nothing useful, so the content is
-    # checked rather than the exit code: every .SRCINFO begins with a `pkgbase` line.
-    [ -s "$TMP" ] || fail ".SRCINFO came back empty — $OUT left untouched"
-    grep -q '^pkgbase = ' "$TMP" || fail "output has no 'pkgbase =' line — $OUT left untouched"
-
-    chmod 0644 "$TMP"
-    mv "$TMP" "$OUT"
-    trap - EXIT
-    echo "packaging/aur/.SRCINFO regenerated"
-
-# Point the PKGBUILD at a released tag: bump pkgver, reset pkgrel, refresh the checksum
-aur-bump VERSION:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
-    fail() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
-    V="{{VERSION}}"
+    command -v makepkg >/dev/null || { echo "error: makepkg not found (Arch Linux only)" >&2; exit 1; }
+    V="{{VERSION}}"; V="${V#v}"
+    if [ -z "$V" ]; then
+        TAG=$(git describe --tags --abbrev=0)
+        V="${TAG#v}"
+    fi
     URL="https://github.com/l1a/rusticprofile/archive/refs/tags/v${V}.tar.gz"
+    SHA=$(curl -sfL "$URL" | sha256sum | cut -d' ' -f1)
+    STAGE=$(mktemp -d)
+    trap 'rm -rf "$STAGE"' EXIT
+    "{{PY}}" scripts/render_packaging.py --target aur --version "$V" --sha256 "$SHA" --out "$STAGE/PKGBUILD"
+    cd "$STAGE" && makepkg -si
 
-    # The tag must exist first: the PKGBUILD builds from the release tarball, so bumping
-    # ahead of the release produces a package nobody can build.
-    curl -sfIL -o /dev/null "$URL" || fail "no release tarball at $URL — tag and release v$V first"
-
-    SHA=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
-    P="{{justfile_directory()}}/packaging/aur/PKGBUILD"
-    sed -i -e "s/^pkgver=.*/pkgver=${V}/" -e "s/^pkgrel=.*/pkgrel=1/" \
-           -e "s/^sha256sums=.*/sha256sums=('${SHA}')/" "$P"
-    echo -e "${GREEN}[✓]${NC} pkgver=${V} pkgrel=1 sha256=${SHA}"
-    just aur-srcinfo
-    echo "Now run: just aur-verify"
-
-# Push packaging/aur to the AUR — verifies the checksum and refuses if the AUR is down
-aur-publish:
+# Render for a released tag and push to the AUR (asks before publishing; default: Cargo.toml version)
+aur-publish VERSION="":
     #!/usr/bin/env bash
     set -euo pipefail
     BOLD='\033[1m'; GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -410,31 +375,15 @@ aur-publish:
     fail() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
     info() { echo -e "${YELLOW}[→]${NC} $1"; }
 
-    DIR="{{justfile_directory()}}/packaging/aur"
-    [ -f "$DIR/PKGBUILD" ] && [ -f "$DIR/.SRCINFO" ] || fail "packaging/aur is missing PKGBUILD or .SRCINFO"
+    V="{{VERSION}}"; V="${V#v}"
+    if [ -z "$V" ]; then
+        V=$("{{PY}}" scripts/render_packaging.py --print-version)
+    fi
 
-    PKGVER=$(sed -n 's/^pkgver=//p' "$DIR/PKGBUILD")
-    pass "PKGBUILD pkgver: $PKGVER"
+    STAGE=$(mktemp -d)
+    trap 'rm -rf "$STAGE"' EXIT
+    just aur-render "$V" "$STAGE"
 
-    # .SRCINFO must agree with the PKGBUILD. The AUR rejects a mismatch, and finding that
-    # out from a push rejection is a worse way to learn it than finding out here.
-    grep -q "pkgver = $PKGVER" "$DIR/.SRCINFO" \
-        || fail ".SRCINFO disagrees with PKGBUILD — run: just aur-srcinfo"
-    pass ".SRCINFO agrees with PKGBUILD"
-
-    # The classic AUR breakage is a bumped pkgver with a stale checksum, which fails on the
-    # user's machine and nowhere else. Check it against the tarball that will actually be
-    # downloaded.
-    info "Verifying sha256sums against the real tarball..."
-    URL="https://github.com/l1a/rusticprofile/archive/refs/tags/v${PKGVER}.tar.gz"
-    ACTUAL=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
-    DECLARED=$(sed -n "s/^sha256sums=('\(.*\)')/\1/p" "$DIR/PKGBUILD")
-    [ "$ACTUAL" = "$DECLARED" ] \
-        || fail "checksum mismatch for v$PKGVER — declared $DECLARED, actual $ACTUAL. Run: just aur-bump $PKGVER"
-    pass "sha256 matches the v$PKGVER tarball"
-
-    # The AUR takes maintenance windows, and during one the SSH endpoint authenticates and
-    # then refuses. Reporting that plainly beats a confusing git failure.
     info "Checking the AUR is reachable..."
     OUT=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new aur@aur.archlinux.org help 2>&1 || true)
     if echo "$OUT" | grep -qi 'maintenance'; then
@@ -445,11 +394,9 @@ aur-publish:
     pass "AUR reachable and the SSH key is accepted"
 
     echo
-    echo -e "${BOLD}About to publish rusticprofile $PKGVER to the AUR.${NC}"
+    echo -e "${BOLD}About to publish rusticprofile $V to the AUR.${NC}"
     echo "This is public and immediate."
     echo ""
-    # Same three-way answer as the pre-PR gate: an env var for non-interactive callers, a
-    # terminal for humans, piped input otherwise — and never a block that hangs.
     if [ -n "${AUR_CONFIRM:-}" ]; then
         CONFIRM="$AUR_CONFIRM"
         echo "Publish to the AUR? [y/N] $CONFIRM   (answered by AUR_CONFIRM)"
@@ -463,11 +410,9 @@ aur-publish:
     fi
     [ "$CONFIRM" = "y" ] || [ "$CONFIRM" = "Y" ] || { echo -e "${RED}Aborted.${NC}"; exit 1; }
 
-    CLONE=$(mktemp -d)
-    trap 'rm -rf "$CLONE"' EXIT
-    git clone "ssh://aur@aur.archlinux.org/rusticprofile.git" "$CLONE/pkg" 2>&1 | tail -2
-    cp "$DIR/PKGBUILD" "$DIR/.SRCINFO" "$CLONE/pkg/"
-    cd "$CLONE/pkg"
+    git clone "ssh://aur@aur.archlinux.org/rusticprofile.git" "$STAGE/pkg" 2>&1 | tail -2
+    cp "$STAGE/PKGBUILD" "$STAGE/.SRCINFO" "$STAGE/pkg/"
+    cd "$STAGE/pkg"
     if git diff --quiet --exit-code -- PKGBUILD .SRCINFO && [ -z "$(git status --porcelain)" ]; then
         pass "the AUR already matches these files — nothing to push"
         exit 0
@@ -475,95 +420,45 @@ aur-publish:
     git add PKGBUILD .SRCINFO
     git -c user.name="$(git -C {{justfile_directory()}} config user.name)" \
         -c user.email="$(git -C {{justfile_directory()}} config user.email)" \
-        commit -q -m "rusticprofile $PKGVER"
+        commit -q -m "rusticprofile $V"
     git push origin master 2>&1 | tail -3
-    pass "published rusticprofile $PKGVER to the AUR"
+    pass "published rusticprofile $V to the AUR"
     echo "  https://aur.archlinux.org/packages/rusticprofile"
 
+# Alias for aur-publish (cross-repo standard)
+publish-aur VERSION="": (aur-publish VERSION)
+
 # ===== COPR =====
-#
-# packaging/copr/rusticprofile.spec is the AUR PKGBUILD's construct with the AUR PKGBUILD's exposure:
-# its `Version:` tracks the last RELEASED tag (Source0 is a tag tarball that must exist), so
-# it is bumped by a human, at release time, in a separate commit, with nothing checking the
-# result. That is precisely how PKGBUILDs drift while CI stays green. These recipes are
-# retch's answer applied to rusticprofile before the drift rather than after.
-#
-# There is deliberately NO `copr-publish`. .github/workflows/copr.yml already rebuilds the
-# package when the packaging commit lands on main, so a manual publish recipe would either
-# duplicate that build or race it. The bump is the manual step; the rebuild is not.
 
-# Verify packaging/copr/rusticprofile.spec has not drifted (offline, no network, no rpm tooling)
+# Verify packaging/copr/rusticprofile.spec is still a template and copr.yml's credentials guard holds (offline)
 copr-check:
-    @{{PY}} scripts/copr_check.py --self-test
-    @{{PY}} scripts/copr_check.py
+    @"{{PY}}" scripts/copr_check.py --self-test
+    @"{{PY}}" scripts/copr_check.py
 
-# Two defect classes this tree has actually carried, both invisible to review because the
-# damage is one byte: a backslash that collapsed in transport (`~/AGENTS.md` sec.14 --
-# `templates/justfile-common.just:22` held `usr` + 0x08 + `in` for months, in the file whose
-# whole purpose is to be vendored byte-identically into the sibling repos), and a CRLF
-# worktree copy, which git normalises out of its own view while `.gitattributes` pins
-# `eol=lf` -- `git diff` shows nothing, and one `git add` makes `git status` clean while
-# every CR stays on disk. Measured, not assumed; `git ls-files --eol` is the oracle.
-#
-# The self-test runs FIRST so a broken guard fails as a broken guard rather than as a clean
-# tree -- `0.2.13`'s third severity, applied to the check itself.
-#
-# The blank line below is load-bearing: `just` takes the LAST contiguous comment block as the
-# doc comment, so prose written straight above a recipe displaces its description in
-# `just --list`. That is `0.1.2`, and `standard-check` still shows it.
+# Print packaging/copr/rusticprofile.spec rendered for Cargo.toml's version (offline)
+copr-render:
+    @"{{PY}}" scripts/render_packaging.py --target copr
+
+# Verify every channel's description and licence agrees with packaging/metadata.toml (offline)
+metadata-check:
+    @"{{PY}}" scripts/metadata_check.py --self-test
+    @"{{PY}}" scripts/metadata_check.py
+
+# Sync GitHub repo description and topics from packaging/metadata.toml (pass --dry-run to preview)
+github-metadata *ARGS:
+    "{{PY}}" scripts/metadata_check.py --sync-github {{ARGS}}
 
 # Refuse control bytes and carriage returns in tracked text (offline, no network)
 text-check:
-    @{{PY}} scripts/text_check.py --self-test
-    @{{PY}} scripts/text_check.py
+    @"{{PY}}" scripts/text_check.py --self-test
+    @"{{PY}}" scripts/text_check.py
 
-# `text-check` walks `git ls-files`, and git never offers a gitignored path -- so `WIP.md`, the
-# Syncthing-synced handoff file, is the one text file in this tree that nothing above protects.
-# LF is the base model everywhere (80 tracked text files, 0 carriage returns, measured by bytes
-# 2026-09-22), and this recipe extends that guarantee to it. An absent WIP.md passes: it is
-# per-machine and untracked, so CI and a fresh clone have none. Plain, not shebang, like
-# `text-check`, so it adds nothing to what `check` needs from the shell.
-
-# Refuse carriage returns in the gitignored WIP.md (offline; passes when it is absent)
+# Prove reset_wip.py rewrites only its marked block, and that WIP.md is still LF (offline; passes when absent)
 wip-check:
-    @{{PY}} scripts/wip_check.py --self-test
-    @{{PY}} scripts/wip_check.py
+    @"{{PY}}" scripts/reset_wip.py --self-test
+    @"{{PY}}" scripts/reset_wip.py --check-endings
 
-# Point the spec at a released tag: bump Version, reset Release, add a %changelog entry
-copr-bump VERSION:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
-    fail() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
-    V="{{VERSION}}"
-    SPEC="{{justfile_directory()}}/packaging/copr/rusticprofile.spec"
-    URL="https://github.com/l1a/rusticprofile/archive/refs/tags/v${V}.tar.gz"
-
-    # Same precondition as aur-bump, for the same reason: Source0 is the release tarball, so
-    # bumping ahead of the tag pins something COPR cannot fetch. This is also why the spec
-    # legitimately trails Cargo.toml for a whole release cycle.
-    curl -sfIL -o /dev/null "$URL" || fail "no release tarball at $URL — tag and release v$V first"
-
-    grep -q "^Version:" "$SPEC" || fail "no Version: tag in $SPEC"
-    sed -i -e "s/^Version:\( *\).*/Version:\1${V}/" \
-           -e "s/^Release:\( *\).*/Release:\11%{?dist}/" "$SPEC"
-
-    # Prepended, because rpm's changelog is newest-first and copr_check.py compares the FIRST
-    # entry. Date in rpm's required C-locale format — LC_ALL is pinned so a non-English
-    # locale cannot emit a month name rpmbuild will reject.
-    NAME=$(git -C "{{justfile_directory()}}" config user.name)
-    EMAIL=$(git -C "{{justfile_directory()}}" config user.email)
-    STAMP=$(LC_ALL=C date '+%a %b %d %Y')
-    ENTRY="* ${STAMP} ${NAME} <${EMAIL}> - ${V}-1\n- Update to ${V}\n\n"
-    awk -v entry="$ENTRY" '
-        /^%changelog$/ && !done { print; printf "%s", entry; done = 1; next } { print }
-    ' "$SPEC" > "$SPEC.tmp" && mv "$SPEC.tmp" "$SPEC"
-
-    echo -e "${GREEN}[✓]${NC} Version=${V} Release=1 + %changelog entry"
-    just copr-check
-    echo "Commit packaging/copr — .github/workflows/copr.yml rebuilds COPR when it lands on main"
-
-# Merge the active PR, switch to main, pull, and delete the branch (requires gh)
+# Merge the active PR, switch to main, pull, delete the branch, and update WIP.md (requires gh)
 merge-pr:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -572,32 +467,23 @@ merge-pr:
         echo "Error: You are already on main."
         exit 1
     fi
-    # Refuse to merge over a failing check.
-    #
-    # `gh pr merge` happily merges a red PR when the repository has no branch protection,
-    # and "wait for the checks to settle" is not the same as "wait for them to pass" — a
-    # merge went in over a failing fedora-x64 leg on #19 for exactly that reason. The gate
-    # belongs here, in the one recipe that merges, for the same reason `open-pr` is the one
-    # recipe that opens.
+
+    # Verify the PR's remote head commit matches local HEAD so unpushed local commits are never silently dropped.
+    LOCAL_HEAD=$(git rev-parse HEAD)
+    PR_HEAD=$(gh pr view --json headRefOid --jq .headRefOid 2>/dev/null || echo "")
+    if [ -n "$PR_HEAD" ] && [ "$PR_HEAD" != "$LOCAL_HEAD" ]; then
+        echo "Error: PR head ($PR_HEAD) does not match local HEAD ($LOCAL_HEAD). Push your changes first."
+        exit 1
+    fi
+
     echo "Checking CI on this branch..."
     STATES=$(gh pr view --json statusCheckRollup \
         --jq '[.statusCheckRollup[]? | select(.conclusion != "SKIPPED") | .conclusion]' 2>/dev/null || echo '[]')
 
-    # NO checks at all is not "green", and this arm exists because the gate below cannot tell
-    # the difference. An empty rollup matches neither `""` nor FAILURE, so without this the
-    # recipe printed "CI is green." and merged a commit CI had never seen — the v0.1.5 failure
-    # one layer up, where "nothing ran" is indistinguishable from "everything passed".
-    #
-    # Hit for real on 2026-08-06: GitHub was not creating runs for pushed commits (a
-    # close/reopen of the PR did not trigger one either), so the head sat with an empty rollup
-    # while the branch looked mergeable. Recovered with `gh workflow run rust.yml --ref <branch>`.
-    # Compared as a string rather than piped through `jq -e length`: `gh --jq` is gh's *built-in*
-    # jq, but an external `jq` is not on a default Windows PATH (it happens to be here via scoop),
-    # and a gate that silently degrades where its dependency is missing is worse than no gate.
     if [ "$(printf '%s' "$STATES" | tr -d '[:space:]')" = "[]" ]; then
         echo "Error: no checks have reported for this commit at all."
         echo "       That is not the same as passing. GitHub sometimes fails to create a run;"
-        echo "       force one with: gh workflow run rust.yml --ref $BRANCH"
+        echo "       force one with: gh workflow run ci.yml --ref $BRANCH"
         exit 1
     fi
 
@@ -622,9 +508,21 @@ merge-pr:
     echo "Deleting local branch $BRANCH..."
     git branch -D "$BRANCH" 2>/dev/null || true
     git fetch --prune
-    echo ""
-    echo "Reminder: update WIP.md (active branch, latest commit, open tasks) before"
-    echo "ending the session or switching machines — AGENTS.md Part 1 section 3."
+    "{{PY}}" scripts/reset_wip.py
+
+# Prune remote branches already merged into main, plus local branches whose upstream is gone
+prune-branches:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git fetch --prune
+    for b in $(git branch -r --merged origin/main | sed 's/^[[:space:]]*//' | grep '^origin/' | grep -v -E '^origin/(HEAD|main|gh-pages)$' | sed 's#^origin/##'); do
+        echo "Deleting merged remote branch origin/$b..."
+        git push origin --delete "$b"
+    done
+    for b in $(git for-each-ref --format='%(refname:short) %(upstream:track)' refs/heads | awk '$2 == "[gone]" {print $1}'); do
+        echo "Deleting local branch $b (upstream gone)..."
+        git branch -D "$b"
+    done
 
 # Pre-PR gate: automated checks plus a manual checklist, all of which must pass
 pr:

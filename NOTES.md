@@ -120,9 +120,9 @@ backstop, not the control: the control is that secrets never enter this process 
   `docs/rusticprofile.1.md` by `just man` (mandown), with the version read out of
   `Cargo.toml`. Run `just man` after any version bump and commit the result — `just pr`
   fails if it is dirty. `just install` installs the committed page and does not need mandown.
-- **Quality gate**: `just check` = the golden-staleness gate, `standard-check` (the vendored
-  helpers' self-tests), `copr-check`, `text-check`, `wip-check`, `cargo fmt --check` and
-  `cargo clippy --all-targets -- -D warnings`. CI runs fmt, clippy and the golden gate itself; `pre-push` runs all of it.
+- **Quality gate**: `just check` = the golden-staleness gate (`golden-is-current`), `standard-check` (the vendored
+  helpers' self-tests), `man-check`, `packaging-check` (`render-check`, `aur-check`, `copr-check`, `metadata-check`), `text-check`, `wip-check`, `fmt-check` (`cargo fmt -- --check`) and
+  `lint` (`cargo clippy --all-targets -- -D warnings`). Every step is shell-free so `just check` runs on a default Windows `PATH` too. CI runs `just check`; `pre-push` runs all of it.
 - **Pre-PR gate**: never call `gh pr create` directly — run `just open-pr`, which runs
   `just pr` first and only proceeds if it passes. `gh` and `git` have no hook of their own
   for "a PR is about to open", so this recipe is the one call site that can gate it. It is
@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.57)
+## Current State (v0.2.58)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -414,12 +414,6 @@ goes in §5.
 
 - [ ] **A Pre-PR Checklist section in `AGENTS.md` Part 2, mirroring retch's §4.** Until it exists,
       `just pr`'s manual checklist is the checklist, and it is the one that binds.
-- [ ] **`just check` is not portable to a default Windows PATH**, because `golden-is-current` is a
-      bash shebang recipe and a `check` dependency. Everything else in the chain is plain.
-- [ ] **`merge-pr` does not update `WIP.md`.** Both siblings rewrite a WIP state block on every
-      merge (`retch`'s `update_wip.py`, `etr`'s `reset_wip.py`); here the recipe only prints a
-      reminder. The guard half of their change landed here (`just wip-check`, `0.2.45`); the
-      updater did not, and would need the same byte-preserving, exactly-one-match discipline.
 - [ ] **`just aur-verify` hides its own failure.** It sends `pacman` to `/dev/null`, so a broken
       container reports only `container verification failed` (`0.2.28`, §5.5). A visible failure
       path is a candidate change, deliberately not made inside a packaging-only release.
