@@ -1,6 +1,6 @@
 [package]
 name = "rusticprofile"
-version = "0.2.60"
+version = "0.2.61"
 edition = "2024"
 authors = ["Ken Tobias"]
 description = "A local, per-machine scheduler and orchestrator for rustic backups"
@@ -25,7 +25,7 @@ name = "rusticprofile"
 path = "src/main.rs"
 
 # Dependencies are added as the milestone that needs them lands, not up front.
-# The full planned set is recorded in NOTES.md "Current State" — serde/serde_yaml_ng and toml
+# The full planned set is recorded in NOTES.md "Current State" — serde/serde-saphyr and toml
 # arrive with `config/` (M1 step 2), serde_json and jiff with the runner, nix and
 # semver with exec and version checks.
 [dependencies]
@@ -35,7 +35,7 @@ clap_complete_nushell = "4.6"
 anyhow = "1.0"
 owo-colors = "4.0"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_yaml_ng = "0.10.0"
+serde-saphyr = { version = "2.1.1", default-features = false, features = ["deserialize"] }
 toml = "1.1.4"
 dirs = "7.0.0"
 jiff = "0.2.39"

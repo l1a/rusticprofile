@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.60)
+## Current State (v0.2.61)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -510,7 +510,10 @@ The version in brackets names the release entry with the full story (`git show 3
   `set -e` on the command substitution, so when `git status` exits 128 (`fatal: detected dubious
   ownership` or `not a git repository`) with empty stdout, `-n ""` is false and the step passes on
   every run without checking `tests/golden` (`0.2.60` — assign `status_out="$(git status ...)"` on
-  its own line first).
+  its own line first); and stripping `GIT_CONFIG_KEY_*` / `GIT_CONFIG_VALUE_*` from a subprocess
+  environment without also stripping `GIT_CONFIG_COUNT` and `GIT_CONFIG_PARAMETERS` makes `git`
+  exit 128 (`error: missing config key GIT_CONFIG_KEY_0`) whenever a caller exports
+  `GIT_CONFIG_COUNT` (`0.2.61`).
 - **Never let a `--json` run be the oracle for a message `--json` suppresses.** rustic moves its
   "successfully saved" confirmation to stdout under `--json`, so a stderr grep reported the
   reassuring "0.11.4 no longer saves the 0-byte snapshot" — false.

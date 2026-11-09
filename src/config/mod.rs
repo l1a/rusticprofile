@@ -136,7 +136,7 @@ pub fn load(opts: &LoadOptions) -> Result<Config, ValidationErrors> {
         )])
     })?;
 
-    let raw: RawConfig = serde_yaml_ng::from_str(&text).map_err(|e| {
+    let raw: RawConfig = serde_saphyr::from_str(&text).map_err(|e| {
         ValidationErrors(vec![Violation::new(display_path.clone(), {
             let msg = e.to_string();
             // serde reports an unrecognised key as "unknown field"; that is the shape a
@@ -621,6 +621,13 @@ jobs:
 
         let err = load_as("schema: 1\njobs: [oops\n", "h").unwrap_err();
         assert!(err.0[0].message.contains("not valid YAML"));
+
+        let unknown = load_as("schema: 1\nunknown-top-key: 1\njobs: {}\n", "h").unwrap_err();
+        assert!(
+            unknown.0[0].message.contains("this rusticprofile is"),
+            "unknown field should include version skew hint, got: {}",
+            unknown.0[0].message
+        );
     }
 
     #[test]

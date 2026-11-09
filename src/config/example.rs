@@ -378,12 +378,13 @@ sources = ["/home/user/.gnupg"]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::job::RawConfig;
 
     #[test]
     fn jobs_example_is_valid_yaml() {
-        let parsed: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(JOBS_YAML).expect("the jobs example must parse as YAML");
-        assert!(parsed.get("jobs").is_some(), "it must declare jobs");
+        let parsed: RawConfig =
+            serde_saphyr::from_str(JOBS_YAML).expect("the jobs example must parse as YAML");
+        assert!(!parsed.jobs.is_empty(), "it must declare jobs");
     }
 
     #[test]
@@ -444,13 +445,10 @@ mod tests {
             .map(|s| s["name"].as_str().unwrap())
             .collect();
 
-        let jobs: serde_yaml_ng::Value = serde_yaml_ng::from_str(JOBS_YAML).unwrap();
-        for (_, job) in jobs["jobs"].as_mapping().unwrap() {
-            let Some(sets) = job.get("snapshot-sets").and_then(|s| s.as_sequence()) else {
-                continue;
-            };
-            for set in sets {
-                let name = set["name"].as_str().unwrap();
+        let jobs: RawConfig = serde_saphyr::from_str(JOBS_YAML).unwrap();
+        for job in jobs.jobs.values() {
+            for set in &job.snapshot_sets {
+                let name = set.name.as_str();
                 assert!(
                     declared.contains(&name),
                     "jobs example names a set `{name}` the rustic example does not declare"

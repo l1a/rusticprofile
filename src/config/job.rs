@@ -204,7 +204,7 @@ jobs:
     profile: dot-files
     operations: [backup]
 ";
-        let cfg: RawConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        let cfg: RawConfig = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(cfg.schema, 1);
         let job = &cfg.jobs["dot-files"];
         assert_eq!(job.profile, "dot-files");
@@ -226,13 +226,13 @@ jobs:
     gcs:
       connections: 10
 ";
-        let err = serde_yaml_ng::from_str::<RawConfig>(yaml).unwrap_err();
+        let err = serde_saphyr::from_str::<RawConfig>(yaml).unwrap_err();
         assert!(err.to_string().contains("gcs"), "error should name the key");
     }
 
     #[test]
     fn an_unknown_top_level_key_is_a_hard_error() {
-        assert!(serde_yaml_ng::from_str::<RawConfig>("schema: 1\nglobal: {}\n").is_err());
+        assert!(serde_saphyr::from_str::<RawConfig>("schema: 1\nglobal: {}\n").is_err());
     }
 
     #[test]
@@ -245,7 +245,7 @@ jobs:
     operations: [backup, restore]
 ";
         // `restore` is a deliberate non-goal — use rustic directly. It must not parse.
-        assert!(serde_yaml_ng::from_str::<RawConfig>(yaml).is_err());
+        assert!(serde_saphyr::from_str::<RawConfig>(yaml).is_err());
     }
 
     #[test]
@@ -261,7 +261,7 @@ jobs:
       - name: gnupg
         enabled-on-hosts: [host-a, host-b]
 ";
-        let cfg: RawConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        let cfg: RawConfig = serde_saphyr::from_str(yaml).unwrap();
         let sets = &cfg.jobs["j"].snapshot_sets;
         assert_eq!(sets.len(), 2);
         assert_eq!(sets[0].name, "core");
@@ -284,7 +284,7 @@ jobs:
     operations: [backup]
     enabled_on_hosts: [a]
 ";
-        assert!(serde_yaml_ng::from_str::<RawConfig>(yaml).is_err());
+        assert!(serde_saphyr::from_str::<RawConfig>(yaml).is_err());
     }
 
     #[test]
@@ -299,7 +299,7 @@ jobs:
     profile: p
     operations: [backup]
 ";
-        let cfg: RawConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        let cfg: RawConfig = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(cfg.jobs.len(), 1);
     }
 }
