@@ -39,14 +39,22 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _GIT_LOCAL_ENV_VARS = frozenset(
     {
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
         "GIT_ALTERNATE_OBJECT_DIRECTORIES",
         "GIT_COMMON_DIR",
+        "GIT_CONFIG",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_DIR",
+        "GIT_GRAFT_FILE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_OBJECT_DIRECTORY",
         "GIT_PREFIX",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_SHALLOW_FILE",
         "GIT_SUPER_PREFIX",
+        "GIT_WORK_TREE",
     }
 )
 
@@ -143,6 +151,9 @@ def check_golden(
         errors="replace",
         check=False,
     )
+    if untracked_proc.returncode != 0:
+        detail = untracked_proc.stderr.strip() or f"exit {untracked_proc.returncode}"
+        return 1, f"error: git ls-files failed: {detail}"
     untracked = untracked_proc.stdout.strip()
     if untracked:
         return 1, f"untracked golden files — git add them:\n{untracked}"
@@ -194,6 +205,23 @@ def self_test() -> int:
             "untracked golden is refused",
             rc == 1 and "untracked golden files" in msg and "untracked.txt" in msg,
             f"rc={rc} msg={msg!r}",
+        )
+        (golden / "untracked.txt").unlink()
+
+        saved_env = os.environ.copy()
+        try:
+            os.environ["GIT_CONFIG_COUNT"] = "1"
+            os.environ["GIT_CONFIG_KEY_0"] = "commit.gpgsign"
+            os.environ["GIT_CONFIG_VALUE_0"] = "true"
+            os.environ["GIT_CONFIG_PARAMETERS"] = "'commit.gpgsign=true'"
+            rc_env, msg_env = check_golden(root, regenerator=lambda _: 0)
+        finally:
+            os.environ.clear()
+            os.environ.update(saved_env)
+        check(
+            "check_golden strips GIT_CONFIG_COUNT alongside GIT_CONFIG_KEY_*",
+            rc_env == 0,
+            f"rc={rc_env} msg={msg_env!r}",
         )
 
     if failures:

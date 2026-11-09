@@ -611,7 +611,7 @@ mod tests {
     use super::*;
 
     fn parse(yaml: &str) -> RawConfig {
-        serde_yaml_ng::from_str(yaml).expect("fixture should parse")
+        serde_saphyr::from_str(yaml).expect("fixture should parse")
     }
 
     fn locations(v: &[Violation]) -> Vec<&str> {

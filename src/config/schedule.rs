@@ -99,7 +99,7 @@ mod tests {
     fn permission_and_priority_default_to_the_conservative_choice() {
         // A job that does not say otherwise should run as the user, at background
         // priority — never system-wide, and never competing with interactive work.
-        let s: Schedule = serde_yaml_ng::from_str("at: daily").unwrap();
+        let s: Schedule = serde_saphyr::from_str("at: daily").unwrap();
         assert_eq!(s.at, At::Daily);
         assert_eq!(s.permission, Permission::User);
         assert_eq!(s.priority, Priority::Background);
@@ -107,13 +107,13 @@ mod tests {
 
     #[test]
     fn an_unknown_interval_is_rejected() {
-        assert!(serde_yaml_ng::from_str::<Schedule>("at: hourley").is_err());
-        assert!(serde_yaml_ng::from_str::<Schedule>("at: every-5-minutes").is_err());
+        assert!(serde_saphyr::from_str::<Schedule>("at: hourley").is_err());
+        assert!(serde_saphyr::from_str::<Schedule>("at: every-5-minutes").is_err());
     }
 
     #[test]
     fn an_unknown_field_is_rejected() {
-        assert!(serde_yaml_ng::from_str::<Schedule>("at: daily\njitter: 5m").is_err());
+        assert!(serde_saphyr::from_str::<Schedule>("at: daily\njitter: 5m").is_err());
     }
 
     #[test]
@@ -124,7 +124,7 @@ mod tests {
             ("weekly", At::Weekly),
             ("monthly", At::Monthly),
         ] {
-            let s: Schedule = serde_yaml_ng::from_str(&format!("at: {text}")).unwrap();
+            let s: Schedule = serde_saphyr::from_str(&format!("at: {text}")).unwrap();
             assert_eq!(s.at, expected);
             assert_eq!(s.at.to_string(), text);
         }

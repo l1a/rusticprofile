@@ -41,14 +41,22 @@ Renderer = Callable[[Path, str, str], bytes]
 
 _GIT_LOCAL_ENV_VARS = frozenset(
     {
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
         "GIT_ALTERNATE_OBJECT_DIRECTORIES",
         "GIT_COMMON_DIR",
+        "GIT_CONFIG",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_DIR",
+        "GIT_GRAFT_FILE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_OBJECT_DIRECTORY",
         "GIT_PREFIX",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_SHALLOW_FILE",
         "GIT_SUPER_PREFIX",
+        "GIT_WORK_TREE",
     }
 )
 
@@ -416,6 +424,26 @@ def self_test() -> int:
             "missing mandown fails --build with exit 1",
             rc_build == 1 and "mandown is required" in msg_build,
             f"rc={rc_build} msg={msg_build!r}",
+        )
+
+        (root / "Cargo.toml").write_text(
+            '[package]\nname = "rusticprofile"\nversion = "0.2.1"\n',
+            encoding="utf-8",
+        )
+        saved_env = os.environ.copy()
+        try:
+            os.environ["GIT_CONFIG_COUNT"] = "1"
+            os.environ["GIT_CONFIG_KEY_0"] = "commit.gpgsign"
+            os.environ["GIT_CONFIG_VALUE_0"] = "true"
+            os.environ["GIT_CONFIG_PARAMETERS"] = "'commit.gpgsign=true'"
+            rc_env, msg_env = check_pages(root, renderer=_stub_renderer)
+        finally:
+            os.environ.clear()
+            os.environ.update(saved_env)
+        check(
+            "check_pages strips GIT_CONFIG_COUNT alongside GIT_CONFIG_KEY_*",
+            rc_env == 0,
+            f"rc={rc_env} msg={msg_env!r}",
         )
 
     if failures:
