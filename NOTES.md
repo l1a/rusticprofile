@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.61)
+## Current State (v0.2.62)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
