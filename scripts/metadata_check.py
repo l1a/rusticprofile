@@ -22,8 +22,13 @@ FILES = {
     "cargo": "Cargo.toml",
     "pkgbuild": "packaging/aur/PKGBUILD",
     "spec": "packaging/copr/rusticprofile.spec",
+    "formula": "packaging/homebrew/rusticprofile.rb",
+    "scoop": "packaging/scoop/rusticprofile.json",
 }
 
+BREW_DESC_MAX = 80
+BREW_ARTICLE_RE = re.compile(r"^(a|an|the)\s", re.I)
+BREW_NAME_RE = re.compile(r"\brusticprofile\b", re.I)
 TOPIC_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,49}$")
 GITHUB_DESCRIPTION_MAX = 350
 GITHUB_TOPICS_MAX = 20
@@ -39,7 +44,7 @@ def load_meta(text: str) -> dict:
         meta = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise ParseError(f"metadata.toml: {exc}") from exc
-    for key in ("summary", "license"):
+    for key in ("summary", "brew_desc", "license"):
         if not isinstance(meta.get(key), str) or not meta[key].strip():
             raise ParseError(f"metadata.toml: `{key}` must be a non-empty string")
     github = meta.get("github")
@@ -97,11 +102,23 @@ def check_copr_markdown(text: str, label: str) -> list[str]:
 def check_channels(meta: dict, texts: dict[str, str]) -> list[str]:
     """Return a list of problems; empty means every channel agrees with metadata.toml."""
     problems: list[str] = []
-    summary, licence = meta["summary"], meta["license"]
+    summary, brew_desc, licence = meta["summary"], meta["brew_desc"], meta["license"]
 
     def expect(where: str, got: str | None, want: str) -> None:
         if got != want:
             problems.append(f"{where} is {got!r}, not {want!r}")
+
+    if len(brew_desc) > BREW_DESC_MAX:
+        problems.append(
+            f"metadata.toml brew_desc is {len(brew_desc)} characters; Homebrew allows at most "
+            f"{BREW_DESC_MAX} (`brew audit --strict` fails above that)"
+        )
+    if brew_desc.endswith("."):
+        problems.append("metadata.toml brew_desc ends with a period (`brew audit --strict` forbids it)")
+    if BREW_ARTICLE_RE.match(brew_desc):
+        problems.append("metadata.toml brew_desc starts with an article (`brew audit --strict` forbids it)")
+    if BREW_NAME_RE.search(brew_desc):
+        problems.append("metadata.toml brew_desc contains the formula name (`brew audit --strict` forbids it)")
 
     try:
         pkg = tomllib.loads(texts["cargo"])["package"]
@@ -120,12 +137,22 @@ def check_channels(meta: dict, texts: dict[str, str]) -> list[str]:
         ("PKGBUILD license", "pkgbuild", r"^license=\('([^']*)'\)", licence),
         ("spec Summary", "spec", r"^Summary:\s*(.+)$", summary),
         ("spec License", "spec", r"^License:\s*(.+)$", licence),
+        ("formula desc", "formula", r'^\s*desc\s+"([^"]*)"', brew_desc),
+        ("formula license", "formula", r'^\s*license\s+"([^"]*)"', licence),
     ]
     for where, key, pattern, want in fields:
         try:
             expect(where, _field(texts[key], pattern, where), want)
         except ParseError as exc:
             problems.append(str(exc))
+
+    try:
+        scoop = json.loads(texts["scoop"])
+    except json.JSONDecodeError as exc:
+        problems.append(f"could not parse packaging/scoop/rusticprofile.json: {exc}")
+    else:
+        expect("Scoop description", scoop.get("description"), summary)
+        expect("Scoop license", scoop.get("license"), licence)
 
     github_description = meta["github"]["description"]
     topics = meta["github"]["topics"]
@@ -210,6 +237,7 @@ def sync_github(meta: dict, dry_run: bool) -> int:
 
 _META = """\
 summary = "A local, per-machine scheduler and orchestrator for rustic backups"
+brew_desc = "Local, per-machine scheduler and orchestrator for rustic backups"
 license = "GPL-3.0-or-later"
 [github]
 description = "A local, per-machine scheduler and orchestrator for rustic backups"
@@ -223,6 +251,8 @@ _TEXTS = {
     "cargo": '[package]\nname = "rusticprofile"\ndescription = "A local, per-machine scheduler and orchestrator for rustic backups"\nlicense = "GPL-3.0-or-later"\n',
     "pkgbuild": "pkgname=rusticprofile\npkgdesc=\"A local, per-machine scheduler and orchestrator for rustic backups\"\nlicense=('GPL-3.0-or-later')\n",
     "spec": "Name:           rusticprofile\nSummary:        A local, per-machine scheduler and orchestrator for rustic backups\nLicense:        GPL-3.0-or-later\n",
+    "formula": 'class Rusticprofile < Formula\n  desc "Local, per-machine scheduler and orchestrator for rustic backups"\n  license "GPL-3.0-or-later"\nend\n',
+    "scoop": '{\n  "description": "A local, per-machine scheduler and orchestrator for rustic backups",\n  "license": "GPL-3.0-or-later"\n}\n',
     "copr_description": "**rusticprofile** is a backup scheduler.\n\n* an item\n\n```\n    indented code is fine inside a fence\n```\n",
     "copr_instructions": "Install:\n\n```\nsudo dnf install rusticprofile\n```\n",
 }
@@ -266,9 +296,22 @@ def _self_test() -> int:
     expect_problem("pkgdesc drift detected", "pkgbuild", "A local, per-machine", "A different", "PKGBUILD pkgdesc")
     expect_problem("spec Summary drift detected", "spec", "Summary:        A local", "Summary:        A different", "spec Summary")
     expect_problem("spec License drift detected", "spec", "License:        GPL-3.0-or-later", "License:        MIT", "spec License")
+    expect_problem("formula desc drift detected", "formula", 'desc "Local, per-machine', 'desc "Different', "formula desc")
+    expect_problem("formula license drift detected", "formula", 'license "GPL-3.0-or-later"', 'license "MIT"', "formula license")
+    expect_problem("Scoop description drift detected", "scoop", '"description": "A local', '"description": "A different', "Scoop description")
+    expect_problem("Scoop license drift detected", "scoop", '"license": "GPL-3.0-or-later"', '"license": "MIT"', "Scoop license")
     expect_problem("Cargo description drift detected", "cargo", "A local, per-machine", "Something else", "does not begin with the summary")
     expect_problem("Cargo licence drift detected", "cargo", 'license = "GPL-3.0-or-later"', 'license = "MIT"', "Cargo.toml license")
     expect_problem("CR in COPR text detected", "copr_instructions", "Install:\n", "Install:\r\n", "CR bytes")
+
+    bad_brew = dict(meta, brew_desc="A local scheduler")
+    check("brew_desc article detected", any("article" in p for p in check_channels(bad_brew, _TEXTS)), "article allowed")
+    bad_brew = dict(meta, brew_desc="Local scheduler.")
+    check("brew_desc period detected", any("period" in p for p in check_channels(bad_brew, _TEXTS)), "period allowed")
+    bad_brew = dict(meta, brew_desc="rusticprofile scheduler")
+    check("brew_desc own name detected", any("formula name" in p for p in check_channels(bad_brew, _TEXTS)), "own name allowed")
+    bad_brew = dict(meta, brew_desc="x" * 81)
+    check("brew_desc length detected", any("80" in p for p in check_channels(bad_brew, _TEXTS)), "81 chars allowed")
 
     texts = dict(_TEXTS, pkgbuild="pkgname=rusticprofile\n")
     probs = check_channels(meta, texts)

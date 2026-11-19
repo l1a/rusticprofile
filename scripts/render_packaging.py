@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 l1a
-"""Render packaging/{aur,copr} for a released version.
+"""Render packaging/{aur,copr,homebrew,scoop} for a released version.
 
 WHY THIS EXISTS
 ---------------
-The AUR PKGBUILD and the COPR spec both need the version of the release they package, and
-the PKGBUILD needs its tarball's sha256. A checksum cannot be computed before the tag
-exists, so previously the released version was recorded in-repo (`packaging/aur/PKGBUILD`,
-`packaging/aur/.SRCINFO`, and `packaging/copr/rusticprofile.spec`), requiring a post-release
-bump commit.
+The AUR PKGBUILD, the COPR spec, the Homebrew formula and the Scoop manifest all need the
+version of the release they package, and three of the four need checksums. A checksum cannot
+be computed before the tag exists, so previously the released version was recorded in-repo
+(`packaging/aur/PKGBUILD`, `packaging/aur/.SRCINFO`, and `packaging/copr/rusticprofile.spec`),
+requiring a post-release bump commit.
 
 This script inverts that: **the templates record nothing, and the version is supplied once,
 at publish or SRPM build time.** A stale checksum cannot be committed because no checksum is
-committed, and the offline guards (`aur-check`, `copr-check`) assert that the templates
-still carry their `@VERSION@` / `@SHA256@` sentinels.
+committed, and the offline guards (`aur-check`, `copr-check`, `brew-check`, `scoop-check`)
+assert that the templates still carry their `@VERSION@` / `@SHA256*@` sentinels.
 """
 
 from __future__ import annotations
@@ -46,11 +46,14 @@ class Target:
     path: str
     needs_sha: bool
     what: str
+    needs_scoop_shas: bool = False
 
 
 TARGETS = {
     "aur": Target("packaging/aur/PKGBUILD", True, "AUR PKGBUILD"),
     "copr": Target("packaging/copr/rusticprofile.spec", False, "COPR spec"),
+    "brew": Target("packaging/homebrew/rusticprofile.rb", True, "Homebrew formula"),
+    "scoop": Target("packaging/scoop/rusticprofile.json", False, "Scoop manifest", needs_scoop_shas=True),
 }
 
 
@@ -129,6 +132,8 @@ def render(
     version: str,
     sha256: str | None = None,
     *,
+    sha256_x86_64: str | None = None,
+    sha256_arm64: str | None = None,
     root: Path = REPO_ROOT,
     stamp: str | None = None,
 ) -> str:
@@ -140,12 +145,29 @@ def render(
 
     template = (root / spec.path).read_text(encoding="utf-8")
     values = {"VERSION": version}
-    if spec.needs_sha:
-        if sha256 is None:
-            raise RenderError(f"{spec.what} pins a checksum: --sha256 is required")
-        values["SHA256"] = validate_sha256(sha256)
-    elif sha256 is not None:
-        raise RenderError(f"{spec.what} pins no checksum: --sha256 is not accepted")
+    if spec.needs_scoop_shas:
+        if sha256 is not None:
+            raise RenderError(
+                f"{spec.what} pins two architecture checksums: use --sha256-x86-64 and "
+                "--sha256-arm64 instead of --sha256"
+            )
+        if sha256_x86_64 is None or sha256_arm64 is None:
+            raise RenderError(
+                f"{spec.what} pins two checksums: both --sha256-x86-64 and --sha256-arm64 are required"
+            )
+        values["SHA256_X86_64"] = validate_sha256(sha256_x86_64)
+        values["SHA256_ARM64"] = validate_sha256(sha256_arm64)
+    else:
+        if sha256_x86_64 is not None or sha256_arm64 is not None:
+            raise RenderError(
+                f"{spec.what} does not accept --sha256-x86-64 or --sha256-arm64"
+            )
+        if spec.needs_sha:
+            if sha256 is None:
+                raise RenderError(f"{spec.what} pins a checksum: --sha256 is required")
+            values["SHA256"] = validate_sha256(sha256)
+        elif sha256 is not None:
+            raise RenderError(f"{spec.what} pins no checksum: --sha256 is not accepted")
 
     text = template
     if target == "copr":
@@ -158,6 +180,7 @@ def render(
 # --------------------------------------------------------------------------------------
 
 _SHA = "77ccf85843d24ac3216ab31d2584ff4a95869266c59ddb8bc83819425cfc2033"
+_SHA_ARM = "88ddf85843d24ac3216ab31d2584ff4a95869266c59ddb8bc83819425cfc2044"
 
 
 def _self_test() -> int:
@@ -178,6 +201,17 @@ def _self_test() -> int:
     check("aur pkgver", "\npkgver=1.2.3\n" in aur, "rendered PKGBUILD has no pkgver=1.2.3")
     check("aur sha", f"sha256sums=('{_SHA}')" in aur, "rendered PKGBUILD has no sha256sums")
     check("aur no sentinel", not SENTINEL_RE.search(aur), "sentinel survived")
+
+    brew = render("brew", "1.2.3", _SHA)
+    check("brew url", "/refs/tags/v1.2.3.tar.gz" in brew, "rendered formula has no versioned url")
+    check("brew sha", f'sha256 "{_SHA}"' in brew, "rendered formula has no sha256")
+    check("brew no sentinel", not SENTINEL_RE.search(brew), "sentinel survived")
+
+    scoop = render("scoop", "1.2.3", sha256_x86_64=_SHA, sha256_arm64=_SHA_ARM)
+    check("scoop version", '"version": "1.2.3"' in scoop, "rendered scoop manifest has no version")
+    check("scoop sha x64", f'"hash": "{_SHA}"' in scoop, "rendered scoop manifest has no x86_64 hash")
+    check("scoop sha arm", f'"hash": "{_SHA_ARM}"' in scoop, "rendered scoop manifest has no arm64 hash")
+    check("scoop no sentinel", not SENTINEL_RE.search(scoop), "sentinel survived")
 
     copr = render("copr", "1.2.3", stamp="Mon Jan 05 2026")
     check("copr version", "\nVersion:        1.2.3\n" in copr, "rendered spec has no Version: 1.2.3")
@@ -204,6 +238,12 @@ def _self_test() -> int:
     refuses("placeholder sha", lambda: render("aur", "1.2.3", "0" * 64))
     refuses("sha for copr", lambda: render("copr", "1.2.3", _SHA))
     refuses("missing sha", lambda: render("aur", "1.2.3"))
+    refuses("missing sha brew", lambda: render("brew", "1.2.3"))
+    refuses("missing sha scoop", lambda: render("scoop", "1.2.3"))
+    refuses("partial sha scoop x64", lambda: render("scoop", "1.2.3", sha256_x86_64=_SHA))
+    refuses("partial sha scoop arm", lambda: render("scoop", "1.2.3", sha256_arm64=_SHA_ARM))
+    refuses("single sha for scoop", lambda: render("scoop", "1.2.3", _SHA))
+    refuses("scoop sha for aur", lambda: render("aur", "1.2.3", _SHA, sha256_x86_64=_SHA))
     refuses("unknown target", lambda: render("nope", "1.2.3"))
     refuses("sentinel gone", lambda: substitute("pkgver=0.1.2\n", {"VERSION": "1.2.3"}, what="t"))
     refuses("unknown sentinel", lambda: substitute("a=@VERSION@ b=@WHAT@\n", {"VERSION": "1.2.3"}, what="t"))
@@ -231,7 +271,9 @@ def main() -> int:
     ap.add_argument("--print-version", action="store_true", help="print Cargo.toml's [package] version and exit")
     ap.add_argument("--target", choices=sorted(TARGETS), help="which packaging file to render")
     ap.add_argument("--version", help="released version (default: Cargo.toml's)")
-    ap.add_argument("--sha256", help="sha256 of the release tarball (aur only)")
+    ap.add_argument("--sha256", help="sha256 of the release tarball (aur and brew)")
+    ap.add_argument("--sha256-x86-64", help="sha256 of the Windows x86_64 binary (scoop)")
+    ap.add_argument("--sha256-arm64", help="sha256 of the Windows arm64 binary (scoop)")
     ap.add_argument("--out", help="write here instead of stdout")
     args = ap.parse_args()
 
@@ -244,7 +286,13 @@ def main() -> int:
             return 0
         if not args.target:
             ap.error("--target is required (or use --print-version / --self-test)")
-        text = render(args.target, args.version or repo_version(), args.sha256)
+        text = render(
+            args.target,
+            args.version or repo_version(),
+            args.sha256,
+            sha256_x86_64=args.sha256_x86_64,
+            sha256_arm64=args.sha256_arm64,
+        )
     except RenderError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

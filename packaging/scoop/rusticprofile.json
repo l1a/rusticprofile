@@ -1,0 +1,28 @@
+{
+    "version": "@VERSION@",
+    "description": "A local, per-machine scheduler and orchestrator for rustic backups",
+    "homepage": "https://github.com/l1a/rusticprofile",
+    "license": "GPL-3.0-or-later",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/l1a/rusticprofile/releases/download/v@VERSION@/rusticprofile-windows-x86_64.exe#/rusticprofile.exe",
+            "hash": "@SHA256_X86_64@"
+        },
+        "arm64": {
+            "url": "https://github.com/l1a/rusticprofile/releases/download/v@VERSION@/rusticprofile-windows-arm64.exe#/rusticprofile.exe",
+            "hash": "@SHA256_ARM64@"
+        }
+    },
+    "bin": "rusticprofile.exe",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/l1a/rusticprofile/releases/download/v$version/rusticprofile-windows-x86_64.exe#/rusticprofile.exe"
+            },
+            "arm64": {
+                "url": "https://github.com/l1a/rusticprofile/releases/download/v$version/rusticprofile-windows-arm64.exe#/rusticprofile.exe"
+            }
+        }
+    }
+}

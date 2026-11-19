@@ -30,6 +30,10 @@ jobs:
         run: |
           python3 scripts/metadata_check.py --self-test
           python3 scripts/metadata_check.py
+          python3 scripts/brew_check.py --self-test
+          python3 scripts/brew_check.py
+          python3 scripts/scoop_check.py --self-test
+          python3 scripts/scoop_check.py
 
   aur:
     runs-on: ubuntu-latest
@@ -158,3 +162,158 @@ jobs:
             esac
           done
           echo "Both SRPMs match Cargo.toml ($version)"
+
+  brew:
+    name: Homebrew Formula (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Formula template is valid (offline)
+        run: |
+          python3 scripts/brew_check.py --self-test
+          python3 scripts/brew_check.py
+          python3 scripts/render_packaging.py --self-test
+
+      - name: Render the formula for the last released tag
+        run: |
+          set -euo pipefail
+          TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+          if [ -z "$TAG" ]; then
+            echo "::error::no tags in this checkout — cannot render a formula to install"
+            exit 1
+          fi
+          VER="${TAG#v}"
+          URL="https://github.com/l1a/rusticprofile/archive/refs/tags/${TAG}.tar.gz"
+          echo "last released tag: $TAG"
+          curl -sfL -o /tmp/src.tar.gz "$URL" || { echo "::error::cannot fetch $URL"; exit 1; }
+          SHA=$(shasum -a 256 /tmp/src.tar.gz | cut -d' ' -f1)
+          echo "computed sha256: $SHA"
+          python3 scripts/render_packaging.py --target brew --version "$VER" --sha256 "$SHA" \
+            --out /tmp/rusticprofile.rb
+          grep -q "refs/tags/v${VER}.tar.gz" /tmp/rusticprofile.rb \
+            || { echo "::error::rendered formula does not point at $TAG"; exit 1; }
+          grep -q "sha256 \"${SHA}\"" /tmp/rusticprofile.rb \
+            || { echo "::error::rendered formula does not carry the computed sha256"; exit 1; }
+          echo "RENDERED_VER=$VER" >> "$GITHUB_ENV"
+          echo "render verified against the real $TAG tarball"
+
+      - name: Ruby syntax
+        run: ruby -c /tmp/rusticprofile.rb
+
+      - name: Stage the formula in a local tap
+        run: |
+          set -euo pipefail
+          brew tap-new --no-git local/test
+          cp /tmp/rusticprofile.rb "$(brew --repository local/test)/Formula/rusticprofile.rb"
+          echo "staged at $(brew --repository local/test)/Formula/rusticprofile.rb"
+
+      - name: Install from source
+        run: brew install --build-from-source local/test/rusticprofile
+
+      - name: Run the formula's test block
+        run: brew test local/test/rusticprofile
+
+      - name: Audit the formula
+        run: brew audit --formula --strict local/test/rusticprofile
+
+      - name: Inspect the installed payload
+        run: |
+          set -euo pipefail
+          PREFIX=$(brew --prefix local/test/rusticprofile)
+          echo "prefix: $PREFIX"
+          test -x "$PREFIX/bin/rusticprofile"
+          "$PREFIX/bin/rusticprofile" --version
+          MAN=$(find "$PREFIX/share/man/man1" -name 'rusticprofile.1*' -print -quit)
+          [ -n "$MAN" ] || { echo "::error::no man page installed under $PREFIX/share/man/man1"; exit 1; }
+          case "$MAN" in *.gz) gunzip -c "$MAN" > /tmp/rusticprofile.1 ;; *) cp "$MAN" /tmp/rusticprofile.1 ;; esac
+          head -1 /tmp/rusticprofile.1
+          grep -q '^\.TH' /tmp/rusticprofile.1 || { echo "::error::man page has no .TH line"; exit 1; }
+          if grep -m1 '^\.TH' /tmp/rusticprofile.1 | grep -q '\$'; then
+            echo "::error::man page .TH contains a literal \$"; exit 1
+          fi
+          MISSING=0
+          for f in "$PREFIX/etc/bash_completion.d/rusticprofile" \
+                   "$PREFIX/share/zsh/site-functions/_rusticprofile" \
+                   "$PREFIX/share/fish/vendor_completions.d/rusticprofile.fish"; do
+            if [ -s "$f" ]; then
+              echo "  ok  $f ($(wc -c < "$f" | tr -d ' ') bytes)"
+            else
+              echo "::error::missing or empty completion: $f"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then
+            echo "--- everything actually installed under the prefix ---"
+            find "$PREFIX" -type f | sed "s|^$PREFIX/||" | sort
+            exit 1
+          fi
+          echo "payload verified: binary, man page, three completion files"
+
+  scoop:
+    name: Scoop Manifest (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Manifest template is valid (offline)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/scoop_check.py --self-test
+          python scripts/scoop_check.py
+          python scripts/render_packaging.py --self-test
+
+      - name: Render the manifest for the last released tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+          if [ -z "$TAG" ]; then
+            echo "::error::no tags in this checkout — cannot render a manifest to install"
+            exit 1
+          fi
+          VER="${TAG#v}"
+          URL_X64="https://github.com/l1a/rusticprofile/releases/download/${TAG}/rusticprofile-windows-x86_64.exe"
+          URL_ARM="https://github.com/l1a/rusticprofile/releases/download/${TAG}/rusticprofile-windows-arm64.exe"
+          echo "last released tag: $TAG"
+          curl -sfL -o "$RUNNER_TEMP/rusticprofile-windows-x86_64.exe" "$URL_X64" || { echo "::error::cannot fetch $URL_X64"; exit 1; }
+          curl -sfL -o "$RUNNER_TEMP/rusticprofile-windows-arm64.exe" "$URL_ARM" || { echo "::error::cannot fetch $URL_ARM"; exit 1; }
+          SHA_X64=$(python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$RUNNER_TEMP/rusticprofile-windows-x86_64.exe")
+          SHA_ARM=$(python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$RUNNER_TEMP/rusticprofile-windows-arm64.exe")
+          echo "computed sha256 x86_64: $SHA_X64"
+          echo "computed sha256 arm64:  $SHA_ARM"
+          python scripts/render_packaging.py --target scoop --version "$VER" \
+            --sha256-x86-64 "$SHA_X64" --sha256-arm64 "$SHA_ARM" \
+            --out "$RUNNER_TEMP/rusticprofile.json"
+          echo "RENDERED_VER=$VER" >> "$GITHUB_ENV"
+          echo "render verified against the real $TAG Windows binaries"
+
+      - name: Install Scoop and verify manifest install
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
+            Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+            $env:PATH = "$HOME\scoop\shims;$env:PATH"
+          }
+          $bucketDir = Join-Path $env:RUNNER_TEMP "scoop-bucket\bucket"
+          New-Item -ItemType Directory -Force -Path $bucketDir | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\rusticprofile.json" (Join-Path $bucketDir "rusticprofile.json")
+          scoop install (Join-Path $bucketDir "rusticprofile.json")
+          $verOut = & rusticprofile --version
+          Write-Host "Installed: $verOut"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "rusticprofile --version failed with exit code $LASTEXITCODE"
+            exit 1
+          }
+          if ($verOut -notmatch [regex]::Escape($env:RENDERED_VER)) {
+            Write-Error "Expected version $($env:RENDERED_VER) in output: $verOut"
+            exit 1
+          }
