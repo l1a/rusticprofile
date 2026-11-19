@@ -179,7 +179,7 @@ lint:
 clippy: lint
 
 # Run strict checks (formatting, linting, golden argv files, man page, packaging and byte drift) as done in CI
-check: fmt-check lint standard-check golden-is-current man-check render-check aur-check copr-check metadata-check text-check wip-check
+check: fmt-check lint standard-check golden-is-current man-check render-check aur-check copr-check brew-check scoop-check metadata-check text-check wip-check
     @echo "All checks passed."
 
 # Regenerate the golden argv files under tests/golden
@@ -225,7 +225,7 @@ dev: setup fmt lint test build
 publish-check:
     cargo publish --dry-run
 
-# Publish to crates.io — refuses unless HEAD is the release tag
+# Publish the current version to crates.io, the AUR, the Homebrew tap and the Scoop bucket (refuses unless HEAD is the release tag)
 publish:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -244,10 +244,34 @@ publish:
             || fail "HEAD ($(git rev-parse --short HEAD)) is not ${TAG} ($(git rev-parse --short "$TAG_COMMIT")). Check out ${TAG} or main at the tag first."
         pass "HEAD is ${TAG} ($(git rev-parse --short HEAD))"
     fi
-    cargo publish
+
+    echo "==> Verifying working tree is clean..."
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        fail "working tree has uncommitted changes. Commit or discard them first."
+    fi
+
+    if curl -fsSL -H "User-Agent: rusticprofile-publish-check" \
+        "https://crates.io/api/v1/crates/rusticprofile/${VER}" \
+        | grep -q "\"num\":\"${VER}\""; then
+        echo "==> rusticprofile v${VER} is already on crates.io — skipping."
+    else
+        echo "==> Running cargo publish --dry-run..."
+        cargo publish --dry-run || fail "dry-run failed — not publishing."
+        echo "==> Dry-run passed. Publishing to crates.io..."
+        cargo publish
+        pass "Published rusticprofile v${VER} to crates.io"
+    fi
+
+    echo "==> Publishing AUR package..."
+    just aur-publish "${VER}"
+    echo "==> Publishing Homebrew formula..."
+    just brew-publish "${VER}"
+    echo "==> Publishing Scoop manifest..."
+    just scoop-publish "${VER}"
+    pass "crates.io, AUR, Homebrew and Scoop done. COPR builds from the tag via copr.yml."
 
 # Run all offline packaging guards
-packaging-check: render-check aur-check copr-check metadata-check
+packaging-check: render-check aur-check copr-check brew-check scoop-check metadata-check
 
 # Verify scripts/render_packaging.py still substitutes and still refuses (offline)
 render-check:
@@ -440,6 +464,184 @@ copr-check:
 # Print packaging/copr/rusticprofile.spec rendered for Cargo.toml's version (offline)
 copr-render:
     @"{{PY}}" scripts/render_packaging.py --target copr
+
+# ===== HOMEBREW =====
+
+# Prove packaging/homebrew/rusticprofile.rb is still a template (offline)
+brew-check:
+    @"{{PY}}" scripts/brew_check.py --self-test
+    @"{{PY}}" scripts/brew_check.py
+
+# Render the Homebrew formula for a released tag and push it to the tap (defaults to Cargo.toml version)
+brew-publish VERSION="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
+    pass() { echo -e "${GREEN}[✓]${NC} $1"; }
+    fail() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
+    info() { echo -e "${YELLOW}[→]${NC} $1"; }
+
+    TAP_REPO="git@github.com:l1a/homebrew-rusticprofile.git"
+    VER="{{VERSION}}"; VER="${VER#v}"
+    if [ -z "$VER" ]; then
+        VER=$("{{PY}}" scripts/render_packaging.py --print-version)
+    fi
+    [ -n "$VER" ] || fail "brew-publish needs a version, e.g. just brew-publish 0.2.64"
+
+    "{{PY}}" scripts/brew_check.py || fail "formula template checks failed — not publishing"
+    "{{PY}}" scripts/metadata_check.py || fail "metadata checks failed — not publishing"
+    pass "formula template and metadata checks pass"
+
+    WORK=$(mktemp -d)
+    trap 'rm -rf "$WORK"' EXIT
+    URL="https://github.com/l1a/rusticprofile/archive/refs/tags/v${VER}.tar.gz"
+    info "Downloading and checksumming the v$VER tarball..."
+    curl -sfL -o "$WORK/src.tar.gz" "$URL" \
+        || fail "no release tarball at $URL — tag and release v$VER first"
+    SHA=$("{{PY}}" -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$WORK/src.tar.gz")
+    pass "v$VER tarball: $(wc -c < "$WORK/src.tar.gz" | tr -d ' ') bytes, sha256 $SHA"
+
+    "{{PY}}" scripts/render_packaging.py --target brew --version "$VER" --sha256 "$SHA" \
+        --out "$WORK/rusticprofile.rb"
+    pass "rendered formula for v$VER"
+
+    echo
+    echo -e "${BOLD}About to publish rusticprofile $VER to the Homebrew tap.${NC}"
+    echo "This is public and immediate: $TAP_REPO"
+    echo ""
+    if [ -n "${BREW_CONFIRM:-}" ]; then
+        CONFIRM="$BREW_CONFIRM"
+        echo "Publish to the tap? [y/N] $CONFIRM   (answered by BREW_CONFIRM)"
+    elif [ -t 0 ]; then
+        echo -n "Publish to the tap? [y/N] "; read -r CONFIRM
+    else
+        echo -n "Publish to the tap? [y/N] "
+        read -r -t 10 CONFIRM || CONFIRM=""
+        echo "$CONFIRM"
+        [ -n "$CONFIRM" ] || fail "no terminal and nothing on stdin. Re-run with BREW_CONFIRM=y"
+    fi
+    case "$CONFIRM" in
+        y|Y|yes|YES) ;;
+        *) echo -e "${RED}Aborted.${NC}"; exit 1 ;;
+    esac
+
+    info "Cloning the tap..."
+    git clone -q "$TAP_REPO" "$WORK/tap" \
+        || fail "could not clone $TAP_REPO — does the tap exist, and is the SSH key registered?"
+    mkdir -p "$WORK/tap/Formula"
+    cp "$WORK/rusticprofile.rb" "$WORK/tap/Formula/rusticprofile.rb"
+
+    if ! git -C "$WORK/tap" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+        git -C "$WORK/tap" symbolic-ref HEAD refs/heads/main
+        info "empty tap: default branch pinned to main"
+    fi
+
+    git -C "$WORK/tap" config user.name  "$(git -C "{{justfile_directory()}}" config user.name)"
+    git -C "$WORK/tap" config user.email "$(git -C "{{justfile_directory()}}" config user.email)"
+
+    git -C "$WORK/tap" add Formula/rusticprofile.rb
+    if git -C "$WORK/tap" diff --cached --quiet; then
+        pass "tap already has this exact formula — nothing to push"
+        exit 0
+    fi
+    git -C "$WORK/tap" commit -q -m "rusticprofile $VER"
+    git -C "$WORK/tap" push -q origin HEAD
+    pass "published rusticprofile $VER to $TAP_REPO"
+
+# Alias for brew-publish (cross-repo standard)
+publish-brew VERSION="": (brew-publish VERSION)
+
+# ===== SCOOP =====
+
+# Prove packaging/scoop/rusticprofile.json is still a template (offline)
+scoop-check:
+    @"{{PY}}" scripts/scoop_check.py --self-test
+    @"{{PY}}" scripts/scoop_check.py
+
+# Render the Scoop manifest for a released tag and push it to the bucket (defaults to Cargo.toml version)
+scoop-publish VERSION="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
+    pass() { echo -e "${GREEN}[✓]${NC} $1"; }
+    fail() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
+    info() { echo -e "${YELLOW}[→]${NC} $1"; }
+
+    BUCKET_REPO="git@github.com:l1a/scoop-rusticprofile.git"
+    VER="{{VERSION}}"; VER="${VER#v}"
+    if [ -z "$VER" ]; then
+        VER=$("{{PY}}" scripts/render_packaging.py --print-version)
+    fi
+    [ -n "$VER" ] || fail "scoop-publish needs a version, e.g. just scoop-publish 0.2.64"
+
+    "{{PY}}" scripts/scoop_check.py || fail "scoop template checks failed — not publishing"
+    "{{PY}}" scripts/metadata_check.py || fail "metadata checks failed — not publishing"
+    pass "scoop template and metadata checks pass"
+
+    WORK=$(mktemp -d)
+    trap 'rm -rf "$WORK"' EXIT
+    URL_X64="https://github.com/l1a/rusticprofile/releases/download/v${VER}/rusticprofile-windows-x86_64.exe"
+    URL_ARM="https://github.com/l1a/rusticprofile/releases/download/v${VER}/rusticprofile-windows-arm64.exe"
+    info "Downloading and checksumming the v$VER Windows release binaries..."
+    curl -sfL -o "$WORK/rusticprofile-windows-x86_64.exe" "$URL_X64" \
+        || fail "no release binary at $URL_X64 — tag and release v$VER first"
+    curl -sfL -o "$WORK/rusticprofile-windows-arm64.exe" "$URL_ARM" \
+        || fail "no release binary at $URL_ARM — tag and release v$VER first"
+    SHA_X64=$("{{PY}}" -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$WORK/rusticprofile-windows-x86_64.exe")
+    SHA_ARM=$("{{PY}}" -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$WORK/rusticprofile-windows-arm64.exe")
+    pass "v$VER x86_64: $(wc -c < "$WORK/rusticprofile-windows-x86_64.exe" | tr -d ' ') bytes, sha256 $SHA_X64"
+    pass "v$VER arm64:  $(wc -c < "$WORK/rusticprofile-windows-arm64.exe" | tr -d ' ') bytes, sha256 $SHA_ARM"
+
+    "{{PY}}" scripts/render_packaging.py --target scoop --version "$VER" \
+        --sha256-x86-64 "$SHA_X64" --sha256-arm64 "$SHA_ARM" \
+        --out "$WORK/rusticprofile.json"
+    pass "rendered Scoop manifest for v$VER"
+
+    echo
+    echo -e "${BOLD}About to publish rusticprofile $VER to the Scoop bucket.${NC}"
+    echo "This is public and immediate: $BUCKET_REPO"
+    echo ""
+    if [ -n "${SCOOP_CONFIRM:-}" ]; then
+        CONFIRM="$SCOOP_CONFIRM"
+        echo "Publish to the Scoop bucket? [y/N] $CONFIRM   (answered by SCOOP_CONFIRM)"
+    elif [ -t 0 ]; then
+        echo -n "Publish to the Scoop bucket? [y/N] "; read -r CONFIRM
+    else
+        echo -n "Publish to the Scoop bucket? [y/N] "
+        read -r -t 10 CONFIRM || CONFIRM=""
+        echo "$CONFIRM"
+        [ -n "$CONFIRM" ] || fail "no terminal and nothing on stdin. Re-run with SCOOP_CONFIRM=y"
+    fi
+    case "$CONFIRM" in
+        y|Y|yes|YES) ;;
+        *) echo -e "${RED}Aborted.${NC}"; exit 1 ;;
+    esac
+
+    info "Cloning the Scoop bucket..."
+    git clone -q "$BUCKET_REPO" "$WORK/bucket" \
+        || fail "could not clone $BUCKET_REPO — does the bucket exist, and is the SSH key registered?"
+    mkdir -p "$WORK/bucket/bucket"
+    cp "$WORK/rusticprofile.json" "$WORK/bucket/bucket/rusticprofile.json"
+
+    if ! git -C "$WORK/bucket" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+        git -C "$WORK/bucket" symbolic-ref HEAD refs/heads/main
+        info "empty bucket: default branch pinned to main"
+    fi
+
+    git -C "$WORK/bucket" config user.name  "$(git -C "{{justfile_directory()}}" config user.name)"
+    git -C "$WORK/bucket" config user.email "$(git -C "{{justfile_directory()}}" config user.email)"
+
+    git -C "$WORK/bucket" add bucket/rusticprofile.json
+    if git -C "$WORK/bucket" diff --cached --quiet; then
+        pass "bucket already has this exact manifest — nothing to push"
+        exit 0
+    fi
+    git -C "$WORK/bucket" commit -q -m "rusticprofile $VER"
+    git -C "$WORK/bucket" push -q origin HEAD
+    pass "published rusticprofile $VER to $BUCKET_REPO"
+
+# Alias for scoop-publish (cross-repo standard)
+publish-scoop VERSION="": (scoop-publish VERSION)
 
 # Verify every channel's description and licence agrees with packaging/metadata.toml (offline)
 metadata-check:

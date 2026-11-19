@@ -234,8 +234,8 @@ The XDG variables are honoured **on macOS and Windows too**, falling back to `~/
 cargo install rusticprofile
 ```
 
-That installs the binary only. The man page and shell completions come from the Arch package or a
-checkout, both below.
+That installs the binary only. The man page and shell completions come from the Arch, Fedora COPR
+or Homebrew packages, or from a checkout, all below.
 
 **On Arch Linux** — from the AUR, where it is maintained by this project:
 
@@ -261,6 +261,23 @@ sudo dnf install rusticprofile
 ```
 
 The package installs the binary, man page, and completions for bash, fish, and zsh. It tracks the newest **released tag** on Fedora 43 and 44 (x86_64 and aarch64). Note that `rustic` is recommended but not packaged in Fedora's base repositories, so install rustic separately (e.g. via `cargo install rustic-rs`) if not already present.
+
+**On macOS and Linux (Homebrew)** — from the project's tap:
+
+```bash
+brew install l1a/rusticprofile/rusticprofile
+```
+
+Builds from source (Homebrew installs the Rust toolchain automatically as a build dependency) and installs the binary, the man page, and completions for bash, fish, and zsh. Install `rustic` separately if not already present (e.g. `brew install rustic` or `cargo install rustic-rs`).
+
+**On Windows (Scoop)** — from the project's bucket:
+
+```powershell
+scoop bucket add l1a https://github.com/l1a/scoop-rusticprofile
+scoop install l1a/rusticprofile
+```
+
+Installs the prebuilt `rusticprofile.exe` binary (for x86_64 or arm64). Install `rustic` separately if not already present (e.g. `scoop install rustic` or `cargo install rustic-rs`).
 
 **A prebuilt binary** — every release ships five targets plus the man page, from
 [the latest release](https://github.com/l1a/rusticprofile/releases/latest):

@@ -121,7 +121,7 @@ backstop, not the control: the control is that secrets never enter this process 
   `Cargo.toml`. Run `just man` after any version bump and commit the result — `just pr`
   fails if it is dirty. `just install` installs the committed page and does not need mandown.
 - **Quality gate**: `just check` = the golden-staleness gate (`golden-is-current`), `standard-check` (the vendored
-  helpers' self-tests), `man-check`, `packaging-check` (`render-check`, `aur-check`, `copr-check`, `metadata-check`), `text-check`, `wip-check`, `fmt-check` (`cargo fmt -- --check`) and
+  helpers' self-tests), `man-check`, `packaging-check` (`render-check`, `aur-check`, `copr-check`, `brew-check`, `scoop-check`, `metadata-check`), `text-check`, `wip-check`, `fmt-check` (`cargo fmt -- --check`) and
   `lint` (`cargo clippy --all-targets -- -D warnings`). Every step is shell-free so `just check` runs on a default Windows `PATH` too. CI runs `just check`; `pre-push` runs all of it.
 - **Pre-PR gate**: never call `gh pr create` directly — run `just open-pr`, which runs
   `just pr` first and only proceeds if it passes. `gh` and `git` have no hook of their own
@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.63)
+## Current State (v0.2.64)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -326,7 +326,8 @@ directly above it — `just pr` refuses unless it matches `Cargo.toml` — staye
 **M4, repository lock coordination, is the only unbuilt milestone** and is deferred by decision
 (§3a invariant 3). It schedules and runs real backups on **systemd, launchd and Task Scheduler**,
 and is shipped as GitHub release binaries (Linux, macOS and Windows, x86_64 and arm64), on
-crates.io, in the AUR and in Fedora COPR.
+crates.io, in the AUR, in Fedora COPR, in the Homebrew tap (`l1a/homebrew-rusticprofile`) and in
+the Windows Scoop bucket (`l1a/scoop-rusticprofile`).
 
 | command | what it is |
 |---|---|
