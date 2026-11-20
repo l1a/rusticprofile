@@ -1,6 +1,8 @@
-# THIS IS A TEMPLATE. `@VERSION@` and `@SHA256@` are filled in by `just brew-publish`
+# THIS IS A TEMPLATE. The VERSION and SHA256 sentinels are filled in by `just brew-publish`
 # (through scripts/render_packaging.py) when pushing to the tap. Do not replace them here;
 # `just brew-check` fails if either sentinel is gone.
+# Do not write at-sign sentinel names in comments: render substitutes them and
+# brew audit --strict rejects any line longer than 118 characters.
 class Rusticprofile < Formula
   desc "Local, per-machine scheduler and orchestrator for rustic backups"
   homepage "https://github.com/l1a/rusticprofile"

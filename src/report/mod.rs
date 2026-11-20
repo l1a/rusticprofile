@@ -188,11 +188,11 @@ pub fn human_instant(ts: jiff::Timestamp) -> String {
 
 fn human_instant_in(ts: jiff::Timestamp, tz: Option<&jiff::tz::TimeZone>) -> String {
     match tz {
-        Some(tz) => ts.to_zoned(tz.clone()).strftime(HUMAN).to_string(),
+        Some(tz) => ts.to_zoned_datetime(tz.clone()).strftime(HUMAN).to_string(),
         // No zone database. UTC with its offset shown, rather than a local wall clock this
         // machine cannot compute — the offset is what makes it unambiguous.
         None => ts
-            .to_zoned(jiff::tz::TimeZone::UTC)
+            .to_zoned_datetime(jiff::tz::TimeZone::UTC)
             .strftime(HUMAN_OFFSET)
             .to_string(),
     }
@@ -213,12 +213,12 @@ fn render(
     };
 
     match tz {
-        Some(tz) => ts.to_zoned(tz.clone()).strftime(HUMAN).to_string(),
+        Some(tz) => ts.to_zoned_datetime(tz.clone()).strftime(HUMAN).to_string(),
         // No zone database, so no abbreviation to print. Falling back to the offset the record
         // itself carries keeps the wall clock exactly as it was written — the one thing a
         // silent UTC substitution would change.
         None => ts
-            .to_zoned(jiff::tz::TimeZone::fixed(offset))
+            .to_zoned_datetime(jiff::tz::TimeZone::fixed(offset))
             .strftime(HUMAN_OFFSET)
             .to_string(),
     }
@@ -491,7 +491,7 @@ mod tests {
         assert_eq!(
             human_time_in(stamp, Some(&jiff::tz::TimeZone::UTC)),
             recorded
-                .to_zoned(jiff::tz::TimeZone::UTC)
+                .to_zoned_datetime(jiff::tz::TimeZone::UTC)
                 .strftime(HUMAN)
                 .to_string()
         );
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn a_stamp_written_by_the_runner_is_one_this_can_read() {
         let now = jiff::Timestamp::UNIX_EPOCH
-            .to_zoned(jiff::tz::TimeZone::fixed(jiff::tz::Offset::constant(-7)));
+            .to_zoned_datetime(jiff::tz::TimeZone::fixed(jiff::tz::Offset::constant(-7)));
         let recorded = crate::run::status::next(&a_report(), &now, None);
 
         assert_eq!(

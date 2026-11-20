@@ -208,7 +208,7 @@ fn load_config_at(
     path: Option<std::path::PathBuf>,
     as_host: Option<String>,
     rustic_binary: Option<String>,
-    now: Option<jiff::Zoned>,
+    now: Option<jiff::ZonedDateTime>,
 ) -> Result<(Config, std::path::PathBuf), ExitCode> {
     let path = match path {
         Some(p) => p,
@@ -994,7 +994,7 @@ fn show_status(args: &StatusArgs) -> ExitCode {
 fn run_job(args: &RunArgs) -> ExitCode {
     // One clock for the whole run, so the file `${date:…}` selects and the timestamp
     // written inside it cannot disagree across midnight.
-    let now = jiff::Zoned::now();
+    let now = jiff::ZonedDateTime::now();
     let (config, path) = match load_config_at(
         args.config.clone(),
         args.as_host.clone(),
@@ -1056,7 +1056,7 @@ fn run_job(args: &RunArgs) -> ExitCode {
 fn write_run_status(
     state_dir: &std::path::Path,
     report: &rusticprofile::run::steps::JobReport,
-    now: &jiff::Zoned,
+    now: &jiff::ZonedDateTime,
 ) {
     use rusticprofile::run::status;
 
@@ -1084,7 +1084,7 @@ fn write_run_status(
 fn write_run_log(
     job: &rusticprofile::config::job::Job,
     report: &rusticprofile::run::steps::JobReport,
-    now: &jiff::Zoned,
+    now: &jiff::ZonedDateTime,
 ) {
     let Some(path) = &job.log else { return };
     let record = rusticprofile::run::log::render(report, now);

@@ -26,6 +26,8 @@ TEMPLATE_VERSION = 1
 REPO = Path(__file__).resolve().parent.parent
 FORMULA_PATH = REPO / "packaging" / "homebrew" / "rusticprofile.rb"
 FAKE_SHA = "e" * 63 + "f"
+# Homebrew `brew audit --strict` runs rubocop Layout/LineLength with Max=118.
+BREW_LINE_MAX = 118
 
 
 def check_formula_text(text: str) -> list[str]:
@@ -74,6 +76,19 @@ def check_formula_text(text: str) -> list[str]:
     return problems
 
 
+def check_rendered_line_lengths(text: str) -> list[str]:
+    """Fail lines that `brew audit --strict` would reject (Layout/LineLength Max=118)."""
+    problems: list[str] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        if len(line) > BREW_LINE_MAX:
+            problems.append(
+                f"rendered line {i} is {len(line)} characters; brew audit --strict allows "
+                f"at most {BREW_LINE_MAX} (do not put @TOKEN@ forms in comments — render "
+                "expands them)"
+            )
+    return problems
+
+
 def check_live_formula() -> list[str]:
     text = FORMULA_PATH.read_text(encoding="utf-8")
     problems = check_formula_text(text)
@@ -91,6 +106,7 @@ def check_live_formula() -> list[str]:
         problems.append("rendered formula did not carry v1.2.3 in url")
     if f'sha256 "{FAKE_SHA}"' not in rendered:
         problems.append("rendered formula did not carry the supplied sha256")
+    problems.extend(check_rendered_line_lengths(rendered))
     return problems
 
 
@@ -143,6 +159,12 @@ def _self_test() -> int:
         check_formula_text(re.sub(r"\s*test do.*?end\s*(?=end\s*\Z)", "\n", good, flags=re.S)),
         "test do",
     )
+    expect_bad(
+        "rendered line too long",
+        check_rendered_line_lengths("x" * (BREW_LINE_MAX + 1) + "\n"),
+        str(BREW_LINE_MAX),
+    )
+    expect_ok("rendered line at max", check_rendered_line_lengths("x" * BREW_LINE_MAX + "\n"))
 
     if failures:
         for f in failures:

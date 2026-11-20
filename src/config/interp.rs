@@ -73,7 +73,7 @@ pub struct Ctx<'a> {
     /// a generated systemd unit correct: baking today's date into a unit file would
     /// freeze it at install time and every later run would write to the wrong path. The
     /// runner passes `Some` and resolves it per run; unit generation passes `None`.
-    pub now: Option<&'a jiff::Zoned>,
+    pub now: Option<&'a jiff::ZonedDateTime>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -202,7 +202,7 @@ fn resolve(name: &str, ctx: &Ctx) -> Result<String, InterpError> {
         // Validate against a fixed reference instant whether or not it is being resolved
         // now, so a malformed format is caught at load time rather than at 03:00 on the
         // night the backup runs.
-        let reference = jiff::Timestamp::UNIX_EPOCH.to_zoned(jiff::tz::TimeZone::UTC);
+        let reference = jiff::Timestamp::UNIX_EPOCH.to_zoned_datetime(jiff::tz::TimeZone::UTC);
         let rendered = jiff::fmt::strtime::format(format, &reference).map_err(|e| {
             InterpError::BadDateFormat {
                 format: format.to_string(),
@@ -251,7 +251,7 @@ mod tests {
             .collect()
     }
 
-    fn ctx<'a>(env: &'a BTreeMap<String, String>, now: Option<&'a jiff::Zoned>) -> Ctx<'a> {
+    fn ctx<'a>(env: &'a BTreeMap<String, String>, now: Option<&'a jiff::ZonedDateTime>) -> Ctx<'a> {
         Ctx {
             host: "host-a.local",
             host_short: "host-a",
@@ -417,7 +417,7 @@ mod tests {
         );
 
         // With a clock: resolved.
-        let now = jiff::Timestamp::UNIX_EPOCH.to_zoned(jiff::tz::TimeZone::UTC);
+        let now = jiff::Timestamp::UNIX_EPOCH.to_zoned_datetime(jiff::tz::TimeZone::UTC);
         let resolved = ctx(&env, Some(&now));
         assert_eq!(
             interpolate("log-${date:%Y-%m-%d}.txt", &resolved).unwrap(),
@@ -450,7 +450,7 @@ mod tests {
         // reference in place and would otherwise accept it.
         let env = env_map(&[]);
         let deferred = ctx(&env, None);
-        let now = jiff::Timestamp::UNIX_EPOCH.to_zoned(jiff::tz::TimeZone::UTC);
+        let now = jiff::Timestamp::UNIX_EPOCH.to_zoned_datetime(jiff::tz::TimeZone::UTC);
         let resolved = ctx(&env, Some(&now));
         for bad in ["%n", "%t"] {
             for c in [&deferred, &resolved] {
@@ -469,7 +469,7 @@ mod tests {
     fn unusual_but_valid_formats_are_accepted() {
         // Guards against over-eager validation: `%Q` is a real jiff specifier (the IANA
         // time zone identifier), and rejecting it would be a false positive.
-        let now = jiff::Timestamp::UNIX_EPOCH.to_zoned(jiff::tz::TimeZone::UTC);
+        let now = jiff::Timestamp::UNIX_EPOCH.to_zoned_datetime(jiff::tz::TimeZone::UTC);
         let env = env_map(&[]);
         let c = ctx(&env, Some(&now));
         assert_eq!(interpolate("${date:%Q}", &c).unwrap(), "UTC");

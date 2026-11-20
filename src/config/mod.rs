@@ -48,7 +48,7 @@ pub struct LoadOptions {
     pub as_host: Option<String>,
     /// Clock for `${date:…}`. `None` leaves those references unresolved — see
     /// [`interp::Ctx::now`].
-    pub now: Option<jiff::Zoned>,
+    pub now: Option<jiff::ZonedDateTime>,
 }
 
 /// The configuration as it applies to one host.

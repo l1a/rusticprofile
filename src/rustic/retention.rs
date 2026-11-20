@@ -222,10 +222,13 @@ pub fn parse_target(text: &str, tz: &jiff::tz::TimeZone) -> Option<jiff::Timesta
     // A space where ISO 8601 wants a `T`, because that is how people type it.
     let normalised = text.replacen(' ', "T", 1);
     if let Ok(dt) = normalised.parse::<jiff::civil::DateTime>() {
-        return dt.to_zoned(tz.clone()).ok().map(|z| z.timestamp());
+        return dt.to_zoned_datetime(tz.clone()).ok().map(|z| z.timestamp());
     }
     if let Ok(date) = normalised.parse::<jiff::civil::Date>() {
-        return date.to_zoned(tz.clone()).ok().map(|z| z.timestamp());
+        return date
+            .to_zoned_datetime(tz.clone())
+            .ok()
+            .map(|z| z.timestamp());
     }
     None
 }

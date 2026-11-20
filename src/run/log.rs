@@ -62,7 +62,7 @@ fn one_line(value: &str) -> String {
 /// important thing to be able to find afterwards, and it is exactly what an absence in a
 /// list fails to say.
 #[must_use]
-pub fn render(report: &JobReport, now: &jiff::Zoned) -> String {
+pub fn render(report: &JobReport, now: &jiff::ZonedDateTime) -> String {
     let mut out = String::new();
     let verdict = format!("{:?}", report.verdict()).to_lowercase();
 
@@ -184,9 +184,9 @@ mod tests {
     /// tzdb, so `[America/Los_Angeles]` failed to parse and every log test panicked — at
     /// tag time, where `full-test` runs and PR CI does not. A fixed offset is what the
     /// assertions actually need; the zone name was incidental.
-    fn now() -> jiff::Zoned {
+    fn now() -> jiff::ZonedDateTime {
         let ts: jiff::Timestamp = "2026-08-03T19:34:56Z".parse().unwrap();
-        ts.to_zoned(jiff::tz::TimeZone::fixed(jiff::tz::Offset::constant(-7)))
+        ts.to_zoned_datetime(jiff::tz::TimeZone::fixed(jiff::tz::Offset::constant(-7)))
     }
 
     fn report(skipped: Vec<Operation>) -> JobReport {

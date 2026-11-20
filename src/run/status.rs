@@ -95,7 +95,7 @@ pub fn read(path: &Path) -> Option<Status> {
 
 /// Build the record for this run, carrying `last_success` forward from `previous`.
 #[must_use]
-pub fn next(report: &JobReport, now: &jiff::Zoned, previous: Option<&Status>) -> Status {
+pub fn next(report: &JobReport, now: &jiff::ZonedDateTime, previous: Option<&Status>) -> Status {
     let verdict = report.verdict();
     let stamp = now.strftime(STAMP_FORMAT).to_string();
 
@@ -151,9 +151,9 @@ mod tests {
     ///
     /// See the note in `run::log`: a named zone made these depend on the machine, and the
     /// release runner has none.
-    fn at(s: &str) -> jiff::Zoned {
+    fn at(s: &str) -> jiff::ZonedDateTime {
         let ts: jiff::Timestamp = s.parse().unwrap();
-        ts.to_zoned(jiff::tz::TimeZone::fixed(jiff::tz::Offset::constant(-7)))
+        ts.to_zoned_datetime(jiff::tz::TimeZone::fixed(jiff::tz::Offset::constant(-7)))
     }
 
     fn report(verdict: Verdict, skipped: Vec<Operation>) -> JobReport {
