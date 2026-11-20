@@ -1,6 +1,6 @@
 [package]
 name = "rusticprofile"
-version = "0.2.64"
+version = "0.2.65"
 edition = "2024"
 authors = ["Ken Tobias"]
 description = "A local, per-machine scheduler and orchestrator for rustic backups"
@@ -38,7 +38,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde-saphyr = { version = "2.1.1", default-features = false, features = ["deserialize"] }
 toml = "1.1.4"
 dirs = "7.0.0"
-jiff = "0.2.39"
+jiff = "1.0.0"
 serde_json = "1.0.151"
 
 # `nix` is Unix-only, and moving it here rather than leaving it unconditional is documentation
@@ -46,7 +46,7 @@ serde_json = "1.0.151"
 # compiles fine and then fails at every use site with `could not find sys in nix` — an error
 # that reads like a feature-flag problem rather than a platform one.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31.3", features = [
+nix = { version = "0.32.0", features = [
     "fs",
     "hostname",
     "process",
