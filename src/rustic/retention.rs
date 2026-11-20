@@ -225,7 +225,10 @@ pub fn parse_target(text: &str, tz: &jiff::tz::TimeZone) -> Option<jiff::Timesta
         return dt.to_zoned_datetime(tz.clone()).ok().map(|z| z.timestamp());
     }
     if let Ok(date) = normalised.parse::<jiff::civil::Date>() {
-        return date.to_zoned_datetime(tz.clone()).ok().map(|z| z.timestamp());
+        return date
+            .to_zoned_datetime(tz.clone())
+            .ok()
+            .map(|z| z.timestamp());
     }
     None
 }
