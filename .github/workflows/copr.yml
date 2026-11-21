@@ -79,6 +79,10 @@ jobs:
           set -euo pipefail
           python3 scripts/metadata_check.py
           copr-cli modify \
+            --chroot fedora-44-x86_64 \
+            --chroot fedora-44-aarch64 \
+            --chroot fedora-45-x86_64 \
+            --chroot fedora-45-aarch64 \
             --description "$(cat packaging/copr/project-description.md)" \
             --instructions "$(cat packaging/copr/project-instructions.md)" \
             kentobias/rusticprofile
