@@ -260,7 +260,7 @@ sudo dnf copr enable kentobias/rusticprofile
 sudo dnf install rusticprofile
 ```
 
-The package installs the binary, man page, and completions for bash, fish, and zsh. It tracks the newest **released tag** on Fedora 43 and 44 (x86_64 and aarch64). Note that `rustic` is recommended but not packaged in Fedora's base repositories, so install rustic separately (e.g. via `cargo install rustic-rs`) if not already present.
+The package installs the binary, man page, and completions for bash, fish, and zsh. It tracks the newest **released tag** on Fedora 44 and 45 (x86_64 and aarch64). Note that `rustic` is recommended but not packaged in Fedora's base repositories, so install rustic separately (e.g. via `cargo install rustic-rs`) if not already present.
 
 **On macOS and Linux (Homebrew)** — from the project's tap:
 
