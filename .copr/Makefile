@@ -44,9 +44,9 @@ srpm:
 	fi; \
 	tar -tzf "$$TARBALL" > $(BUILD)/listing.txt; \
 	echo "packed $$(wc -l < $(BUILD)/listing.txt) entries as rusticprofile-$$V/"; \
-	if grep -qE "^rusticprofile-[^/]+/(WIP[.]md|memory/|target/|[.]git/|[.]antigravitycli/|settings[.]local[.]json)" $(BUILD)/listing.txt; then \
+	if grep -qE "^rusticprofile-[^/]+/(WIP[.]md|memory/|target/|[.]git/|[.]antigravitycli/|([.]claude/)?settings[.]local[.]json)" $(BUILD)/listing.txt; then \
 	    echo "error: the source archive contains files that must never ship:" >&2; \
-	    grep -E "^rusticprofile-[^/]+/(WIP[.]md|memory/|target/|[.]git/|[.]antigravitycli/|settings[.]local[.]json)" $(BUILD)/listing.txt >&2; \
+	    grep -E "^rusticprofile-[^/]+/(WIP[.]md|memory/|target/|[.]git/|[.]antigravitycli/|([.]claude/)?settings[.]local[.]json)" $(BUILD)/listing.txt >&2; \
 	    exit 1; \
 	fi; \
 	for f in Cargo.toml Cargo.lock LICENSE docs/rusticprofile.1; do \
