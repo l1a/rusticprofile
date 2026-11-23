@@ -313,7 +313,7 @@ the validator.
 
 ---
 
-## Current State (v0.2.66)
+## Current State (v0.2.67)
 
 **Which version is released is deliberately not stated here.** The newest tag, the GitHub release
 and crates.io's `max_version` are the record — and they are three answers, not one, as §5.5 records
@@ -746,6 +746,29 @@ against 0.11.4 on 2026-08-24 and unchanged.
 - **Squash-merge bodies concatenate every branch commit** (`squash_merge_commit_message =
   COMMIT_MESSAGES`), so a trailer on each commit is a duplicate on `main` — trailer on the last
   commit only (`0.2.41`; `AGENTS.md` Part 1 §1).
+- **Hardened `Claude Code Review` workflow (`v0.2.67`, ported from `retch`/`etr`).** Pins
+  `claude-opus-5-5` (Sonnet skips the subagent steps), `--permission-mode default`, `--comment`,
+  and `--allowedTools` scoped solely to `mcp__github_inline_comment__create_inline_comment`, sets
+  `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` (`claude-code-action`'s `run-claude-sdk.ts` exits the
+  SDK stream on the first `result` message if subagents run in background) and
+  `use_sticky_comment: false` (clean runs post nothing because `just merge-pr` treats any
+  `^claude` comment as a finding), checks out the API-resolved base branch at the workspace root and
+  the PR head under `.ci-review/head/` as data with `persist-credentials: false` on **both**
+  checkouts (`actions/checkout@v7` uses `includeIf.gitdir:...` under `$RUNNER_TEMP`, which
+  `claude-code-action@f3b070c8`'s `replaceCheckoutCredentials` misses because it only unsets v6
+  `include.path`), strips config-like files (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
+  `.claude/`, `.claude.json`, `.mcp.json`) from `.ci-review/head/`, pre-fetches PR metadata/diff into
+  `.ci-review/`, denies non-workspace paths (`/tmp/**`, `/proc/**`, `/etc/**`, `/sys/**`, `/dev/**`,
+  `/var/**`, `/run/**`, `/root/**`, `/home/runner/.*`, `/home/runner/.*/**`, `~/.*`, `~/.*/**`,
+  `/home/runner/work/_actions/**`, `/home/runner/work/_tool/**`,
+  `/home/runner/work/_PipelineMapping/**`, `/${{ runner.temp }}/**`) plus `.git/**` and `**/.git/**`
+  across `Read`, `Grep`, and `Glob` (without denying `/home/runner/**` wholesale, which contains
+  `$GITHUB_WORKSPACE`), fails closed if `.claude/settings.json` adds an uncovered allow rule, omits
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` (`claude` CLI hard-requires `bubblewrap`, absent unless
+  `allowed_non_write_users` installs it, and `Bash` is already removed), and applies
+  `redact_secrets()` (matching `sanitizer.ts` token regexes + `Authorization` headers) before
+  writing stdout / `$GITHUB_STEP_SUMMARY`. Updating the `anthropics/claude-code-action` pin later
+  requires inspecting `action.yml`/`base-action` for permission-mode or credential-cleanup changes.
 
 ### 5.6 Repository, tooling and the fleet
 
