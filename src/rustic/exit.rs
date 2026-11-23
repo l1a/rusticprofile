@@ -64,7 +64,7 @@ impl Verdict {
     /// Partial proceeds on purpose: aborting here is precisely the bug this project
     /// exists to fix.
     pub fn should_continue(&self) -> bool {
-        matches!(self, Verdict::Success | Verdict::Partial)
+        matches!(self, Verdict::Success | Verdict::Failure)
     }
 }
 
