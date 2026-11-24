@@ -10,8 +10,8 @@
 //!
 //! ## This is a per-host check, and the recorded intent was wider
 //!
-//! The lock-authority finding (`NOTES.md` §6.8) originally asked for *"a restic prune schedule
-//! still existing **anywhere on the fleet**"*; §6.12 records why that was narrowed. **It is not
+//! The lock-authority finding (`docs/DESIGN.md` §8) originally asked for *"a restic prune schedule
+//! still existing **anywhere on the fleet**"*; §12 records why that was narrowed. **It is not
 //! implementable from one host and this does not attempt it.**
 //! rusticprofile has no fleet inventory and no remote access, deliberately — it is a
 //! *local, per-machine* scheduler (`AGENTS.md` §2), and giving it SSH to survey six other

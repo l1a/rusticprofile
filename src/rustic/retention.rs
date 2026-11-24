@@ -6,7 +6,7 @@
 //! **rustic already computes which snapshot holds each retention slot; nothing here decides
 //! anything.** `forget --dry-run --json` reports, per snapshot, whether it is kept and *why* —
 //! `hourly`, `daily`, `monthly`, `yearly`, `last`, `tags`, `id` — and this module groups that
-//! into something readable. `NOTES.md` §6.9 has the measurements and the decision.
+//! into something readable. `docs/DESIGN.md` §9 has the measurements and the decision.
 //!
 //! The distinction that keeps this inside the delegation boundary: the policy is the profile's,
 //! the evaluation is rustic's, and the only thing this crate contributes is the rendering.

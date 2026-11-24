@@ -7,7 +7,7 @@ Living state for **rusticprofile**: architecture, guidelines, operating invarian
 
 ## 1. Project Overview
 - **Goal:** Local, per-machine scheduler and orchestrator for `rustic` backups (systemd, launchd, Task Scheduler) — no central server.
-- **Stack:** `clap`, `serde`, `serde_yaml`, `toml`, `jiff`, `owo-colors`, `rustic` (delegated backend). GPL-3.0-or-later (`https://github.com/l1a/rusticprofile`).
+- **Stack:** `clap`, `serde`, `serde-saphyr`, `toml`, `jiff`, `owo-colors`, `rustic` (delegated backend). GPL-3.0-or-later (`https://github.com/l1a/rusticprofile`).
 - **Delegation boundary:** `rustic` owns repository, sources, excludes, retention policy, hooks, env, and metrics. `rusticprofile` owns scheduling, per-host gating, sequencing, exit classification, and lock coordination (`rustic -P <profile> <op> [--name <set>]... [--host/--filter-host] [--json on backup]`). Only read-only exception: parsing `rustic.toml` to validate `[[backup.snapshots]]` names and refuse unexpanded `sources` (`~` / `$`).
 
 ---
