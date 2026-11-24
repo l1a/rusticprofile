@@ -120,7 +120,7 @@ Measured against `rustic 0.11.3` (re-verified against `0.11.4` on 2026-08-24):
 ## 10. Windows (`0.2.0`, Settled 2026-08-06)
 - **In scope:** Windows builds/runs + Task Scheduler backend. Out: `crond`, `restic` backend, WSL-only backups.
 - **Locking & Signals:** `share_mode(0)` file open (no `flock`); console `Ctrl+C` interactively, Job Object `KILL_ON_JOB_CLOSE` for scheduled runs.
-- **Hostnames & PATH:** `%COMPUTERNAME%` is uppercased NetBIOS -> use `GetComputerNameExW`; honor `PATHEXT` for `rustic.exe`; `nix` lives under `cfg(unix)` deps; XDG paths used on Windows too; `tests/cli_tests.rs` verifies MSVCRT argv quoting.
+- **Hostnames & PATH:** `%COMPUTERNAME%` is uppercased NetBIOS -> use `GetComputerNameExW`; honor `PATHEXT` for `rustic.exe`; `nix` lives under `cfg(unix)` deps; XDG paths used on Windows too; `quote_argument` is unit-tested against MSVCRT rules, with no automated argv round-trip test yet (`NOTES.md` §4.1).
 - **Locale-free `next run`:** `status` queries `Get-ScheduledTaskInfo` via Windows PowerShell 5.1 (`-NoProfile -NonInteractive`, `.ToString('yyyy-MM-ddTHH:mm:sszzz')`, avoiding `schtasks` locale-ambiguous dates and `'o'` fractional seconds), displaying `(±5 min)` for `RandomDelay` and keeping `status --json` `next_run` untouched.
 
 ---

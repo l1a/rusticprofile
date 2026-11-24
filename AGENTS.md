@@ -64,7 +64,7 @@ The GCS repository `opendal:gcs` / `gs:example-backup-bucket:/dot-files` is **in
 ---
 
 ## 5. Sandbox Exceptions (`BypassSandbox: true`)
-Per Part 1 and `~/AGENTS.md` §3, pass `BypassSandbox: true` on the **first** invocation of:
+Per `~/AGENTS.md` §3, pass `BypassSandbox: true` on the **first** invocation of:
 - **All `gh` / `ghpub` commands** (`gh pr`, `gh run`, `gh workflow`, `gh api`, `gh issue`).
 - **All `git` write or remote commands** (`checkout`, `switch`, `branch`, `add`, `rm`, `mv`, `commit`, `merge`, `rebase`, `tag`, `fetch`, `pull`, `push`).
 - **`just` shebang, lockfile, and network/container recipes:** `just test` / `cargo test` (`run::lock::tests` writes lockfiles under `$XDG_RUNTIME_DIR/rusticprofile`, read-only inside sandbox), `just pr` / `PR_CONFIRM=y just pr`, `just open-pr`, `just merge-pr`, `just prune-branches`, `just github-metadata`, `just aur-verify`, `just aur-local`, `just aur-srcinfo`, `just aur-publish` / `publish-aur`, `just brew-publish` / `publish-brew`, `just scoop-publish` / `publish-scoop`, `just publish`, `just publish-check`, `just audit`, `just install-tag`, `just man`, `just fmt`, `just install-hooks`.
