@@ -73,7 +73,6 @@ Jobs emit ONLY `rustic -P <profile> <op>`, `--json` (on `backup`), `--name` per 
 - **Built:** Milestones 1, 2, 3, 5 complete (M6 effectively delivered; Windows + Task Scheduler landed in `0.2.0`); M4 deferred by decision. Shipped on GitHub Releases (6 targets), crates.io, AUR, COPR, Homebrew, and Scoop.
 - **Commands:** `config --check`/`--show`/`--example` (hermetic); `plan`; `run` (locks, sequences, classifies, logs; `--background` retries failed ops 2×2min); `schedule`/`unschedule`/`status` (systemd, launchd, Task Scheduler; `status --json` `schema: 1`); `snapshots`; `retention`; `doctor` (exit `3` on warn).
 - **Key behaviors:** `run` stops on failure and continues on partial (partial requires >= 1 parsed `--json` object); generated units embed absolute `rustic` path once (`doctor` `units-current` catches stale units); `defaults.hostname` (`short` default, `full`, `rustic`); alert on `last_success` in `status --json`.
-- **v0.2.68 (`chore/compact-agent-docs`):** Extracted `§6` design record to `docs/DESIGN.md` and release/CI notes to `docs/RELEASE.md`; compacted `AGENTS.md` and `NOTES.md`.
 
 ---
 
