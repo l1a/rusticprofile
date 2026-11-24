@@ -949,7 +949,7 @@ fn show_status(args: &StatusArgs) -> ExitCode {
             );
         }
         // The spread window is stated only on Task Scheduler, because that is the only backend
-        // where the reported time is *measured* to be re-rolled between queries (`NOTES.md`
+        // where the reported time is *measured* to be re-rolled between queries (`docs/DESIGN.md`
         // §10). systemd is left unannotated deliberately: whether `NextElapseUSecRealtime`
         // moves has not been measured, and a window asserted without evidence is the
         // `network-online.target` failure — a claim in our own output that nothing checked.

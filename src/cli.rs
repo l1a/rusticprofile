@@ -123,7 +123,7 @@ pub struct DoctorArgs {
 ///
 /// Deliberately *not* an [`crate::config::job::Operation`]: that enum is what a **job** may
 /// schedule, and a query is not schedulable work. Read-only is what makes a passthrough
-/// defensible here and would not make one defensible for `forget` or `prune`. `NOTES.md`
+/// defensible here and would not make one defensible for `forget` or `prune`. `docs/DESIGN.md`
 /// §9 states the line so the next request for one can be answered.
 #[derive(Args, Debug)]
 pub struct SnapshotsArgs {

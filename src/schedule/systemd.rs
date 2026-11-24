@@ -130,7 +130,7 @@ pub fn service_unit(job: &Job, schedule: &Schedule, ctx: &UnitContext) -> Result
          \n\
          [Service]\n\
          Type=oneshot\n\
-         # --background marks the run as unattended, which enables the retry (NOTES.md\n\
+         # --background marks the run as unattended, which enables the retry (docs/DESIGN.md\n\
          # §11). It cannot be inferred from the environment: INVOCATION_ID and JOURNAL_STREAM\n\
          # are both set in an ordinary desktop terminal, so only an explicit flag put here by\n\
          # `schedule` can tell a scheduled run from a hand-typed one. On Unix the flag does not\n\
