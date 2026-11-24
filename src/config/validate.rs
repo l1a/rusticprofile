@@ -227,7 +227,7 @@ pub fn check_declared(raw: &RawConfig) -> Vec<Violation> {
 /// define it.
 ///
 /// This is the check that exists because rustic will not perform it: an unknown `--name`
-/// alongside a valid one is dropped silently with exit 0 (`NOTES.md` §6.6).
+/// alongside a valid one is dropped silently with exit 0 (`docs/DESIGN.md` §6).
 pub fn check_snapshot_sets_exist(raw: &RawConfig, rustic_config_dir: &Path) -> Vec<Violation> {
     let mut out = Vec::new();
 
@@ -389,7 +389,7 @@ pub fn check_default_job_exists(raw: &RawConfig) -> Vec<Violation> {
 /// is matched by rustic against the hostname recorded in each snapshot, **exactly** — so a
 /// filter naming any other string selects nothing, `forget` deletes nothing, and retention
 /// silently never runs. The repository then grows without limit while every command reports
-/// success. That is bug #1 from `NOTES.md` §6.1, which went unnoticed for months.
+/// success. That is bug #1 from `docs/DESIGN.md` §1, which went unnoticed for months.
 ///
 /// **The trap that motivated this check** is a generated config. `chezmoi`'s
 /// `.chezmoi.hostname` is the hostname *up to the first `.`*, so templating it into
@@ -433,7 +433,7 @@ pub fn check_filter_hosts_can_match(
         // rusticprofile emits `--filter-host` itself unless told to defer, and the CLI
         // overrides the config file — so under `short`/`full` the profile's `filter-hosts`
         // cannot cause the silent-retention failure this check exists to catch. Checking it
-        // would only refuse a harmless leftover. `NOTES.md` §6.6.
+        // would only refuse a harmless leftover. `docs/DESIGN.md` §6.
         if raw.defaults.hostname != HostnameMode::Rustic {
             continue;
         }
@@ -569,7 +569,7 @@ pub fn check_forget_is_scoped(raw: &RawConfig, rustic_config_dir: &Path) -> Vec<
         // scoping filter is *correct* — the forget is scoped by the flag we emit — and
         // demanding one here would refuse a config that is right. Under `rustic` nothing is
         // emitted, so the profile is the only scope there is and the rule stands.
-        // `NOTES.md` §6.6.
+        // `docs/DESIGN.md` §6.
         let scoped_by_us = raw.defaults.hostname != HostnameMode::Rustic;
 
         if !profile.forget_is_scoped() && !scoped_by_us {
@@ -899,7 +899,7 @@ jobs:
     /// The host-scoping checks only apply when rusticprofile is *not* emitting
     /// `--filter-host` itself — under the default `short` it supplies the scope, so a
     /// profile without `filter-hosts` is correct and the checks deliberately skip
-    /// (`NOTES.md` §6.6). Every test about what a *profile* must contain therefore has to
+    /// (`docs/DESIGN.md` §6). Every test about what a *profile* must contain therefore has to
     /// say so explicitly, or it is asserting against a mode where the rule does not exist.
     const FORGET_JOB_DEFERRED: &str = "
 schema: 1
@@ -1018,7 +1018,7 @@ jobs:
     // itself and the CLI overrides the config file. So a profile with no `filter-hosts` is
     // correctly scoped, and one naming the wrong host is harmless leftover rather than the
     // silent-retention bug. Both checks skip. Under `rustic` nothing is emitted and the
-    // profile is the only scope there is, so both apply exactly as before. `NOTES.md` §6.6.
+    // profile is the only scope there is, so both apply exactly as before. `docs/DESIGN.md` §6.
 
     #[test]
     fn an_unscoped_forget_is_accepted_when_we_supply_the_scope() {
