@@ -67,7 +67,7 @@ Jobs emit ONLY `rustic -P <profile> <op>`, `--json` (on `backup`), `--name` per 
 
 ---
 
-## Current State (v0.2.68)
+## Current State (v0.2.69)
 
 *(Released version lives on GitHub Releases / crates.io / tags — never duplicated in prose.)*
 - **Built:** Milestones 1, 2, 3, 5 complete (M6 effectively delivered; Windows + Task Scheduler landed in `0.2.0`); M4 deferred by decision. Shipped on GitHub Releases (6 targets), crates.io, AUR, COPR, Homebrew, and Scoop.
